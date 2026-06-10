@@ -1,0 +1,17 @@
+{
+  "name": "snapchat-runner",
+  "version": "1.0.0",
+  "description": "Snapchat adapter for the LLM Selfbot",
+  "main": "snapchat_runner.js",
+  "type": "module",
+  "scripts": {
+    "start": "node snapchat_runner.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "puppeteer": "^24.1.1",
+    "puppeteer-extra": "^3.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2"
+  },
+  "license": "ISC"
+}

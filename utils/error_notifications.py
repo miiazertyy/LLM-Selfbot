@@ -1,0 +1,64 @@
+import discord
+
+from datetime import datetime
+from curl_cffi.requests import AsyncSession
+from utils.helpers import load_config
+
+
+def print_error(error_type, error):
+    print(f"{datetime.now().strftime('[%H:%M:%S]')} {error_type}: {error}")
+
+
+async def webhook_log(ctx, error, is_ratelimit=False):
+    config = load_config()  # Always reload so webhook URL changes are picked up live
+    webhook_url = config["notifications"]["error_webhook"]
+
+    if not webhook_url:
+        return
+
+    # Rate limit notifications can be silenced separately
+    if is_ratelimit and not config["notifications"]["ratelimit_notifications"]:
+        return
+
+    if is_ratelimit:
+        embed = discord.Embed(
+            title="AI Selfbot Ratelimited",
+            description=f"{error}",
+            color=discord.Color.orange(),
+            timestamp=datetime.now(),
+        )
+    elif isinstance(ctx, discord.Message):
+        embed = discord.Embed(
+            title="AI Selfbot Error",
+            description=f"Message: `{ctx.content}`\nTrigger: {ctx.jump_url}\nError: `{error}`",
+            color=discord.Color.red(),
+            timestamp=datetime.now(),
+        )
+    elif isinstance(ctx, discord.ext.commands.Context):
+        embed = discord.Embed(
+            title="AI Selfbot Error",
+            description=f"Command: `{ctx.command}`\nTrigger: {ctx.message.jump_url}\nError: `{error}`",
+            color=discord.Color.red(),
+            timestamp=datetime.now(),
+        )
+    else:
+        embed = discord.Embed(
+            title="AI Selfbot Error",
+            description=f"Error: `{error}`",
+            color=discord.Color.red(),
+            timestamp=datetime.now(),
+        )
+
+    data = {
+        "username": "AI Selfbot",
+        "avatar_url": "https://cdn.discordapp.com/avatars/1040916971635621959/a_e52b4f8a9115021e5cc2e510232e8bd8.gif?size=256",
+        "embeds": [embed.to_dict()],
+    }
+
+    try:
+        async with AsyncSession(impersonate="chrome") as session:
+            response = await session.post(webhook_url, json=data)
+            if response.status_code != 204:
+                print_error("Webhook Error", f"Status: {response.status_code}")
+    except Exception as e:
+        print(f"Error while sending webhook: {e}")

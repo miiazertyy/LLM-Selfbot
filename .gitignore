@@ -1,0 +1,34 @@
+# ── Secrets — NEVER commit these ──────────────────────────────────────────────
+.env
+config/.env
+**/*-cookies.json
+
+# ── Databases & user data ─────────────────────────────────────────────────────
+*.db
+*.sqlite
+*.sqlite3
+
+# ── Personal media / generated content ────────────────────────────────────────
+config/pictures/
+config/temp/
+
+# ── Runtime IPC & flags (regenerated on the fly) ──────────────────────────────
+ipc/
+*.flag
+config/*.flag
+
+# ── Dependencies ──────────────────────────────────────────────────────────────
+node_modules/
+**/node_modules/
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# ── OS / editor cruft ─────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.log

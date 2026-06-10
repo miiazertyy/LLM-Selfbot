@@ -1,0 +1,203 @@
+bot:
+  # Owner ID of your account (can't be same as bot's ID)
+  owner_id: 272402839874174976
+  
+  # Prefix you want bot commands to be triggered with
+  prefix: "/"
+  
+  # The word(s) you want the AI to respond to
+  trigger: "John, Jon"
+
+  # Fallback language used until there's enough text to auto-detect one.
+  # Short/ambiguous messages (e.g. "tg", "ok") keep this instead of guessing.
+  # Use a BCP-47 code: en, fr, es, de, ar, pt, it, nl, ru, ja, zh, ...
+  default_language: "en"
+
+  # Models to use from Groq (will fallback to next on rate limit)
+  groq_models:
+    - "llama-3.3-70b-versatile" 
+    - "meta-llama/llama-4-scout-17b-16e-instruct"
+    - "openai/gpt-oss-20b"
+  
+  # Model used for image description (must support vision)
+  groq_image_model: "meta-llama/llama-4-scout-17b-16e-instruct"
+
+  # Model used for voice transcription
+  groq_whisper_model: "whisper-large-v3-turbo"
+  
+  # TTS voice settings
+  tts:
+    enabled: false
+    voice: "diana"        # autumn / diana / hannah / austin / daniel / troy
+    tones:
+      - "[casual]"
+      - "[warm]"
+
+  # --- Pictures / selfies ---
+  # When someone asks for a photo, the bot sends a picture from config/pictures
+  # (upload them with the ,image command / Telegram). Used by both Discord and
+  # Snapchat. On Snapchat the picture is sent as a Snap.
+  pictures:
+    enabled: true
+
+  # Whether the bot should respond to DM's from people
+  allow_dm: true
+
+  # Whether the bot should be active in group chats
+  allow_gc: true
+
+  # Whether the bot should respond to mentions/replies in servers
+  allow_server: true
+
+  # Realistic Typing
+  realistic_typing: true
+
+  # Whether to wait and collect multiple messages before responding
+  batch_messages: true 
+
+  # Time before responding
+  batch_wait_times:
+    - time: 20
+      weight: 30
+    - time: 40
+      weight: 35
+    - time: 90
+      weight: 22
+    - time: 600
+      weight: 10
+    - time: 1600
+      weight: 3
+
+  # Anti-detection settings
+  ignore_chance: 0.08       # Chance to ignore a message
+  typo_chance: 0.05         # Chance of a typo per message
+
+  # Priority prefix to bypass batch wait times
+  priority_prefix: "="
+
+  # Whether the bot should keep replying to people, even if there's no trigger
+  hold_conversation: true
+  
+  # Anti Age Ban Measures
+  anti_age_ban: false
+
+  # Disable the bot from being able to mention anyone
+  disable_mentions: false
+
+  # Whether the bot should ping on replies
+  reply_ping: true
+
+  # --- Mood system ---
+  mood:
+    enabled: true
+    shift_interval_min: 1800   # 30 minutes
+    shift_interval_max: 3600   # 60 minutes
+    moods:
+      chill: "Be relaxed and unbothered. Keep replies easy-going, don't overthink."
+      playful: "Be playful and energetic. Tease more, be funnier than usual."
+      busy: "You're distracted. Keep replies short, slightly impatient."
+      tired: "You're tired. Low energy, shorter replies, less enthusiasm."
+      annoyed: "You're mildly annoyed. Be blunt and less patient, but not rude."
+      flirty: "Be flirty and a bit more suggestive than usual."
+      
+  # --- Random status loop ---
+  status:
+    enabled: true
+    change_interval_min: 1800
+    change_interval_max: 10800
+    statuses:
+      - online
+      - idle
+      - dnd
+
+  # --- Captcha solver ---
+  captcha:
+    enabled: true
+    gemini_model: "gemini-2.0-flash"
+
+  # --- Late reply openers ---
+  late_reply:
+    enabled: true
+    threshold: 300   # 5 minutes
+    openers_en:
+      - "sorry was watching tiktok lol "
+      - "omg sorry just saw this "
+      - "sorry was busy haha "
+      - "oh sorry didn't see this "
+      - "lol sorry took a while "
+      - "sorry was distracted "
+      - "oh wait i just saw this lol "
+    openers_fr:
+      - "déso je viens de voir lol "
+      - "pardon j'étais occupée haha "
+      - "mdrr déso je t'avais pas vu "
+      - "oh pardon je regardais tiktok "
+      - "déso j'ai mis du temps "
+    french_indicators:
+      - "bonjour"
+      - "salut"
+      - "coucou"
+      - "quoi"
+      - "tu"
+      - "vous"
+      - "je"
+      - "moi"
+      - "ouais"
+      - "non"
+      - "oui"
+      - "bah"
+      - "wesh"
+      - "mdrr"
+      - "ptdr"
+
+  # --- Abandon Reply ---
+  stale_reply:
+    enabled: true
+    max_messages: 10
+    min_age: 120
+
+  # --- Friend Requests ---
+  friend_requests:
+    enabled: true
+    accept_delay_min: 120  # minimum seconds before accepting (2 min)
+    accept_delay_max: 600  # maximum seconds before accepting (10 min)
+
+  # --- Nudge system ---
+  nudge:
+    enabled: false          # flip to true to activate
+    threshold_days: 2       # how long before a nudge fires
+    check_interval_hours: 6 # how often the loop checks
+    send_during_hours:
+      - 10                  # don't nudge before 10am
+      - 22                  # don't nudge after 10pm
+
+# ── Notifications ─────────────────────────────────────────────────────────────
+# NOTE: This must be a top-level key (not under 'bot:') — all notification
+# readers call config.get("notifications", {}) at the root level.
+notifications:
+  error_webhook: ""
+  ratelimit_notifications: true
+  telegram_error_notifications: true
+
+# ── Discord Platform ───────────────────────────────────────────────────────────
+discord:
+  # Set to false to disable the Discord selfbot entirely (e.g. Snapchat-only mode)
+  enabled: true
+
+# ── Snapchat Platform ──────────────────────────────────────────────────────────
+snapchat:
+  # Set to true to enable the Snapchat platform alongside Discord
+  enabled: true
+
+  # How often (ms) the Node runner polls visible chats for new messages
+  poll_interval_ms: 8000
+
+  # How long (ms) Python bridge waits for an AI response before giving up
+  response_timeout_ms: 60000
+
+  # Max number of visible Snapchat chats to check per poll cycle
+  # (Snapchat Web only renders ~20 chats at a time due to lazy loading)
+  max_recipients: 20
+
+  # Run Puppeteer headless (true = no browser window, faster but harder to debug)
+  headless: false
