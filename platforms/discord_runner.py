@@ -1634,24 +1634,26 @@ async def _get_user_profile_block(user) -> str:
                     parts.append(f"status: {activity.name}")
                     break
 
-        # 1. Check in-memory cache
-        if user.id in _profile_cache:
-            bio = _profile_cache[user.id]
-        else:
-            # 2. Check persistent DB cache
-            bio = get_cached_profile(user.id)
-            if bio is None:
-                # 3. Fetch from Discord and persist
-                try:
-                    profile = await user.profile()
-                    bio = getattr(profile, 'bio', None) or None
-                except Exception:
-                    bio = None
-                set_cached_profile(user.id, bio)
-            _profile_cache[user.id] = bio
+        # Bio lookup is opt-out via config: bot.read_bios
+        if config["bot"].get("read_bios", True):
+            # 1. Check in-memory cache
+            if user.id in _profile_cache:
+                bio = _profile_cache[user.id]
+            else:
+                # 2. Check persistent DB cache
+                bio = get_cached_profile(user.id)
+                if bio is None:
+                    # 3. Fetch from Discord and persist
+                    try:
+                        profile = await user.profile()
+                        bio = getattr(profile, 'bio', None) or None
+                    except Exception:
+                        bio = None
+                    set_cached_profile(user.id, bio)
+                _profile_cache[user.id] = bio
 
-        if bio:
-            parts.append(f"bio: {bio}")
+            if bio:
+                parts.append(f"bio: {bio}")
 
     except Exception:
         pass

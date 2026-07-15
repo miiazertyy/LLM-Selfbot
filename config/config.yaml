@@ -84,6 +84,10 @@ bot:
   # Disable the bot from being able to mention anyone
   disable_mentions: false
 
+  # Whether the bot should read/fetch users' profile bios and include them
+  # in the AI's context. Disable if you don't want it looking at bios at all.
+  read_bios: true
+
   # Whether the bot should ping on replies
   reply_ping: true
 
