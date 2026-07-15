@@ -1608,7 +1608,7 @@ async def is_trigger_message(message):
         or is_dm
         or is_group_dm
         or in_conversation
-    )
+    ), content_has_trigger, mentioned
 
 
 _profile_cache: dict = {}  # user_id -> bio string, in-memory layer on top of DB
@@ -2295,7 +2295,7 @@ async def on_message(message):
     batch_key = f"{user_id}-{channel_id}"
     is_server_channel = isinstance(message.channel, (discord.TextChannel, discord.Thread, discord.ForumChannel, discord.StageChannel, discord.VoiceChannel))
     is_followup = batch_key in bot.user_message_batches and not is_server_channel
-    is_trigger = await is_trigger_message(message)
+    is_trigger, content_has_trigger, mentioned = await is_trigger_message(message)
 
     if (is_trigger or (is_followup and bot.hold_conversation)) and not bot.paused:
         # ── hCaptcha auto-solve ───────────────────────────────────────────────
@@ -2338,7 +2338,13 @@ async def on_message(message):
                         log_error("Captcha Auto-Solve", str(_ce))
                     break  # only process the first image attachment
         # ─────────────────────────────────────────────────────────────────────
-        if random.random() < IGNORE_CHANCE and not message.content.startswith(PREFIX) and not message.content.startswith(PRIORITY_PREFIX):
+        if (
+            random.random() < IGNORE_CHANCE
+            and not content_has_trigger
+            and not mentioned
+            and not message.content.startswith(PREFIX)
+            and not message.content.startswith(PRIORITY_PREFIX)
+        ):
             log_system(f"Ignored message from {message.author.name} (chance skip)")
             return
 
