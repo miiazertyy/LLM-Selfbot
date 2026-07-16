@@ -84,9 +84,14 @@ bot:
   # Disable the bot from being able to mention anyone
   disable_mentions: false
 
-  # Whether the bot should read/fetch users' profile bios and include them
-  # in the AI's context. Disable if you don't want it looking at bios at all.
+  # Whether the bot should read/fetch users' profile bios for AI context
   read_bios: true
+
+  # Whether a matched trigger word always responds, bypassing ignore_chance
+  trigger_bypasses_ignore: true
+
+  # Whether a real @mention always responds, bypassing ignore_chance
+  mention_bypasses_ignore: true
 
   # Whether the bot should ping on replies
   reply_ping: true

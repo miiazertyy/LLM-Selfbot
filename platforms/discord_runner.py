@@ -124,6 +124,10 @@ MAX_HISTORY = 15
 IGNORE_CHANCE = config["bot"]["ignore_chance"]
 CONVERSATION_TIMEOUT = 150.0
 
+# Whether keyword triggers / real @mentions skip the random ignore_chance roll
+TRIGGER_BYPASSES_IGNORE = config["bot"].get("trigger_bypasses_ignore", True)
+MENTION_BYPASSES_IGNORE = config["bot"].get("mention_bypasses_ignore", True)
+
 _MOOD_CFG = config["bot"]["mood"]
 _LATE_CFG = config["bot"]["late_reply"]
 _STALE_CFG = config["bot"].get("stale_reply") or {}
@@ -2342,8 +2346,8 @@ async def on_message(message):
         # ─────────────────────────────────────────────────────────────────────
         if (
             random.random() < IGNORE_CHANCE
-            and not content_has_trigger
-            and not mentioned
+            and not (content_has_trigger and TRIGGER_BYPASSES_IGNORE)
+            and not (mentioned and MENTION_BYPASSES_IGNORE)
             and not message.content.startswith(PREFIX)
             and not message.content.startswith(PRIORITY_PREFIX)
         ):
