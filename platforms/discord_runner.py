@@ -2329,6 +2329,11 @@ async def on_message(message):
                                     _captcha_label = _emb.title.strip()
                                     break
 
+                        # Only actually attempt to solve if we found real evidence
+                        # this is a captcha (keyword match or embed label).
+                        if not _captcha_label:
+                            continue
+
                         _captcha_answer = await solve_hcaptcha(_att.url, label=_captcha_label)
                         if _captcha_answer:
                             log_system(f"hCaptcha solved for {message.author.name}: {_captcha_answer}")
