@@ -243,8 +243,8 @@ async def solve_hcaptcha(
                 "parts": [
                     {"text": prompt},
                     {
-                        "inlineData": {
-                            "mimeType": mime_type,
+                        "inline_data": {
+                            "mime_type": mime_type,
                             "data": b64_image,
                         }
                     },
