@@ -128,6 +128,27 @@ CONVERSATION_TIMEOUT = 150.0
 TRIGGER_BYPASSES_IGNORE = config["bot"].get("trigger_bypasses_ignore", True)
 MENTION_BYPASSES_IGNORE = config["bot"].get("mention_bypasses_ignore", True)
 
+# Whether to enforce a random gap between any two replies (global, not
+# per-user), and how long that gap should be. Disable entirely for a
+# personal/single-user bot.
+GLOBAL_COOLDOWN_ENABLED = config["bot"].get("global_cooldown_enabled", True)
+GLOBAL_COOLDOWN_MIN = config["bot"].get("global_cooldown_min", 45)
+GLOBAL_COOLDOWN_MAX = config["bot"].get("global_cooldown_max", 120)
+
+# How long to keep waiting for a follow-up message before treating the batch
+# as complete (the "is the user still typing more?" pause).
+BATCH_TAIL_WAIT_MIN = config["bot"].get("batch_tail_wait_min", 1.5)
+BATCH_TAIL_WAIT_MAX = config["bot"].get("batch_tail_wait_max", 7.0)
+
+# Simulated "reading" delay before the bot starts typing a reply, per channel
+# type. Kept separately configurable since DMs/GCs/servers feel different.
+READ_DELAY_DM_MIN = config["bot"].get("read_delay_dm_min", 2.5)
+READ_DELAY_DM_MAX = config["bot"].get("read_delay_dm_max", 8.0)
+READ_DELAY_GROUP_MIN = config["bot"].get("read_delay_group_min", 1.5)
+READ_DELAY_GROUP_MAX = config["bot"].get("read_delay_group_max", 5.0)
+READ_DELAY_SERVER_MIN = config["bot"].get("read_delay_server_min", 1.0)
+READ_DELAY_SERVER_MAX = config["bot"].get("read_delay_server_max", 4.0)
+
 _MOOD_CFG = config["bot"]["mood"]
 _LATE_CFG = config["bot"]["late_reply"]
 _STALE_CFG = config["bot"].get("stale_reply") or {}
@@ -1847,15 +1868,21 @@ async def generate_response_and_reply(message, prompt, history, image_url=None, 
 
     pics_cfg = config["bot"].get("pictures") or {}
     _available_pics = _get_random_picture() if pics_cfg.get("enabled", True) and _is_picture_request(prompt) else None
-    _peek_desc = _available_pics[0][2] if _available_pics else ""
+    _chosen_pic_idx = None
     if _available_pics:
+        _pic_list_str = "\n".join(f"{i}: {desc}" for i, (_t, _p, desc) in enumerate(_available_pics))
         enriched_instructions += (
             "\n\n[IMPORTANT: You ARE sending the user a photo of yourself RIGHT NOW in this very reply. "
-            + (f"The photo shows: {_peek_desc} " if _peek_desc else "")
-            + "The image is already attached and being sent. "
+            "The image is already attached and being sent. "
             "NEVER say 'maybe later', 'not right now', 'later', 'next time', 'maybe another time', or anything that implies you are NOT sending a photo — you already are. "
             "Do NOT describe or caption the photo. "
-            "Just react casually like a real person who just hit send on a selfie — short, natural, confident.]"
+            "Just react casually like a real person who just hit send on a selfie — short, natural, confident.\n"
+            "Here are the photos you could be sending, pick whichever best fits what was asked for "
+            "(e.g. if they asked for a specific pose, outfit, or setting, match that):\n"
+            f"{_pic_list_str}\n"
+            "End your reply on its own new line with exactly: [[PIC:N]] where N is the number of the "
+            "photo you picked. If none fit better than any other, just pick 0. This tag will be removed "
+            "before the user sees your message — never mention it or the numbering in your visible reply.]"
         )
 
     late_opener = ""
@@ -1902,13 +1929,27 @@ async def generate_response_and_reply(message, prompt, history, image_url=None, 
     # Simulate the bot "reading" the message before it starts typing.
     # DMs get a longer read delay (read receipts are visible there).
     # Group chats and server channels get a shorter one to feel natural.
+    # bypass_typing (used for fast-path replies) scales the same range down
+    # to ~40% instead of needing its own separate config knobs.
     if bot.realistic_typing:
         if isinstance(message.channel, discord.DMChannel):
-            _read_delay = random.uniform(1.0, 3.0) if bypass_typing else random.uniform(2.5, 8.0)
+            _read_delay = (
+                random.uniform(READ_DELAY_DM_MIN * 0.4, READ_DELAY_DM_MAX * 0.375)
+                if bypass_typing
+                else random.uniform(READ_DELAY_DM_MIN, READ_DELAY_DM_MAX)
+            )
         elif isinstance(message.channel, discord.GroupChannel):
-            _read_delay = random.uniform(0.8, 3.5) if bypass_typing else random.uniform(1.5, 5.0)
+            _read_delay = (
+                random.uniform(READ_DELAY_GROUP_MIN * 0.4, READ_DELAY_GROUP_MAX * 0.375)
+                if bypass_typing
+                else random.uniform(READ_DELAY_GROUP_MIN, READ_DELAY_GROUP_MAX)
+            )
         else:
-            _read_delay = random.uniform(0.5, 2.0) if bypass_typing else random.uniform(1.0, 4.0)
+            _read_delay = (
+                random.uniform(READ_DELAY_SERVER_MIN * 0.4, READ_DELAY_SERVER_MAX * 0.375)
+                if bypass_typing
+                else random.uniform(READ_DELAY_SERVER_MIN, READ_DELAY_SERVER_MAX)
+            )
         await asyncio.sleep(_read_delay)
 
     for attempt in range(max_retries):
@@ -2012,6 +2053,21 @@ async def generate_response_and_reply(message, prompt, history, image_url=None, 
 
     response = strip_meta(response).replace("—", "").replace("–", "")
 
+    if _available_pics:
+        _pic_tag_match = re.search(r"\[\[PIC:(\d+)\]\]\s*$", response)
+        if _pic_tag_match:
+            try:
+                _idx = int(_pic_tag_match.group(1))
+                if 0 <= _idx < len(_available_pics):
+                    _chosen_pic_idx = _idx
+            except ValueError:
+                pass
+            response = response[:_pic_tag_match.start()].rstrip()
+        else:
+            # Tag missing or not at the end (model didn't follow instructions) —
+            # strip any stray occurrence and fall back to random selection.
+            response = re.sub(r"\[\[PIC:\d+\]\]", "", response).strip()
+
     tts_cfg = config["bot"].get("tts") or {}
     if tts_cfg.get("enabled", True) and is_tts_request(prompt):
         try:
@@ -2050,14 +2106,16 @@ async def generate_response_and_reply(message, prompt, history, image_url=None, 
     if len(chunks) > 3:
         chunks = chunks[:3]
 
-    # Inter-user cooldown: if another user was just replied to, wait a human-like gap
-    # before sending to avoid two different conversations getting replies seconds apart.
-    # Skipped when bypass_cooldown=True (e.g. ,respond all bulk-send mode).
-    if not bypass_cooldown:
+    # Global cooldown: wait a human-like gap after any reply before sending the
+    # next one, so replies to different conversations don't land seconds apart.
+    # Global means it applies regardless of who is being replied to. Skipped when
+    # bypass_cooldown=True (e.g. ,respond all bulk-send mode) or when disabled via
+    # config (bot.global_cooldown_enabled).
+    if not bypass_cooldown and GLOBAL_COOLDOWN_ENABLED:
         _time_since_last = time.time() - bot.last_global_send
-        _inter_user_gap = random.uniform(45, 120)
-        if _time_since_last < _inter_user_gap:
-            await asyncio.sleep(_inter_user_gap - _time_since_last)
+        _global_cooldown_gap = random.uniform(GLOBAL_COOLDOWN_MIN, GLOBAL_COOLDOWN_MAX)
+        if _time_since_last < _global_cooldown_gap:
+            await asyncio.sleep(_global_cooldown_gap - _time_since_last)
 
     # Small random pre-lock jitter: prevents perfectly serialized sends from
     # looking mechanical when multiple users are active at the same time.
@@ -2072,7 +2130,14 @@ async def generate_response_and_reply(message, prompt, history, image_url=None, 
             if not available:
                 bot.sent_pictures[uid] = set()
                 available = all_pics
-            pic_type, pic_value, _pic_desc = random.choice(available)
+            # Prefer the AI's chosen picture if it's still eligible (i.e. hasn't
+            # already been sent to this user); otherwise fall back to random.
+            _chosen_entry = None
+            if _chosen_pic_idx is not None and 0 <= _chosen_pic_idx < len(all_pics):
+                _candidate = all_pics[_chosen_pic_idx]
+                if _candidate in available:
+                    _chosen_entry = _candidate
+            pic_type, pic_value, _pic_desc = _chosen_entry or random.choice(available)
             bot.sent_pictures.setdefault(uid, set()).add(pic_value)
             try:
                 if bot.realistic_typing:
@@ -2330,7 +2395,8 @@ async def on_message(message):
                                     break
 
                         # Only actually attempt to solve if we found real evidence
-                        # this is a captcha (keyword match or embed label).
+                        # this is a captcha (keyword match or embed label). Without
+                        # that, this would fire on every single image posted.
                         if not _captcha_label:
                             continue
 
@@ -2422,7 +2488,7 @@ async def process_message_queue(batch_key):
                     # Keep collecting messages until the user stops sending.
                     # High variance mimics real human pause patterns (quick replies
                     # vs thinking before continuing) — fixed ranges look mechanical.
-                    BATCH_TAIL_WAIT = random.uniform(1.5, 7.0)
+                    BATCH_TAIL_WAIT = random.uniform(BATCH_TAIL_WAIT_MIN, BATCH_TAIL_WAIT_MAX)
                     BATCH_POLL_INTERVAL = 0.3
                     last_received = time.time()
                     while True:
