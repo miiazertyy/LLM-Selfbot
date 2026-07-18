@@ -96,6 +96,7 @@ COMMANDS AVAILABLE:
     /imagels / imagelist    — list all pictures with descriptions
     /imagedownload / imagedl <n>  — download image by number
     /imagedelete <n>    — delete image by number
+    /imagedesc <n> <text> — manually set/replace an image's description
     /imagedeleteall     — delete all images
 
   🛠️ System
@@ -1258,6 +1259,38 @@ async def cmd_imagedelete(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @owner_only
+async def cmd_imagedesc(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    account = _get_account(context)
+    label = _account_label(account)
+    if not context.args or len(context.args) < 2:
+        await update.message.reply_text(
+            "Usage: /imagedesc <n> <description>\n"
+            "Example: /imagedesc 3 me at the beach in a blue hoodie, sunset in background\n"
+            "Use /imagels to see image numbers. This replaces any existing (auto-generated "
+            "or manual) description for that image."
+        )
+        return
+
+    num = context.args[0].strip()
+    if not num.isdigit():
+        await update.message.reply_text(f"❌ Invalid number: `{num}`")
+        return
+
+    description = " ".join(context.args[1:]).strip()
+    cmd_id = _send_command(account, "image_setdesc", {"name": num, "description": description})
+    result = await _wait_for_result(account, cmd_id, timeout=10.0)
+    if result and result.get("ok"):
+        desc_preview = result.get("description", description)
+        if len(desc_preview) > 200:
+            desc_preview = desc_preview[:197] + "…"
+        await update.message.reply_text(f"{label}✅ Description set for image #{num}:\n{desc_preview}")
+    elif result:
+        await update.message.reply_text(f"❌ {result.get('reason', 'Unknown error')}")
+    else:
+        await update.message.reply_text(f"{label}⚠️ Selfbot did not respond in time.")
+
+
+@owner_only
 async def cmd_imagedeleteall(update: Update, context: ContextTypes.DEFAULT_TYPE):
     account = _get_account(context)
     label = _account_label(account)
@@ -2346,6 +2379,7 @@ async def _send_help(update: Update, context: ContextTypes.DEFAULT_TYPE = None, 
   /imageupload \u2014 upload picture\\(s\\) \\(attach file \u2014 auto\\-analysed\\)
   /imagedownload /imagedl \\<n\\> \u2014 download a picture by number
   /imagedelete \\<n\\> \u2014 delete a picture by number
+  /imagedesc \\<n\\> \\<text\\> \u2014 manually set an image's description
   /imagedeleteall \u2014 delete all pictures
 `─────────────────────────────`
   🎭  *Profile & Status*
@@ -2508,6 +2542,7 @@ _MENU_COMMANDS = [
     BotCommand("imageupload", "Upload picture(s)"),
     BotCommand("imagedownload", "Download a picture by number"),
     BotCommand("imagedelete", "Delete a picture by number"),
+    BotCommand("imagedesc", "Set a picture's description"),
     BotCommand("imagedeleteall", "Delete all pictures"),
     BotCommand("ping", "Check the controller is running"),
     BotCommand("restart", "Restart the bot"),
@@ -2625,6 +2660,7 @@ def main():
     app.add_handler(CommandHandler("imagedownload",   cmd_imagedownload))
     app.add_handler(CommandHandler("imagedl",         cmd_imagedownload))
     app.add_handler(CommandHandler("imagedelete",     cmd_imagedelete))
+    app.add_handler(CommandHandler("imagedesc",       cmd_imagedesc))
     app.add_handler(CommandHandler("imagedeleteall",  cmd_imagedeleteall))
     app.add_handler(CommandHandler("imageupload",     cmd_imageupload))
     app.add_handler(CallbackQueryHandler(_imagels_callback,     pattern=r"^imgls:"))

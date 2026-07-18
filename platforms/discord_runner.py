@@ -1371,6 +1371,28 @@ async def _tg_ipc_loop():
                         log_error("image_analyse", str(_ia_e))
                         _write_result(cmd_id, {"ok": False, "reason": str(_ia_e)})
 
+                # ── image_setdesc ────────────────────────────────────────────
+                elif cmd == "image_setdesc":
+                    from utils.helpers import resource_path as _rp_isd
+                    from utils.db import add_picture_description as _apd_isd
+                    _isd_folder = _rp_isd("config/pictures")
+                    _isd_exts = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
+                    _isd_name = payload.get("name", "")
+                    _isd_desc = (payload.get("description") or "").strip()
+                    _isd_files = sorted([f for f in os.listdir(_isd_folder) if os.path.splitext(f)[1].lower() in _isd_exts]) if os.path.exists(_isd_folder) else []
+                    if _isd_name.isdigit():
+                        _isd_matches = [f for f in _isd_files if os.path.splitext(f)[0] == f"IMG_{_isd_name}"]
+                        _isd_name = _isd_matches[0] if _isd_matches else _isd_name
+                    _isd_path = os.path.join(_isd_folder, _isd_name)
+                    if not _isd_desc:
+                        _write_result(cmd_id, {"ok": False, "reason": "Description can't be empty."})
+                    elif not os.path.exists(_isd_path):
+                        _write_result(cmd_id, {"ok": False, "reason": f"Image `{_isd_name}` not found."})
+                    else:
+                        _apd_isd(_isd_name, _isd_desc)
+                        log_system(f"Description manually set for {_isd_name}: {_isd_desc[:80]}")
+                        _write_result(cmd_id, {"ok": True, "name": _isd_name, "description": _isd_desc})
+
                 # ── image_delete ──────────────────────────────────────────────
                 elif cmd == "image_delete":
                     from utils.helpers import resource_path as _rp_img
