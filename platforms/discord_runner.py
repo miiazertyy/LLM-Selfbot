@@ -179,7 +179,7 @@ def create_bot() -> commands.Bot:
     b.processing_locks = {}
     b.user_message_batches = {}
     b.active_conversations = {}
-    b.sent_pictures = {}
+    b.last_sent_picture = {}
     b._memory_cache = {}
     b._memory_call_counter = {}
     b.paused_users = set()
@@ -269,9 +269,9 @@ async def _cleanup_loop():
         # Prune lang cache for users not seen in 24h (count resets naturally but entries accumulate)
         if len(bot._lang_cache) > 500:
             bot._lang_cache.clear()
-        # Prune per-user picture sent sets — reset after 100 unique users to avoid unbounded growth
-        if len(bot.sent_pictures) > 100:
-            bot.sent_pictures.clear()
+        # Prune per-user last-sent-picture tracking — reset after 100 unique users to avoid unbounded growth
+        if len(bot.last_sent_picture) > 100:
+            bot.last_sent_picture.clear()
         log_system(f"Cleanup: pruned {len(stale_counts)} count(s), {len(expired_cd)} cooldown(s), {len(stale_conv)} conversation(s)")
 
 
@@ -2082,10 +2082,14 @@ async def generate_response_and_reply(message, prompt, history, image_url=None, 
                 _idx = int(_pic_tag_match.group(1))
                 if 0 <= _idx < len(_available_pics):
                     _chosen_pic_idx = _idx
+                    log_system(f"[PIC] AI chose #{_idx}: {_available_pics[_idx][2][:60]}")
+                else:
+                    log_system(f"[PIC] AI returned out-of-range index {_idx} (have {len(_available_pics)} pics) — falling back to random")
             except ValueError:
                 pass
             response = response[:_pic_tag_match.start()].rstrip()
         else:
+            log_system(f"[PIC] No [[PIC:N]] tag found in response — falling back to random. Raw tail: {response[-80:]!r}")
             # Tag missing or not at the end (model didn't follow instructions) —
             # strip any stray occurrence and fall back to random selection.
             response = re.sub(r"\[\[PIC:\d+\]\]", "", response).strip()
@@ -2147,20 +2151,28 @@ async def generate_response_and_reply(message, prompt, history, image_url=None, 
         if _available_pics and pics_cfg.get("enabled", True):
             all_pics = _available_pics
             uid = message.author.id
-            sent = bot.sent_pictures.get(uid, set())
-            available = [p for p in all_pics if p[1] not in sent]
-            if not available:
-                bot.sent_pictures[uid] = set()
-                available = all_pics
-            # Prefer the AI's chosen picture if it's still eligible (i.e. hasn't
-            # already been sent to this user); otherwise fall back to random.
+            last_sent = bot.last_sent_picture.get(uid)
+            # Only exclude the single most-recently-sent picture (no consecutive
+            # repeats), not the user's whole history so that earlier pictures can
+            # come back around. Falls back to the full list if there's only
+            # one picture total (nothing else to pick from).
+            available = [p for p in all_pics if p[1] != last_sent] or all_pics
+            # Prefer the AI's chosen picture if it's still eligible (i.e. not
+            # the same one just sent last); otherwise fall back to random.
             _chosen_entry = None
             if _chosen_pic_idx is not None and 0 <= _chosen_pic_idx < len(all_pics):
                 _candidate = all_pics[_chosen_pic_idx]
                 if _candidate in available:
                     _chosen_entry = _candidate
+                else:
+                    log_system(
+                        f"[PIC] AI's pick #{_chosen_pic_idx} was the same as the last picture "
+                        f"sent to this user — overriding with a random pick instead"
+                    )
             pic_type, pic_value, _pic_desc = _chosen_entry or random.choice(available)
-            bot.sent_pictures.setdefault(uid, set()).add(pic_value)
+            if not _chosen_entry and _chosen_pic_idx is not None:
+                log_system(f"[PIC] Sent random fallback instead: {_pic_desc[:60]}")
+            bot.last_sent_picture[uid] = pic_value
             try:
                 if bot.realistic_typing:
                     await asyncio.sleep(random.uniform(1, 3))
