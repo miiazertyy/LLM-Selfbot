@@ -1891,6 +1891,7 @@ async def generate_response_and_reply(message, prompt, history, image_url=None, 
     pics_cfg = config["bot"].get("pictures") or {}
     _available_pics = _get_random_picture() if pics_cfg.get("enabled", True) and _is_picture_request(prompt) else None
     _chosen_pic_idx = None
+    _chosen_pic_idx2 = None
     if _available_pics:
         _pic_list_str = "\n".join(f"{i}: {desc}" for i, (_t, _p, desc) in enumerate(_available_pics))
         enriched_instructions += (
@@ -1902,9 +1903,12 @@ async def generate_response_and_reply(message, prompt, history, image_url=None, 
             "Here are the photos you could be sending, pick whichever best fits what was asked for "
             "(e.g. if they asked for a specific pose, outfit, or setting, match that):\n"
             f"{_pic_list_str}\n"
-            "End your reply on its own new line with exactly: [[PIC:N]] where N is the number of the "
-            "photo you picked. If none fit better than any other, just pick 0. This tag will be removed "
-            "before the user sees your message — never mention it or the numbering in your visible reply.]"
+            "End your reply on its own new line with exactly: [[PIC:N|N2]] where N is your first-choice "
+            "photo number and N2 is your second-best choice (a different number), used as a fallback only "
+            "if your first choice turns out to be the same photo that was just sent last time. If there's "
+            "only one photo available, use the same number for both. If none fit better than any other, "
+            "just pick 0|1 (or 0|0 if only one exists). This tag will be removed before the user sees your "
+            "message — never mention it or the numbering in your visible reply.]"
         )
 
     late_opener = ""
@@ -2076,23 +2080,30 @@ async def generate_response_and_reply(message, prompt, history, image_url=None, 
     response = strip_meta(response).replace("—", "").replace("–", "")
 
     if _available_pics:
-        _pic_tag_match = re.search(r"\[\[PIC:(\d+)\]\]\s*$", response)
+        _pic_tag_match = re.search(r"\[\[PIC:(\d+)(?:\|(\d+))?\]\]\s*$", response)
         if _pic_tag_match:
             try:
                 _idx = int(_pic_tag_match.group(1))
+                _idx2 = int(_pic_tag_match.group(2)) if _pic_tag_match.group(2) is not None else None
                 if 0 <= _idx < len(_available_pics):
                     _chosen_pic_idx = _idx
-                    log_system(f"[PIC] AI chose #{_idx}: {_available_pics[_idx][2][:60]}")
+                    _log_msg = f"[PIC] AI chose #{_idx}: {_available_pics[_idx][2][:60]}"
+                    if _idx2 is not None and 0 <= _idx2 < len(_available_pics):
+                        _chosen_pic_idx2 = _idx2
+                        _log_msg += f" (2nd choice #{_idx2}: {_available_pics[_idx2][2][:40]})"
+                    log_system(_log_msg)
                 else:
-                    log_system(f"[PIC] AI returned out-of-range index {_idx} (have {len(_available_pics)} pics) — falling back to random")
+                    log_system(f"[PIC] AI returned out-of-range first choice {_idx} (have {len(_available_pics)} pics)")
+                    if _idx2 is not None and 0 <= _idx2 < len(_available_pics):
+                        _chosen_pic_idx2 = _idx2
             except ValueError:
                 pass
             response = response[:_pic_tag_match.start()].rstrip()
         else:
-            log_system(f"[PIC] No [[PIC:N]] tag found in response — falling back to random. Raw tail: {response[-80:]!r}")
+            log_system(f"[PIC] No [[PIC:N|N2]] tag found in response — falling back to random. Raw tail: {response[-80:]!r}")
             # Tag missing or not at the end (model didn't follow instructions) —
             # strip any stray occurrence and fall back to random selection.
-            response = re.sub(r"\[\[PIC:\d+\]\]", "", response).strip()
+            response = re.sub(r"\[\[PIC:\d+(?:\|\d+)?\]\]", "", response).strip()
 
     tts_cfg = config["bot"].get("tts") or {}
     if tts_cfg.get("enabled", True) and is_tts_request(prompt):
@@ -2153,22 +2164,30 @@ async def generate_response_and_reply(message, prompt, history, image_url=None, 
             uid = message.author.id
             last_sent = bot.last_sent_picture.get(uid)
             # Only exclude the single most-recently-sent picture (no consecutive
-            # repeats), not the user's whole history so that earlier pictures can
+            # repeats), not the user's whole history — earlier pictures can
             # come back around. Falls back to the full list if there's only
             # one picture total (nothing else to pick from).
             available = [p for p in all_pics if p[1] != last_sent] or all_pics
-            # Prefer the AI's chosen picture if it's still eligible (i.e. not
-            # the same one just sent last); otherwise fall back to random.
+            # Try the AI's first choice, then its second choice, before ever
+            # falling back to a true random pick — this should make random
+            # fallback rare, only happening if both choices are unusable
+            # (e.g. both happened to equal the last-sent picture, or the
+            # model didn't return a usable tag at all).
             _chosen_entry = None
             if _chosen_pic_idx is not None and 0 <= _chosen_pic_idx < len(all_pics):
                 _candidate = all_pics[_chosen_pic_idx]
                 if _candidate in available:
                     _chosen_entry = _candidate
-                else:
+            if _chosen_entry is None and _chosen_pic_idx2 is not None and 0 <= _chosen_pic_idx2 < len(all_pics):
+                _candidate2 = all_pics[_chosen_pic_idx2]
+                if _candidate2 in available:
+                    _chosen_entry = _candidate2
                     log_system(
-                        f"[PIC] AI's pick #{_chosen_pic_idx} was the same as the last picture "
-                        f"sent to this user — overriding with a random pick instead"
+                        f"[PIC] 1st choice #{_chosen_pic_idx} was the last picture sent — "
+                        f"using 2nd choice #{_chosen_pic_idx2} instead"
                     )
+            if _chosen_entry is None and _chosen_pic_idx is not None:
+                log_system("[PIC] Both AI choices unusable — falling back to true random")
             pic_type, pic_value, _pic_desc = _chosen_entry or random.choice(available)
             if not _chosen_entry and _chosen_pic_idx is not None:
                 log_system(f"[PIC] Sent random fallback instead: {_pic_desc[:60]}")
