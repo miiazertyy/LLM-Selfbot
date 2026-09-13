@@ -1,0 +1,323 @@
+bot:
+  # Your account's user ID (can't be the same as the bot's ID)
+  owner_id: 272402839874174976
+
+  # Prefix for bot commands
+  prefix: "/"
+
+  # The word(s) the AI responds to
+  trigger: "John, Jon"
+
+  # Fallback language until there's enough text to auto-detect one.
+  # Short messages (e.g. "tg", "ok") keep this instead of guessing.
+  default_language: "en"
+
+  # Models to use from Groq (falls back to the next one on rate limit)
+  groq_models:
+    - "openai/gpt-oss-120b"
+    - "openai/gpt-oss-20b"
+
+  # Fast model for utility calls (memory extraction, language detection,
+  # summaries, memory-deletion checks). Keeps the big model free for chat.
+  groq_small_model: "openai/gpt-oss-20b"
+
+  # Model used for image description (must support vision)
+  groq_image_model: "qwen/qwen3.6-27b"
+
+  # Model used for voice transcription
+  groq_whisper_model: "whisper-large-v3-turbo"
+
+  # Voice used for voice messages. Groq offers an English and an Arabic voice.
+  groq_tts_model: "canopylabs/orpheus-v1-english"
+
+  # --- Running the brain on this machine ---
+  # Point this at anything that speaks the OpenAI chat API: Ollama, LM Studio,
+  # llama.cpp's server, vLLM. Turning it on means replies are written here, so
+  # there are no rate limits, no key, and nothing leaves the machine.
+  #
+  # Only replies move. Voice messages still need a Groq key, because no local
+  # server does speech. Images need one too unless the local model can see and
+  # vision is turned on below.
+  #
+  # Set it up under Settings, Local AI, which finds a running server for you.
+  local:
+    enabled: false
+    base_url: "http://127.0.0.1:11434/v1"
+    model: ""
+    api_key: "local"      # most servers ignore it but reject an empty one
+    vision: false         # only if the model you picked can actually read images
+
+  # TTS voice settings
+  tts:
+    enabled: false
+    voice: "diana"        # autumn / diana / hannah / austin / daniel / troy
+    tones:
+      - "[casual]"
+      - "[warm]"
+
+  # Pictures / selfies: when someone asks for a photo, the bot sends one from
+  # config/pictures (upload with ,image / Telegram). Used by Discord + Snapchat.
+  pictures:
+    enabled: true
+
+  # Respond to DMs
+  allow_dm: true
+
+  # Respond in group chats
+  allow_gc: true
+
+  # Respond to mentions/replies in servers
+  allow_server: true
+
+  # Realistic typing
+  realistic_typing: true
+
+  # Wait and collect multiple messages before responding
+  batch_messages: true
+
+  # Time before responding
+  batch_wait_times:
+    - time: 20
+      weight: 30
+    - time: 40
+      weight: 35
+    - time: 90
+      weight: 22
+    - time: 600
+      weight: 10
+    - time: 1600
+      weight: 3
+
+  # Anti-detection settings
+  ignore_chance: 0.08       # chance to ignore a message
+  typo_chance: 0.03         # chance of a typo per message (~human rate)
+  edit_after_send_chance: 0.015  # chance to fix a small slip right after sending
+
+  # Priority prefix to bypass batch wait times
+  priority_prefix: "="
+
+  # Keep replying even when there's no trigger word
+  hold_conversation: true
+
+  # Anti age ban measures
+  anti_age_ban: false
+
+  # Prevent the bot from mentioning anyone
+  disable_mentions: false
+
+  # Read users' profile bios for AI context
+  read_bios: true
+
+  # A matched trigger word always responds, bypassing ignore_chance
+  trigger_bypasses_ignore: true
+
+  # A real @mention always responds, bypassing ignore_chance
+  mention_bypasses_ignore: true
+
+  # Ping on replies
+  reply_ping: true
+
+  # --- Mood system ---
+  mood:
+    # Off to begin with: a fresh install should sound like the persona you
+    # wrote, not drift into moods you have not read yet. Turn it on from the
+    # Persona page once the moods say what you want.
+    enabled: false
+    shift_interval_min: 1800   # 30 minutes
+    shift_interval_max: 3600   # 60 minutes
+    moods:
+      chill: "Be relaxed and unbothered. Keep replies easy-going, don't overthink."
+      playful: "Be playful and energetic. Tease more, be funnier than usual."
+      busy: "You're distracted. Keep replies short, slightly impatient."
+      tired: "You're tired. Low energy, shorter replies, less enthusiasm."
+      annoyed: "You're mildly annoyed. Be blunt and less patient, but not rude."
+      flirty: "Be flirty and a bit more suggestive than usual."
+
+  # --- Client profile (gateway + REST fingerprint) ---
+  # "desktop" = spoof the Discord desktop app (profile shows desktop).
+  # "web" = Discord in a browser (what a normal discord.com user looks like).
+  # Both require a restart; web is the safer of the two.
+  # Give each account its own persona file. Off means every account shares
+  # config/instructions.txt. On, account 2 reads config/instructions_2.txt,
+  # account 3 instructions_3.txt, and so on; account 1 keeps the shared file.
+  per_account_persona: false
+
+  client_profile: desktop
+
+  # Persona timezone/locale for REST headers (kept consistent with the AI's
+  # "current time" context). Change both to match your persona.
+  timezone: "Europe/Paris"
+  locale: "en-US"
+
+  # Desktop spoof tuning (used only when client_profile: desktop)
+  desktop:
+    build_number: 407894   # desktop client build (cosmetic, update occasionally)
+
+  # --- Random status loop ---
+  status:
+    enabled: true
+    change_interval_min: 1800
+    change_interval_max: 10800
+    statuses:
+      - online
+      - idle
+      - dnd
+    # Optional weights for the statuses above (must match their order).
+    # Defaults when omitted: mostly online, some idle, rare dnd.
+    # weights: [0.85, 0.12, 0.03]
+
+  # --- Night invisibility ---
+  # Humans sleep. During these LOCAL hours the account goes invisible (still
+  # replies normally - invisible is not offline). Hours use the timezone
+  # below and may wrap midnight ("23-7"). Set enabled: false to stay visible.
+  night_invisible:
+    enabled: true
+    hours: "2-8"
+    timezone: "Europe/Paris"
+
+  # --- Message style (verbosity) ---
+  # short: terse 1-2 sentence replies. balanced (recommended): casual, one
+  # idea per message, splits longer thoughts into 2-3 messages. chatty:
+  # talkative, longer replies, still split into 2-4 messages.
+  message_style:
+    mode: balanced           # short | balanced | chatty
+    # max_chunk_chars: 400   # optional override per mode (180/400/800 default)
+
+  # --- Emoji reactions ---
+  # The AI decides from context when to react (laugh, acknowledge, close a
+  # subject), instead of a blind percentage. react_only_max_ratio caps how
+  # often it reacts WITHOUT a text reply.
+  #
+  # chance is the second half of that decision, and the reason it exists is
+  # that asking a model to do something "only sometimes" does not work: it
+  # reached for a reaction on nearly every reply. So the model picks the emoji
+  # and this decides whether to actually use it.
+  # emojis is the set this character actually uses, and it is part of how they
+  # come across: edit it under Persona, Reactions. Anything the model picks that
+  # is not in this list is ignored, so a model getting creative cannot make
+  # Discord reject the reaction.
+  reactions:
+    enabled: true
+    chance: 0.3
+    react_only_max_ratio: 0.1
+    emojis: ["😂", "🤣", "😭", "💀", "😅", "😆", "😊", "🥹", "😍", "😳",
+             "🤔", "👍", "❤️", "🔥", "🙏", "😎", "🥲", "😢", "😤", "🫡",
+             "🙂", "🫠", "🤝", "👀", "🙄", "😴", "🤷", "🫶", "😐", "🥰"]
+
+  # --- Profile cards ---
+  # Clicking a name in the panel shows what is stored about that person.
+  profile_cache:
+    enabled: true
+
+  # --- Late reply openers ---
+  late_reply:
+    enabled: true
+    threshold: 300   # 5 minutes
+    openers_en:
+      - "sorry was watching tiktok lol "
+      - "omg sorry just saw this "
+      - "sorry was busy haha "
+      - "oh sorry didn't see this "
+      - "lol sorry took a while "
+      - "sorry was distracted "
+      - "oh wait i just saw this lol "
+    openers_fr:
+      - "déso je viens de voir lol "
+      - "pardon j'étais occupée haha "
+      - "mdrr déso je t'avais pas vu "
+      - "oh pardon je regardais tiktok "
+      - "déso j'ai mis du temps "
+    french_indicators:
+      - "bonjour"
+      - "salut"
+      - "coucou"
+      - "quoi"
+      - "tu"
+      - "vous"
+      - "je"
+      - "moi"
+      - "ouais"
+      - "non"
+      - "oui"
+      - "bah"
+      - "wesh"
+      - "mdrr"
+      - "ptdr"
+
+  # --- Abandon reply ---
+  stale_reply:
+    enabled: true
+    max_messages: 10
+    min_age: 120
+
+  # --- Friend requests ---
+  friend_requests:
+    enabled: true
+    accept_delay_min: 120  # minimum seconds before accepting (2 min)
+    accept_delay_max: 600  # maximum seconds before accepting (10 min)
+
+  # --- Nudge system ---
+  nudge:
+    enabled: false          # flip to true to activate
+    threshold_days: 2       # how long before a nudge fires
+    check_interval_hours: 6 # how often the loop checks
+    send_during_hours:
+      - 10                  # don't nudge before 10am
+      - 22                  # don't nudge after 10pm
+
+# Must be a top-level key, readers call config.get("notifications", {})
+notifications:
+  error_webhook: ""
+  ratelimit_notifications: true
+  telegram_error_notifications: true
+
+# ── Services: what the supervisor launches ────────────────────────────────────
+# Each platform can be toggled independently. The webui service controls the
+# built-in control panel (desktop window + optional remote access).
+services:
+  discord:
+    enabled: true
+  snapchat:
+    enabled: true
+  telegram:
+    enabled: true
+  webui:
+    enabled: true
+    port: 8787
+    bind: "127.0.0.1"    # keep 127.0.0.1, use Tailscale/Cloudflare Tunnel for remote
+
+# ── Discord Platform ───────────────────────────────────────────────────────────
+discord:
+  # Set to false to disable the Discord selfbot entirely
+  enabled: true
+
+# ── Snapchat Platform ──────────────────────────────────────────────────────────
+snapchat:
+  # Set to true to enable the Snapchat platform alongside Discord
+  enabled: true
+
+  # How often (ms) the Node runner polls visible chats for new messages
+  poll_interval_ms: 8000
+
+  # How long (ms) the Python bridge waits for an AI response before giving up
+  response_timeout_ms: 60000
+
+  # Max number of visible Snapchat chats to check per poll cycle
+  # (Snapchat Web only renders ~20 chats at a time due to lazy loading)
+  max_recipients: 20
+
+  # Run Puppeteer headless (true = no browser window; first login needs false)
+  headless: false
+
+  # ── Anti-ban send governor ────────────────────────────────────────────────
+  # Randomised gap between any two sends (milliseconds)
+  min_send_gap_ms: 12000
+  max_send_gap_ms: 40000
+  # Rolling hourly send cap, going over this waits
+  max_sends_per_hour: 30
+  # Quiet hours (local 24h window, "2-9" = silent 2am–9am; empty = always on)
+  quiet_hours: ""
+
+  # Automatically accept pending friend requests.
+  # OFF by default, bulk-accepting is a classic automation flag.
+  auto_add_friends: false

@@ -1,0 +1,65 @@
+# ── Runtime state (never committed) ───────────────────────────────────────────
+# config/ is seeded from resources/ on first run and is entirely local: the live
+# config.yaml, .env, SQLite DB, pictures, temp media and IPC files.
+# Leading slash = repo root only. A bare "snapchat/" would also match
+# app/platforms/snapchat/, excluding the Node runner source from the repo.
+/config/
+/ipc/
+/logs/
+/backups/
+/data/
+/snapchat/
+/bin/
+# A folder named "portable" beside the app is the opt in that makes it keep all
+# of its state inside its own folder, so it holds exactly what /config/ holds.
+/portable/
+/webview/
+*.flag
+**/*-cookies.json
+
+# ── Secrets, belt and braces in case config/ is ever un-ignored ──────────────
+# `.env` matches the live file only; resources/example.env is the committed
+# template and is deliberately NOT matched by these.
+.env
+.env.*
+*.db
+*.sqlite
+*.sqlite3
+
+# ── Build output ──────────────────────────────────────────────────────────────
+webui/dist/
+build/
+dist/
+# Covers the PyInstaller binaries and the Inno Setup installer, which
+# installer.iss writes to the repo root.
+*.exe
+
+# ── Dependencies ──────────────────────────────────────────────────────────────
+node_modules/
+__pycache__/
+*.py[co]
+.venv/
+venv/
+*.egg-info/
+
+# ── Tool caches ───────────────────────────────────────────────────────────────
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ── OS / editor cruft ─────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.log
+
+# ── Scratch and merge leftovers ───────────────────────────────────────────────
+*.bak
+*.tmp
+*.orig
+*.rej
+
+# ── Owner's own notes, not part of the project ────────────────────────────────
+# Without this, git add . would publish it.
+/donotread.txt

@@ -1,0 +1,883 @@
+@import "tailwindcss";
+
+@theme {
+  /* Depth ramp, every surface sits on exactly one of these. */
+  --color-bg: #0a0a11;
+  --color-surface: #101019;
+  --color-card: #16161f;
+  --color-edge: #23232f;
+  --color-edge-soft: #1b1b26;
+  --color-ink: #ececf5;
+  --color-muted: #8e8ea8;
+  --color-faint: #5c5c74;
+  --color-accent: #7c8cff;
+  --color-accent-2: #4ecdc4;
+  --color-good: #4ade80;
+  --color-bad: #f87171;
+  --color-warn: #fbbf24;
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --radius-card: 14px;
+}
+
+/* ── Motion ────────────────────────────────────────────────────────────────
+   Real spring curves via linear(). These are what make the UI feel like jello
+   rather than a set of linear fades: things overshoot slightly and settle.   */
+:root {
+  /* gentle overshoot, entrances, layout moves */
+  --spring: linear(
+    0, 0.006, 0.025 2.8%, 0.101 6.1%, 0.539 18.9%, 0.721 25.3%, 0.849 31.5%,
+    0.937 38.1%, 0.968 41.8%, 0.991 45.7%, 1.006 50.1%, 1.015 55%, 1.017 63.9%, 1.001
+  );
+  /* pronounced wobble, presses, toggles, pops */
+  --jelly: linear(
+    0, 0.009, 0.035 2.1%, 0.141, 0.281 6.7%, 0.723 12.9%, 0.938 16.7%, 1.017,
+    1.077, 1.121, 1.149 24.3%, 1.159, 1.163, 1.161, 1.154 29.9%, 1.129 32.1%,
+    1.051 39.2%, 1.017 43.1%, 0.991, 0.977 51%, 0.974 53.8%, 0.975 57.1%,
+    0.997 69.8%, 1.003 76.9%, 1
+  );
+  --swift: cubic-bezier(0.2, 0.9, 0.25, 1);
+  --titlebar: 0px;
+}
+
+html,
+body {
+  height: 100%;
+  background: var(--color-bg);
+  transition: background-color 0.35s var(--swift);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+  /* Frameless window: nothing should be selectable-draggable by accident. */
+  user-select: none;
+}
+
+input,
+textarea,
+[contenteditable],
+/* Anything you might want to copy out of: log lines, ids, paths, the text the
+   model wrote. The blanket rule above exists so a frameless window cannot be
+   accidentally text-dragged, not to stop anyone copying an error. */
+.selectable,
+.selectable * {
+  user-select: text;
+  cursor: auto;
+}
+
+input,
+select,
+textarea {
+  outline: none;
+}
+
+/* ── Surfaces ─────────────────────────────────────────────────────────────── */
+.glow {
+  box-shadow:
+    0 0 0 1px rgb(124 140 255 / 0.14),
+    0 20px 60px -24px rgb(124 140 255 / 0.35);
+}
+
+.hairline {
+  border-color: color-mix(in srgb, var(--color-edge) 70%, transparent);
+}
+
+/* ── Jelly interactions ───────────────────────────────────────────────────── */
+/* Press squishes in fast, then springs back past its resting size. */
+.jelly {
+  transition:
+    transform 0.5s var(--jelly),
+    background-color 0.18s var(--swift),
+    border-color 0.18s var(--swift),
+    color 0.18s var(--swift),
+    box-shadow 0.24s var(--swift);
+  will-change: transform;
+}
+.jelly:active:not(:disabled) {
+  transform: scale(0.93);
+  transition-duration: 0.09s;
+  transition-timing-function: var(--swift);
+}
+.jelly-lift:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+/* Squash-and-stretch pop, for things that appear in place. */
+@keyframes jelly-pop {
+  0% { transform: scale(0.82) translateY(6px); opacity: 0; }
+  45% { transform: scale(1.04) translateY(-2px); opacity: 1; }
+  70% { transform: scale(0.985) translateY(0); }
+  100% { transform: scale(1) translateY(0); opacity: 1; }
+}
+.pop {
+  animation: jelly-pop 0.52s var(--spring) both;
+}
+
+/* Cards stagger in so a page assembles rather than snapping. */
+@keyframes rise {
+  from { opacity: 0; transform: translate3d(0, 12px, 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+.card-enter {
+  animation: rise 0.5s var(--spring) both;
+}
+.stagger > * { animation: rise 0.5s var(--spring) both; }
+.stagger > *:nth-child(1) { animation-delay: 0.02s; }
+.stagger > *:nth-child(2) { animation-delay: 0.06s; }
+.stagger > *:nth-child(3) { animation-delay: 0.1s; }
+.stagger > *:nth-child(4) { animation-delay: 0.14s; }
+.stagger > *:nth-child(5) { animation-delay: 0.18s; }
+.stagger > *:nth-child(6) { animation-delay: 0.22s; }
+.stagger > *:nth-child(n + 7) { animation-delay: 0.26s; }
+
+/* Page swap.
+   No scale(): scaling a whole page re-rasterises every glyph on every frame,
+   which is what made tab switches stutter. Opacity + a small Y translate are
+   both GPU-composited, so this stays smooth. */
+@keyframes page-in {
+  from { opacity: 0; transform: translate3d(0, 8px, 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+.page-enter {
+  animation: page-in 0.3s var(--swift) both;
+  will-change: transform, opacity;
+  backface-visibility: hidden;
+}
+
+.toast-in {
+  animation: jelly-pop 0.5s var(--spring) both;
+}
+
+/* ── Nav ──────────────────────────────────────────────────────────────────── */
+.nav-item {
+  position: relative;
+  transition:
+    transform 0.45s var(--jelly),
+    background-color 0.18s var(--swift),
+    color 0.18s var(--swift);
+}
+.nav-item:active {
+  transform: scale(0.94);
+  transition-duration: 0.08s;
+}
+
+/* Two layers on the selected item: the pill teleports, the bar slides. Both
+   read the same translateY, so the bar always arrives where the pill already
+   is. */
+.nav-pill,
+.nav-bar {
+  position: absolute;
+  left: 0.5rem;
+  right: 0.5rem;
+  top: 0;
+  pointer-events: none;
+  will-change: transform;
+}
+
+/* The pill TELEPORTS to the newly selected item, no travel between the two,
+   it is simply already there and fades in on arrival. */
+.nav-pill {
+  z-index: 0;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--color-accent) 16%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 22%, transparent);
+  transition: height 0.01s;
+  animation: pill-land 0.34s var(--swift);
+}
+@keyframes pill-land {
+  from { opacity: 0; transform-origin: center; scale: 0.94 0.7; }
+  to   { opacity: 1; scale: 1 1; }
+}
+
+/* The bar SLIDES: it is the only thing that animates between positions, so
+   the eye follows it from the old item to the new one. */
+.nav-bar {
+  z-index: 1;
+  right: auto;
+  left: 0;
+  width: 3px;
+  border-radius: 999px;
+  background: var(--color-accent);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--color-accent) 60%, transparent);
+  /* Monotonic ease, deliberately NOT the springy --jelly: that overshoots to
+     1.163, so over a long travel the bar shot ~40px past the target, paused,
+     and slid back. Reads as a stutter rather than a glide. */
+  transition:
+    transform 0.4s var(--swift),
+    height 0.3s var(--swift);
+}
+
+/* Attention dot: sits on the nav icon, so it is just as visible when the
+   sidebar is collapsed to the icon rail. */
+.attention-dot {
+  position: absolute;
+  top: -3px;
+  right: -4px;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  /* Ring in the sidebar colour so the dot reads as a badge on the icon
+     rather than a stray pixel. */
+  box-shadow: 0 0 0 2px var(--color-surface);
+}
+.attention-dot.is-error {
+  background: var(--color-bad);
+  animation: dot-pulse 2.4s ease-in-out infinite;
+}
+.attention-dot.is-warn { background: var(--color-warn); }
+/* Not a problem, just something new: an available update. */
+.attention-dot.is-info { background: var(--color-accent); }
+@keyframes dot-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+:root[data-motion="off"] .attention-dot { animation: none; }
+
+/* Active icon gives a little pop when it becomes selected. */
+.nav-icon {
+  display: inline-flex;
+  transition: transform 0.5s var(--jelly);
+}
+.nav-icon.is-active {
+  animation: icon-pop 0.5s var(--jelly);
+}
+.nav-item:hover .nav-icon { transform: translateY(-1px); }
+@keyframes icon-pop {
+  0% { transform: scale(0.7) rotate(-8deg); }
+  55% { transform: scale(1.18) rotate(4deg); }
+  100% { transform: scale(1) rotate(0); }
+}
+
+/* ── Window chrome (frameless) ────────────────────────────────────────────── */
+/* pywebview drags on elements matching .pywebview-drag-region. The Electron
+   -webkit-app-region property does nothing here, which is why the title strip
+   was unmovable. desktop.py sets DRAG_REGION_DIRECT_TARGET_ONLY so only the
+   marked element itself drags, buttons sitting inside still receive clicks. */
+.pywebview-drag-region {
+  cursor: default;
+}
+
+.resize-grip {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  width: 18px;
+  height: 18px;
+  cursor: nwse-resize;
+  z-index: 60;
+}
+.resize-grip::after {
+  content: "";
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid var(--color-faint);
+  border-bottom: 2px solid var(--color-faint);
+  border-bottom-right-radius: 3px;
+  opacity: 0.7;
+  transition: opacity 0.2s var(--swift);
+}
+.resize-grip:hover::after {
+  opacity: 1;
+  border-color: var(--color-accent);
+}
+
+/* ── Scrollbars ───────────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-thumb {
+  background: #2a2a3c;
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover { background: #3a3a52; background-clip: padding-box; }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* ── Form controls ────────────────────────────────────────────────────────── */
+/* Must live in @layer components: Tailwind v4 puts utilities in a layer, and
+   UNLAYERED css beats any layer no matter the specificity. Outside a layer this
+   would force every .input full-width with fixed padding, so w-auto / pl-8 on
+   an inline search box would be ignored and the row would stack. */
+@layer components {
+  .input {
+    width: 100%;
+    border-radius: 10px;
+    border: 1px solid var(--color-edge);
+    background: var(--color-surface);
+    padding: 0.5rem 0.75rem;
+    font-size: 0.875rem;
+    color: var(--color-ink);
+    transition: border-color 0.18s var(--swift), box-shadow 0.18s var(--swift);
+  }
+  .input:focus {
+    border-color: color-mix(in srgb, var(--color-accent) 60%, transparent);
+    box-shadow: 0 0 0 3px rgb(124 140 255 / 0.14);
+  }
+  .input::placeholder { color: var(--color-faint); }
+
+  /* Borderless until hovered/focused, settings rows read as values, not boxes. */
+  .bare {
+    border-radius: 8px;
+    border: 1px solid transparent;
+    background: transparent;
+    padding: 0.25rem 0.5rem;
+    font-size: 0.8125rem;
+    color: var(--color-ink);
+    transition: background-color 0.16s var(--swift), border-color 0.16s var(--swift);
+  }
+  .bare:hover { background: rgb(255 255 255 / 0.04); }
+  .bare:focus {
+    background: var(--color-surface);
+    border-color: color-mix(in srgb, var(--color-accent) 55%, transparent);
+  }
+  .bare::-webkit-outer-spin-button,
+  .bare::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+
+  /* Real form field. `.bare` is deliberately invisible until you touch it,
+     which suits a settings row showing a value but makes a form look like a
+     list of labels, you cannot tell there is anything to type into. */
+  .field {
+    width: 100%;
+    border-radius: 9px;
+    border: 1px solid var(--color-edge);
+    background: rgb(0 0 0 / 0.22);
+    padding: 0.45rem 0.65rem;
+    font-size: 0.8125rem;
+    color: var(--color-ink);
+    transition: background-color 0.16s var(--swift), border-color 0.16s var(--swift);
+  }
+  .field::placeholder { color: var(--color-faint); }
+  .field:hover { border-color: color-mix(in srgb, var(--color-edge) 60%, white); }
+  .field:focus {
+    outline: none;
+    background: var(--color-surface);
+    border-color: color-mix(in srgb, var(--color-accent) 60%, transparent);
+  }
+
+  .glass {
+    background:
+      linear-gradient(180deg, rgb(255 255 255 / 0.045), rgb(255 255 255 / 0.012)),
+      var(--color-card);
+    border: 1px solid var(--color-edge);
+    border-radius: var(--radius-card);
+  }
+}
+
+/* A person's name, clickable wherever it appears. The outline only shows on
+   hover so a list of names does not look like a row of buttons. */
+/* A name you can click.
+   This used to draw a full bordered box on hover, which turned every name in a
+   list into a rectangle and made the page look like a form. A name is text, so
+   the affordance is an underline: it says "clickable" the way a link does,
+   without changing the shape of anything. */
+.user-chip {
+  position: relative;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  text-decoration: none;
+  transition: color 0.16s var(--swift);
+}
+.user-chip::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -2px;
+  height: 1px;
+  border-radius: 1px;
+  background: currentColor;
+  opacity: 0;
+  transform: scaleX(0.4);
+  transform-origin: left center;
+  transition:
+    opacity 0.16s var(--swift),
+    transform 0.22s var(--swift);
+}
+.user-chip:hover {
+  color: var(--color-accent);
+}
+.user-chip:hover::after {
+  opacity: 0.55;
+  transform: scaleX(1);
+}
+/* Keyboard focus still needs a real ring, since there is no pointer to follow. */
+.user-chip:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--color-accent) 70%, transparent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+:root[data-motion="off"] .user-chip::after {
+  transition: none;
+  transform: scaleX(1);
+}
+
+mark {
+  background: color-mix(in srgb, var(--color-accent) 32%, transparent);
+  color: var(--color-ink);
+  border-radius: 3px;
+  padding: 0 2px;
+}
+
+/* Only when the user actually turns motion off. The OS preference seeds the
+   default in stores.ts; it does not override an explicit choice. */
+:root[data-motion="off"] *,
+:root[data-motion="off"] *::before,
+:root[data-motion="off"] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+}
+
+/* ── Settings navigation ────────────────────────────────────────────────────
+   A wrapped row of identical pills made finding anything a hunt across two
+   lines. This is a vertical list on a wide screen, with an icon, a line of
+   plain English and a count, and a horizontal scroller on a phone where
+   vertical space is what runs out first. */
+.settings-rail {
+  display: flex;
+  gap: 2px;
+  overflow-x: auto;
+  padding-bottom: 6px;
+  scrollbar-width: none;
+}
+.settings-rail::-webkit-scrollbar {
+  display: none;
+}
+
+.settings-tab {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+  padding: 8px 12px 8px 14px;
+  border-radius: 10px;
+  text-align: left;
+  color: var(--color-muted);
+  transition:
+    background-color 0.18s var(--swift),
+    color 0.18s var(--swift),
+    transform 0.24s var(--swift);
+}
+.settings-tab:hover {
+  background: rgb(255 255 255 / 0.04);
+  color: var(--color-ink);
+}
+.settings-tab:active {
+  transform: scale(0.985);
+}
+.settings-tab.is-active {
+  background: rgb(255 255 255 / 0.06);
+  color: var(--color-ink);
+}
+
+/* The accent bar grows from nothing rather than blinking on, which reads as
+   the selection moving instead of two separate things happening. */
+.settings-tab-bar {
+  position: absolute;
+  left: 4px;
+  top: 50%;
+  width: 2px;
+  height: 60%;
+  border-radius: 2px;
+  background: var(--color-accent);
+  transform: translateY(-50%) scaleY(0);
+  opacity: 0;
+  transition:
+    transform 0.28s var(--swift),
+    opacity 0.2s var(--swift);
+}
+.settings-tab.is-active .settings-tab-bar {
+  transform: translateY(-50%) scaleY(1);
+  opacity: 1;
+}
+
+.settings-tab-icon {
+  display: flex;
+  flex: 0 0 auto;
+  color: var(--color-faint);
+  transition: color 0.18s var(--swift), transform 0.28s var(--swift);
+}
+.settings-tab.is-active .settings-tab-icon {
+  color: var(--color-accent);
+  transform: scale(1.06);
+}
+
+.settings-tab-blurb {
+  display: none;
+  font-size: 10.5px;
+  line-height: 1.35;
+  color: var(--color-faint);
+}
+
+@media (min-width: 1024px) {
+  .settings-rail {
+    flex-direction: column;
+    overflow-x: visible;
+    padding-bottom: 0;
+    position: sticky;
+    top: 0;
+    align-self: start;
+  }
+  .settings-tab {
+    width: 100%;
+  }
+  /* Only worth the second line when there is width for it to sit on. */
+  .settings-tab-blurb {
+    display: block;
+  }
+}
+
+/* ── Subtabs ────────────────────────────────────────────────────────────────
+   The second level, inside a tab. A strip rather than another vertical list:
+   the tab rail already owns the left edge, and these names are short. The
+   underline slides in rather than blinking on, so it reads as the selection
+   moving. */
+/* The gap below belongs to the wrapper, not the strip: a margin inside the
+   wrapper would collapse through it and the scroll bar, which is positioned
+   against the wrapper, would land 18px too low. */
+.settings-subs-wrap {
+  margin-bottom: 18px;
+}
+.settings-subs-wrap .hscroll-bar {
+  /* Clear of the divider, and of the active tab's underline, which lives in
+     the same few pixels. */
+  bottom: -5px;
+}
+
+.settings-subs {
+  display: flex;
+  gap: 2px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--color-edge);
+  scrollbar-width: none;
+}
+.settings-subs::-webkit-scrollbar {
+  display: none;
+}
+
+.settings-sub {
+  position: relative;
+  flex: 0 0 auto;
+  padding: 7px 11px 9px;
+  font-size: 12.5px;
+  white-space: nowrap;
+  color: var(--color-faint);
+  transition: color 0.18s var(--swift);
+}
+.settings-sub:hover {
+  color: var(--color-ink);
+}
+.settings-sub.is-active {
+  color: var(--color-ink);
+}
+.settings-sub::after {
+  content: "";
+  position: absolute;
+  left: 9px;
+  right: 9px;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: var(--color-accent);
+  transform: scaleX(0);
+  opacity: 0;
+  transition:
+    transform 0.26s var(--swift),
+    opacity 0.18s var(--swift);
+}
+.settings-sub.is-active::after {
+  transform: none;
+  opacity: 1;
+}
+
+/* The panel changes with the subtab, so it should look like it changed. */
+.settings-panel,
+.settings-head {
+  animation: settings-in 0.32s var(--swift) both;
+}
+@keyframes settings-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+:root[data-motion="off"] .settings-panel,
+:root[data-motion="off"] .settings-head {
+  animation: none;
+}
+:root[data-motion="off"] .settings-sub,
+:root[data-motion="off"] .settings-sub::after {
+  transition: none;
+}
+:root[data-motion="off"] .settings-tab,
+:root[data-motion="off"] .settings-tab-bar,
+:root[data-motion="off"] .settings-tab-icon {
+  transition: none;
+}
+
+/* The profile card behind a clicked name. Anchored to the name rather than
+   centred like a dialog, so it reads as belonging to what you clicked. */
+.user-card {
+  animation: user-card-in 0.16s var(--swift) both;
+  transform-origin: top left;
+}
+@keyframes user-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+:root[data-motion="off"] .user-card {
+  animation: none;
+}
+
+/* ── Theme change sweep ─────────────────────────────────────────────────────
+   A bar crosses the screen and the palette changes behind its leading edge, so
+   the new theme arrives with the wipe rather than every surface flipping at
+   once. Purely decorative: pointer-events are off and it removes itself. */
+.theme-sweep {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.theme-sweep-bar {
+  position: absolute;
+  top: -10%;
+  left: 0;
+  width: 42%;
+  height: 120%;
+  transform: skewX(-12deg);
+  background: linear-gradient(
+    100deg,
+    transparent 0%,
+    color-mix(in srgb, var(--color-accent) 10%, transparent) 30%,
+    color-mix(in srgb, var(--color-accent) 55%, transparent) 62%,
+    color-mix(in srgb, var(--color-accent-2, var(--color-accent)) 85%, transparent) 78%,
+    #fff 84%,
+    transparent 100%
+  );
+  filter: blur(0.4px);
+}
+
+.theme-sweep-spark {
+  position: absolute;
+  right: 12%;
+  width: var(--size, 3px);
+  height: var(--size, 3px);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-accent-2, var(--color-accent)) 70%, #fff);
+  box-shadow: 0 0 6px 1px color-mix(in srgb, var(--color-accent) 60%, transparent);
+  opacity: 0;
+  animation: theme-spark 520ms var(--swift) both;
+  animation-delay: var(--delay, 0ms);
+}
+
+@keyframes theme-spark {
+  0% {
+    opacity: 0;
+    transform: translate(0, 0) scale(0.4);
+  }
+  25% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    /* Trailing off backwards, the direction the bar came from. */
+    transform: translate(-120px, var(--drift, 0)) scale(0.2);
+  }
+}
+
+/* Colour changes ride the sweep instead of snapping. */
+body,
+.glass {
+  transition: background-color 0.35s var(--swift), border-color 0.35s var(--swift);
+}
+
+:root[data-motion="off"] .theme-sweep {
+  display: none;
+}
+
+/* Below the two-column breakpoint the category strip scrolls sideways. With no
+   touch screen and no visible bar there was nothing to grab, so it is
+   draggable, and a thin bar shows while there is more to reach. */
+@media (max-width: 1023px) {
+  .settings-rail {
+    cursor: grab;
+    scroll-behavior: smooth;
+    /* Text selection turns a drag into a highlight halfway through. */
+    user-select: none;
+  }
+  .settings-rail:active {
+    cursor: grabbing;
+    scroll-behavior: auto;
+  }
+}
+
+/* ── The scroll bar on a horizontal strip ───────────────────────────────────
+   Driven by lib/hscroll.ts, which explains why it exists. The short version:
+   the native bar sat in the layout permanently, pushing everything below it
+   down, and a scrollbar pseudo-element cannot be animated so it could not
+   fade or grow.
+
+   This one is out of the flow, so it costs nothing when nobody is looking at
+   it, and it is an ordinary element, so it can. */
+.hscroll {
+  position: relative;
+  /* The tab rail is a grid item, and a grid item's automatic minimum size is
+     its content, so it refuses to shrink below the full width of the strip.
+     The rail itself used to be the grid item and got away with it, because a
+     scroll container's automatic minimum is zero. Wrapping it moved that
+     property one level down and the whole page grew wider than the window
+     instead of the strip scrolling inside it. */
+  min-width: 0;
+}
+
+.hscroll-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  border-radius: 999px;
+  opacity: 0;
+  /* No pointer target until it is visible, or an invisible strip would sit on
+     top of whatever is underneath it. */
+  pointer-events: none;
+  transition:
+    opacity 0.22s var(--swift),
+    height 0.22s var(--swift),
+    background-color 0.22s var(--swift);
+}
+.hscroll.can-scroll:hover .hscroll-bar,
+.hscroll.can-scroll:focus-within .hscroll-bar,
+.hscroll.can-scroll.is-scrolling .hscroll-bar,
+.hscroll.can-scroll.is-dragging .hscroll-bar {
+  opacity: 1;
+  pointer-events: auto;
+}
+/* Thin while it is only telling you where you are; thicker once you are
+   pointing at it, which is when it becomes something to grab. */
+.hscroll.can-scroll:hover .hscroll-bar,
+.hscroll.can-scroll.is-dragging .hscroll-bar {
+  height: 6px;
+  background: rgb(255 255 255 / 0.05);
+}
+
+.hscroll-thumb {
+  height: 100%;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-accent) 40%, transparent);
+  /* Position only, so it rides the scroll on the compositor. */
+  transition:
+    background-color 0.22s var(--swift),
+    transform 0.08s linear;
+}
+.hscroll.can-scroll:hover .hscroll-thumb {
+  background: color-mix(in srgb, var(--color-accent) 70%, transparent);
+}
+.hscroll.can-scroll.is-dragging .hscroll-thumb {
+  background: var(--color-accent);
+  transition: background-color 0.22s var(--swift);
+}
+
+:root[data-motion="off"] .hscroll-bar,
+:root[data-motion="off"] .hscroll-thumb {
+  transition: none;
+}
+
+/* ── Sliders ────────────────────────────────────────────────────────────────
+   The default range input is a thin grey line with an OS thumb that ignores
+   the theme entirely. This is the same control drawn in the app's own colours,
+   with the filled part showing how far along the value is. */
+.slider {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 18px;
+  background: transparent;
+  cursor: pointer;
+}
+.slider::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 999px;
+  /* --fill is set per element from the current value, so the track is filled
+     up to the thumb rather than being one flat colour. */
+  background: linear-gradient(
+    to right,
+    var(--color-accent) 0%,
+    var(--color-accent) var(--fill, 50%),
+    rgb(255 255 255 / 0.10) var(--fill, 50%),
+    rgb(255 255 255 / 0.10) 100%
+  );
+}
+.slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  margin-top: -6px;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: #fff;
+  border: 3px solid var(--color-accent);
+  box-shadow: 0 1px 4px rgb(0 0 0 / 0.45);
+  transition: transform 0.34s var(--jelly), border-color 0.18s var(--swift);
+}
+.slider:hover::-webkit-slider-thumb {
+  transform: scale(1.12);
+}
+.slider:active::-webkit-slider-thumb {
+  transform: scale(0.94);
+}
+.slider:focus-visible::-webkit-slider-thumb {
+  outline: 2px solid color-mix(in srgb, var(--color-accent) 70%, transparent);
+  outline-offset: 2px;
+}
+.slider::-moz-range-track {
+  height: 4px;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.10);
+}
+.slider::-moz-range-progress {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--color-accent);
+}
+.slider::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: #fff;
+  border: 3px solid var(--color-accent);
+}
+
+/* The number beside it, which springs when the value changes so the two read
+   as one control rather than a slider and an unrelated readout. */
+.slider-value {
+  display: inline-block;
+  min-width: 3.2rem;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  transition: transform 0.34s var(--jelly), color 0.18s var(--swift);
+}
+.slider-value.is-bumped {
+  transform: scale(1.16);
+  color: var(--color-accent);
+}
+:root[data-motion="off"] .slider::-webkit-slider-thumb,
+:root[data-motion="off"] .slider-value {
+  transition: none;
+}

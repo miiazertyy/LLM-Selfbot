@@ -1,0 +1,5 @@
+# Dev-only tooling, not needed to run the app.
+-r requirements.txt
+pyinstaller
+
+# The web UI is a separate npm project: cd webui && npm install

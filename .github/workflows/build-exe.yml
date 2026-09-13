@@ -1,0 +1,194 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: webui/package-lock.json
+
+      - name: Build web UI
+        working-directory: webui
+        run: |
+          npm ci
+          npm run build
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Run test suite
+        run: python tests/run_all.py
+
+      - name: Build exe
+        run: pyinstaller packaging/selfbot.spec --noconfirm
+
+      - name: Package + hash
+        shell: pwsh
+        run: |
+          Compress-Archive -Path dist/LLMSelfbot/* -DestinationPath dist/LLMSelfbot-windows-x64.zip
+          Get-FileHash dist/LLMSelfbot-windows-x64.zip -Algorithm SHA256 |
+            ForEach-Object { "$($_.Hash.ToLower())  LLMSelfbot-windows-x64.zip" } > dist/SHA256SUMS.txt
+          Get-Content dist/SHA256SUMS.txt
+          Write-Output "Built from $env:GITHUB_SHA"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LLMSelfbot-windows-x64
+          path: |
+            dist/LLMSelfbot-windows-x64.zip
+            dist/SHA256SUMS.txt
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/LLMSelfbot-windows-x64.zip
+            dist/SHA256SUMS.txt
+
+  build-linux-arm64:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: webui/package-lock.json
+
+      - name: Build web UI
+        working-directory: webui
+        run: |
+          npm ci
+          npm run build
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Run test suite
+        run: python tests/run_all.py
+
+      - name: Build aarch64 binary
+        run: pyinstaller packaging/selfbot-linux.spec --noconfirm
+
+      - name: Package + hash
+        run: |
+          tar -czf dist/selfbot-linux-aarch64.tar.gz -C dist selfbot
+          (cd dist && sha256sum selfbot-linux-aarch64.tar.gz > SHA256SUMS-arm64.txt)
+          cat dist/SHA256SUMS-arm64.txt
+          echo "Built from ${GITHUB_SHA}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LLMSelfbot-linux-aarch64
+          path: |
+            dist/selfbot-linux-aarch64.tar.gz
+            dist/SHA256SUMS-arm64.txt
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/selfbot-linux-aarch64.tar.gz
+            dist/SHA256SUMS-arm64.txt
+
+  build-linux-x64:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: webui/package-lock.json
+
+      - name: Build web UI
+        working-directory: webui
+        run: |
+          npm ci
+          npm run build
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Run test suite
+        run: python tests/run_all.py
+
+      - name: Build x86_64 binary
+        run: pyinstaller packaging/selfbot-linux.spec --noconfirm
+
+      - name: Package + hash
+        run: |
+          tar -czf dist/selfbot-linux-x86_64.tar.gz -C dist selfbot
+          (cd dist && sha256sum selfbot-linux-x86_64.tar.gz > SHA256SUMS-linux-x64.txt)
+          cat dist/SHA256SUMS-linux-x64.txt
+          echo "Built from ${GITHUB_SHA}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LLMSelfbot-linux-x86_64
+          path: |
+            dist/selfbot-linux-x86_64.tar.gz
+            dist/SHA256SUMS-linux-x64.txt
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/selfbot-linux-x86_64.tar.gz
+            dist/SHA256SUMS-linux-x64.txt
