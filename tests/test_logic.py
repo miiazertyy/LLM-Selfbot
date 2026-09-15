@@ -1,5 +1,17 @@
 import sys, re, random
-sys.path.insert(0, r"c:/Users/miiaz/Downloads/LLM-coolprivatebot")
+from pathlib import Path
+
+# Worked out from this file, not written down. It used to be one developer's
+# absolute path, which meant the suite only ran on that one machine: everywhere
+# else "app" was not importable at all. It passed locally even from a clean
+# export, because the hardcoded path still pointed at the real checkout and
+# quietly imported from there instead.
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+# It reads the config below, and config/ only exists once the app has run.
+from fixtures import use_shipped_config
+use_shipped_config()
 
 from app.utils.split_response import split_response
 from app.utils.humanize import strip_meta, strip_ai_tells, add_typo, humanize

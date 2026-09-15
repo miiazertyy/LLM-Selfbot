@@ -73,6 +73,36 @@ for path in sorted(ROOT.rglob("*")):
 check("no em dash in any source file", not offenders,
       ", ".join(offenders[:5]) + (f" and {len(offenders) - 5} more" if len(offenders) > 5 else ""))
 
+print("\n== nothing is pinned to one machine ==")
+# tests/test_logic.py carried an absolute path to one developer's home folder
+# for months. On that machine it worked; everywhere else, CI included, "app"
+# was not importable and the module died on its first import.
+#
+# It even survived a clean-checkout run, because the hardcoded path still
+# pointed at the real repo and quietly imported from there, so the export
+# looked green while all three CI jobs were red.
+import re as _re
+
+_ABS = _re.compile(
+    r"[a-zA-Z]:[\\/]{1,2}[Uu]sers[\\/]"      # C:\Users\... or c:/Users/...
+    r"|/home/[A-Za-z0-9_.-]+/"               # /home/someone/...
+    r"|/Users/[A-Za-z0-9_.-]+/"              # /Users/someone/...
+)
+
+pinned = []
+for path in sorted((ROOT / "tests").glob("*.py")):
+    for num, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        # Only the code half. A path written in a comment breaks nothing, and
+        # the examples spelling out this very pattern live in comments.
+        if _ABS.search(line.split("#", 1)[0]):
+            pinned.append(f"{path.name}:{num}")
+
+check("no test hardcodes somebody's home directory", not pinned, ", ".join(pinned))
+
+# The repo root has to be worked out from the file's own location instead.
+logic = (ROOT / "tests" / "test_logic.py").read_text(encoding="utf-8")
+check("test_logic finds the repo from __file__", "Path(__file__).resolve()" in logic)
+
 print("\n== the strippers still strip ==")
 from app.utils.humanize import strip_ai_tells
 
