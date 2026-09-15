@@ -47,32 +47,63 @@ jobs:
       - name: Run test suite
         run: python tests/run_all.py
 
-      - name: Build exe
+      # Two ways to ship the same app. The folder build starts instantly and is
+      # treated far better by antivirus, and it is what the installer wraps. The
+      # single file is one exe with nothing beside it, at the cost of unpacking
+      # itself into a temp folder on every launch, so it takes a few seconds to
+      # appear. Both specs share packaging/specparts.py so they cannot drift.
+      - name: Build exe (folder)
         run: pyinstaller packaging/selfbot.spec --noconfirm
 
-      - name: Package + hash
+      - name: Build exe (single file)
+        run: pyinstaller packaging/selfbot-onefile.spec --noconfirm --distpath dist/onefile --workpath build/onefile
+
+      - name: Build installer
         shell: pwsh
         run: |
-          Compress-Archive -Path dist/LLMSelfbot/* -DestinationPath dist/LLMSelfbot-windows-x64.zip
-          Get-FileHash dist/LLMSelfbot-windows-x64.zip -Algorithm SHA256 |
-            ForEach-Object { "$($_.Hash.ToLower())  LLMSelfbot-windows-x64.zip" } > dist/SHA256SUMS.txt
-          Get-Content dist/SHA256SUMS.txt
-          Write-Output "Built from $env:GITHUB_SHA"
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup --no-progress -y
+          }
+          if (-not (Test-Path $iscc)) { throw "Inno Setup not found at $iscc" }
+          # A tagged build names itself after the tag; anything else keeps the
+          # version in the script.
+          $version = "${{ github.ref_name }}" -replace '^v', ''
+          if ($version -notmatch '^\d+\.\d+') { $version = "0.0.0-dev" }
+          & $iscc "/DAppVersion=$version" packaging\installer.iss
+          Get-ChildItem dist\LLMSelfbotSetup.exe
 
-      - name: Upload artifact
+      # Uploaded as plain files. upload-artifact zips whatever it is handed, so
+      # zipping first gave you a zip containing a zip.
+      - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
-          name: LLMSelfbot-windows-x64
-          path: |
-            dist/LLMSelfbot-windows-x64.zip
-            dist/SHA256SUMS.txt
+          name: LLMSelfbot-windows-installer
+          path: dist/LLMSelfbotSetup.exe
+
+      - name: Upload single file exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: LLMSelfbot-windows-onefile
+          path: dist/onefile/LLMSelfbot.exe
+
+      - name: Hash for release
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: |
+          Copy-Item dist/onefile/LLMSelfbot.exe dist/LLMSelfbot-portable.exe
+          Get-FileHash dist/LLMSelfbotSetup.exe, dist/LLMSelfbot-portable.exe -Algorithm SHA256 |
+            ForEach-Object { "$($_.Hash.ToLower())  $(Split-Path $_.Path -Leaf)" } > dist/SHA256SUMS.txt
+          Get-Content dist/SHA256SUMS.txt
+          Write-Output "Built from $env:GITHUB_SHA"
 
       - name: Attach to release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/LLMSelfbot-windows-x64.zip
+            dist/LLMSelfbotSetup.exe
+            dist/LLMSelfbot-portable.exe
             dist/SHA256SUMS.txt
 
   build-linux-arm64:
@@ -111,6 +142,9 @@ jobs:
       - name: Build aarch64 binary
         run: pyinstaller packaging/selfbot-linux.spec --noconfirm
 
+      # Unlike Windows, this stays a tarball inside the artifact zip: zip does
+      # not carry the executable bit, so a raw upload would download as a file
+      # you cannot run until you chmod it.
       - name: Package + hash
         run: |
           tar -czf dist/selfbot-linux-aarch64.tar.gz -C dist selfbot
@@ -170,6 +204,9 @@ jobs:
       - name: Build x86_64 binary
         run: pyinstaller packaging/selfbot-linux.spec --noconfirm
 
+      # Unlike Windows, this stays a tarball inside the artifact zip: zip does
+      # not carry the executable bit, so a raw upload would download as a file
+      # you cannot run until you chmod it.
       - name: Package + hash
         run: |
           tar -czf dist/selfbot-linux-x86_64.tar.gz -C dist selfbot

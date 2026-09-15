@@ -2,7 +2,9 @@
 ; Usage (from repo root): iscc packaging\installer.iss
 
 #define AppName "LLMSelfbot"
-#define AppVersion "1.0.0"
+#ifndef AppVersion
+  #define AppVersion "1.0.0"
+#endif
 #define AppPublisher "LLMSelfbot"
 
 [Setup]
@@ -14,13 +16,12 @@ DefaultDirName={autopf}\LLMSelfbot
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
-OutputDir=..\
+OutputDir=..\dist
 OutputBaseFilename=LLMSelfbotSetup
 Compression=lzma2
 SolidCompression=yes
 ArchitecturesInstallIn64BitMode=x64compatible
 SetupIconFile=..\resources\icon.ico
-esources\icon.ico
 UninstallDisplayIcon={app}\LLMSelfbot.exe
 
 [Languages]
@@ -39,12 +40,11 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription:
 [Run]
 Filename: "{app}\LLMSelfbot.exe"; Description: "Launch {#AppName}"; Flags: nowait postinstall skipifsilent
 
+; Only what the installer put here. Config, memory, pictures and keys live in
+; %APPDATA%\LLMSelfbot and deliberately survive an uninstall.
+;
+; This used to write a portable.txt marker after installing, which told the app
+; to keep all of that inside its own install folder instead. The line below
+; then deleted the lot on uninstall, and an update would have done the same.
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}"
-
-[Code]
-procedure CurStepChanged(CurStep: TSetupStep);
-begin
-  if CurStep = ssPostInstall then
-    SaveStringToFile(ExpandConstant('{app}\portable.txt'), '', False);
-end;

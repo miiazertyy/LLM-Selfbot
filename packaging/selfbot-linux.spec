@@ -6,7 +6,11 @@
 
 from pathlib import Path
 
-ROOT = Path(SPECPATH).parent.parent
+# SPECPATH is the directory holding this file, so one .parent reaches the repo
+# root. Two put it above the checkout, which made every path here point at
+# somewhere that does not exist: the build died on "script '/main.py' not
+# found". selfbot.spec next door has always had this right.
+ROOT = Path(SPECPATH).parent
 
 hiddenimports = [
     "app.cogs.general",
