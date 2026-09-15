@@ -12,7 +12,7 @@ Double click an exe, paste two keys, done.
 [![Build](https://github.com/miiazertyy/LLM-Selfbot/actions/workflows/build-exe.yml/badge.svg)](https://github.com/miiazertyy/LLM-Selfbot/actions/workflows/build-exe.yml)
 [![Release](https://img.shields.io/github/v/release/miiazertyy/LLM-Selfbot?color=7c8cff&label=download)](https://github.com/miiazertyy/LLM-Selfbot/releases/latest)
 [![License](https://img.shields.io/badge/license-GPL--3.0-7c8cff)](LICENSE)
-![Platform](https://img.shields.io/badge/windows-%C2%B7%20linux-7c8cff)
+![Platform](https://img.shields.io/badge/windows-%C2%B7%20linux%20%C2%B7%20macos-7c8cff)
 ![Python](https://img.shields.io/badge/python-3.12-7c8cff)
 
 <img src=".github/screenshots/dashboard.png" width="900" alt="The dashboard: replies over time, per account controls, the live log">
@@ -73,9 +73,20 @@ that, so the reply reads like a person rather than a service.
 
 **1. Download**
 
-Grab the [latest release](https://github.com/miiazertyy/LLM-Selfbot/releases/latest),
-unzip it anywhere, run `LLMSelfbot.exe`. Nothing is installed. Python and
-everything it needs are inside the app.
+From the [latest release](https://github.com/miiazertyy/LLM-Selfbot/releases/latest).
+Nothing is zipped, and nothing needs Python installed: it is all inside.
+
+| You are on | Take | Then |
+|---|---|---|
+| Windows | `LLMSelfbotSetup.exe` | Run it. Start Menu shortcut, and an uninstaller |
+| Windows, no install | `LLMSelfbot-portable.exe` | One file, run it. Takes a few seconds to open, as it unpacks itself each time |
+| Linux | `selfbot-linux-x86_64` | `chmod +x` it and run it |
+| Raspberry Pi, ARM | `selfbot-linux-aarch64` | Same |
+| macOS | `selfbot-macos-arm64` | Same |
+
+Only Windows gets the desktop window. Everywhere else the app serves the panel
+and prints the address to open in a browser, which is what makes it useful on a
+server or a Pi.
 
 **2. Get a Groq key**
 
@@ -273,13 +284,23 @@ pip install -r requirements-dev.txt
 pyinstaller packaging/selfbot.spec --noconfirm
 ```
 
-Output lands in `dist/LLMSelfbot/`:
-
-| File | Use |
+| Spec | Gives you |
 |---|---|
-| `LLMSelfbot.exe` | the app, double click this |
-| `LLMSelfbot-console.exe` | the same app with a console attached, for reading errors |
-| `_internal/` | bundled Python, libraries, panel and templates |
+| `selfbot.spec` | `dist/LLMSelfbot/`: the exe, a console twin for reading errors, and `_internal/`. Starts instantly. What the installer wraps |
+| `selfbot-onefile.spec` | one `LLMSelfbot.exe` with nothing beside it |
+| `selfbot-headless.spec` | `dist/selfbot/`, no window, for Linux, ARM and macOS |
+| `selfbot-headless-onefile.spec` | one `selfbot` binary, same platforms |
+
+All four take their contents from `packaging/specparts.py`, so a hidden import
+added for one platform is added for every platform. They used to have separate
+lists and had drifted apart.
+
+The single file builds unpack themselves into a temporary folder on each launch,
+so they take a few seconds to start, and antivirus is more suspicious of them.
+The folder builds start at once.
+
+`iscc packaging/installer.iss` builds the Windows installer from the folder
+build.
 
 Two things cannot practically live inside the build, and the System page
 installs both on demand: **ffmpeg** for voice messages, and **Node.js with
