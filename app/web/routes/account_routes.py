@@ -13,6 +13,7 @@ Credentials are write-only. A GET never returns a token or password, not even
 masked: it reports whether one is set, and the UI can only replace it.
 """
 
+import asyncio
 from fastapi import APIRouter, HTTPException, Request
 
 from app.web.envfile import read_env, reload_into_process, write_env
@@ -163,10 +164,15 @@ async def delete_slot(request: Request, platform: str, index: int):
     # gone and the numbering it was started with no longer refers to it.
     supervisor = request.app.state.supervisor
     if supervisor is not None:
-        for child_id in (f"{platform}_{i}" for i in range(index, total + 1)):
-            try:
-                supervisor.stop(child_id)
-            except Exception:
-                pass
+        # Each stop() busy-waits up to graceful_seconds for the child to go, so
+        # a handful of slots could hold the event loop for most of a minute.
+        def _stop_all():
+            for child_id in (f"{platform}_{i}" for i in range(index, total + 1)):
+                try:
+                    supervisor.stop(child_id)
+                except Exception:
+                    pass
+
+        await asyncio.to_thread(_stop_all)
 
     return {"ok": True, "slots": _slots(values)}

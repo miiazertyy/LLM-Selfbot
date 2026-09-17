@@ -453,6 +453,46 @@ async def generate_response(prompt, instructions, history=None):
 GROQ_IMAGE_SIZE_LIMIT = 20 * 1024 * 1024  # 20MB
 
 
+# One aiohttp session for image fetches, instead of building and tearing one
+# down per image - each of which meant a fresh TCP connection and TLS handshake.
+_image_http_session = None
+
+
+async def _image_session():
+    """The shared aiohttp session, created on first use."""
+    global _image_http_session
+    import aiohttp
+    if _image_http_session is None or _image_http_session.closed:
+        _image_http_session = aiohttp.ClientSession()
+    return _image_http_session
+
+
+def _shrink_to_limit(data: bytes) -> bytes:
+    """Compress an image until it fits Groq's limit. Blocking; call on a thread."""
+    import io
+    from PIL import Image
+
+    img = Image.open(io.BytesIO(data))
+    if img.mode not in ("RGB", "L"):
+        img = img.convert("RGB")
+
+    # Progressively reduce quality/size until under limit
+    for quality in (85, 70, 55, 40):
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=quality, optimize=True)
+        if buf.tell() <= GROQ_IMAGE_SIZE_LIMIT:
+            break
+        # Still too big, halve the dimensions (never below 1px)
+        img = img.resize(
+            (max(1, img.width // 2), max(1, img.height // 2)), Image.LANCZOS
+        )
+    else:
+        raise Exception("Image still over Groq's size limit after compression")
+
+    buf.seek(0)
+    return buf.read()
+
+
 async def _prepare_image_url(image_url: str) -> str:
     """Fetch the image, encode as base64 (compress if over Groq's 20MB limit).
 
@@ -470,12 +510,12 @@ async def _prepare_image_url(image_url: str) -> str:
             data = base64.b64decode(b64data)
         else:
             import aiohttp
-            async with aiohttp.ClientSession() as session:
-                async with session.get(image_url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
-                    if resp.status != 200:
-                        raise Exception(f"Image fetch failed with HTTP {resp.status}")
-                    content_type = resp.content_type or "image/jpeg"
-                    data = await resp.read()
+            session = await _image_session()
+            async with session.get(image_url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                if resp.status != 200:
+                    raise Exception(f"Image fetch failed with HTTP {resp.status}")
+                content_type = resp.content_type or "image/jpeg"
+                data = await resp.read()
 
         if len(data) <= GROQ_IMAGE_SIZE_LIMIT:
             # Always encode as base64, raw Discord URLs are inaccessible from Groq
@@ -488,25 +528,13 @@ async def _prepare_image_url(image_url: str) -> str:
         except ImportError:
             return image_url  # Pillow not installed, fall back to original
 
-        img = Image.open(io.BytesIO(data))
-        if img.mode not in ("RGB", "L"):
-            img = img.convert("RGB")
-
-        # Progressively reduce quality/size until under limit
-        for quality in (85, 70, 55, 40):
-            buf = io.BytesIO()
-            img.save(buf, format="JPEG", quality=quality, optimize=True)
-            if buf.tell() <= GROQ_IMAGE_SIZE_LIMIT:
-                break
-            # Still too big, halve the dimensions (never below 1px)
-            img = img.resize(
-                (max(1, img.width // 2), max(1, img.height // 2)), Image.LANCZOS
-            )
-        else:
-            raise Exception("Image still over Groq's size limit after compression")
-
-        buf.seek(0)
-        b64 = base64.b64encode(buf.read()).decode()
+        # Decode, resample and re-encode on a worker thread. These are
+        # CPU-bound and were running straight on the event loop, so compressing
+        # one large photo stalled every other conversation on the account for
+        # as long as it took.
+        import asyncio
+        jpeg = await asyncio.to_thread(_shrink_to_limit, data)
+        b64 = base64.b64encode(jpeg).decode()
         return f"data:image/jpeg;base64,{b64}"
 
     except Exception:

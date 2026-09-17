@@ -436,9 +436,21 @@ async def _cleanup_loop():
             _profile_cache.clear()
         if len(bot._memory_cache) > 1000:
             bot._memory_cache.clear()
+        # These two grow by one entry per unique user ever seen and were the
+        # only dicts here with no bound at all. _profile_seen holds the last
+        # time a profile was written, on a one-hour throttle, so anything older
+        # than that would be rewritten on sight anyway; _friend_due holds
+        # scheduled accept times, so anything in the past has already fired.
+        stale_seen = [uid for uid, at in _profile_seen.items() if now - at > 3600]
+        for uid in stale_seen:
+            _profile_seen.pop(uid, None)
+        stale_friend = [uid for uid, at in _friend_due.items() if at < now]
+        for uid in stale_friend:
+            _friend_due.pop(uid, None)
         log_system(
             f"Cleanup: pruned {len(stale_counts)} count(s), {len(expired_cd)} cooldown(s), "
-            f"{len(stale_conv)} conversation(s), {len(stale_hist)} history entr(ies)"
+            f"{len(stale_conv)} conversation(s), {len(stale_hist)} history entr(ies), "
+            f"{len(stale_seen)} profile stamp(s), {len(stale_friend)} friend timer(s)"
         )
 
 

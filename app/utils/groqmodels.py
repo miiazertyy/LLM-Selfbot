@@ -23,6 +23,12 @@ MODELS_URL = "https://api.groq.com/openai/v1/models"
 # Long enough that opening Settings repeatedly costs nothing, short enough that
 # a retirement shows up the same day.
 TTL_SECONDS = 6 * 3600
+# A failed fetch with no disk cache stores an empty list, and an empty list is
+# falsy - so the memory guard in available() never hit and every caller re-ran
+# fetch(), an 8-second HTTP call, on every health refresh (~every 15 seconds)
+# for as long as Groq was unreachable. Negative results are cached too, just
+# for much less time, so it still recovers promptly once the network is back.
+NEGATIVE_TTL_SECONDS = 120
 
 # What each model is actually for.
 #
@@ -191,9 +197,11 @@ def fetch(timeout: float = 8.0) -> tuple[list, str]:
 def available(force: bool = False) -> dict:
     """The model list, from memory, disk or Groq, in that order of cheapness."""
     now = time.time()
-    if not force and _cache["models"] and now - _cache["at"] < TTL_SECONDS:
+    ttl = TTL_SECONDS if _cache["models"] else NEGATIVE_TTL_SECONDS
+    if not force and _cache["at"] and now - _cache["at"] < ttl:
         return {"models": _cache["models"], "fetched": _cache["at"],
-                "error": _cache["error"], "source": "memory"}
+                "error": _cache["error"],
+                "source": "memory" if _cache["models"] else "none"}
 
     models, error = fetch()
     if models:

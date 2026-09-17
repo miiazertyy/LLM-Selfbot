@@ -149,12 +149,14 @@ async def service_action(request: Request, name: str, action: str):
         return {"ok": True, "results": [r for r in result if isinstance(r, dict)]}
     if name == "webui" and action == "stop":
         return {"ok": False, "reason": "cannot stop the server you are connected to"}
+    # stop() busy-waits up to graceful_seconds for the child to go, so these
+    # go to a thread exactly like the per-account versions above.
     if action == "start":
-        return supervisor.start(name)
+        return await asyncio.to_thread(supervisor.start, name)
     if action == "stop":
-        return supervisor.stop(name)
+        return await asyncio.to_thread(supervisor.stop, name)
     if action == "restart":
-        return supervisor.restart(name)
+        return await asyncio.to_thread(supervisor.restart, name)
     raise HTTPException(status_code=400, detail=f"unknown action {action}")
 
 
