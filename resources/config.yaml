@@ -166,6 +166,18 @@ bot:
     # Defaults when omitted: mostly online, some idle, rare dnd.
     # weights: [0.85, 0.12, 0.03]
 
+  # --- What discord.py keeps in memory ---
+  # The library caches far more than this bot reads. Member caching and startup
+  # guild chunking are off entirely: nothing here ever looks a member up, and
+  # chunking also made the account pull every member of every server over the
+  # gateway before it would start replying.
+  # max_messages is the one real trade. It is only read to find the id of
+  # someone's last message when saving conversations across a restart, and
+  # there is a fallback that scans the DM when it misses, so a smaller number
+  # costs a little accuracy there and nothing else. The library default is 1000.
+  cache:
+    max_messages: 200
+
   # --- Night invisibility ---
   # Humans sleep. During these LOCAL hours the account goes invisible (still
   # replies normally - invisible is not offline). Hours use the timezone

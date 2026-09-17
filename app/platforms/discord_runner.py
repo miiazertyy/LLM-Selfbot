@@ -133,6 +133,9 @@ set_default_proxy(ACCOUNT_TOKEN.get("proxy"))
 
 PREFIX = config["bot"]["prefix"]
 OWNER_ID = config["bot"]["owner_id"]
+# How much discord.py is allowed to keep in memory. See create_bot().
+_CACHE_CFG = config["bot"].get("cache") or {}
+
 TRIGGER = config["bot"]["trigger"].lower().split(",")
 
 
@@ -309,7 +312,35 @@ async def _apply_client_profile():
 
 def create_bot() -> commands.Bot:
     """Instantiate a fully configured bot for this process's account."""
-    kwargs = {"command_prefix": PREFIX, "help_command": None}
+    # ── Caches ───────────────────────────────────────────────────────────────
+    # discord.py keeps a great deal in memory by default, and this bot uses
+    # almost none of it. Checked before changing any of it: nothing in the
+    # codebase calls get_member(), reads guild.members, or chunks a guild, and
+    # the message cache has exactly one best-effort reader
+    # (_save_pending_messages, which falls back to scanning DM history when it
+    # comes up empty).
+    #
+    #   member_cache_flags: defaults to MemberCacheFlags.all() - every member of
+    #     every guild the account is in, held for the life of the process.
+    #   chunk_guilds_at_startup: defaults on, and fetches all of those members
+    #     over the gateway before the bot will even start replying.
+    #   max_messages: defaults to 1000 cached Message objects, each holding its
+    #     author, embeds and attachments.
+    #
+    # chunk_guilds_at_startup is set explicitly rather than left to default.
+    # Left alone it derives from the member cache and would come out False here
+    # anyway, but discord.py raises ClientException for an explicit True with
+    # no member cache, so stating it keeps the pair obviously consistent.
+    #
+    # message.author still works in a guild - discord.py builds it from the
+    # message payload whether or not it is cached; it simply is not kept.
+    kwargs = {
+        "command_prefix": PREFIX,
+        "help_command": None,
+        "member_cache_flags": discord.MemberCacheFlags.none(),
+        "chunk_guilds_at_startup": False,
+        "max_messages": _CACHE_CFG.get("max_messages", 200),
+    }
     if ACCOUNT_TOKEN.get("proxy"):
         kwargs["proxy"] = ACCOUNT_TOKEN["proxy"]
     b = commands.Bot(**kwargs)
