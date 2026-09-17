@@ -166,6 +166,16 @@ bot:
     # Defaults when omitted: mostly online, some idle, rare dnd.
     # weights: [0.85, 0.12, 0.03]
 
+  # --- How long a reply may be, in tokens ---
+  # Sent as max_tokens on every reply. Groq checks the EXPECTED output against
+  # the per-minute output allowance before generating anything, so with no cap
+  # it assumes the model's full default - which is how a short chat reply got
+  # refused for wanting 1324 output tokens against a limit of 1000. Replies are
+  # cut to a few hundred characters before sending anyway.
+  # Raise it if replies come out truncated; lower it if the output allowance
+  # keeps being hit.
+  max_reply_tokens: 320
+
   # --- What discord.py keeps in memory ---
   # The library caches far more than this bot reads. Member caching and startup
   # guild chunking are off entirely: nothing here ever looks a member up, and

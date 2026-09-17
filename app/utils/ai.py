@@ -191,10 +191,49 @@ class RequestTooLarge(Exception):
 _TOO_LARGE_MARKERS = ("request too large", "reduce your message size",
                       "please reduce the length")
 
+# The same 429 arrives for two completely different problems, and they need
+# opposite fixes:
+#
+#   input  - the conversation sent is too big. Send fewer messages.
+#   output - the reply the model is *expected* to produce is too big. Groq
+#            enforces this before generating anything, against max_tokens, or
+#            against the model's full default when max_tokens is not set.
+#
+# Trimming history for an output limit does nothing at all, which is exactly
+# what it looked like: "retrying with the last 7 / 4 / 2 messages" and the same
+# refusal each time, because the history was never the problem.
+_OUTPUT_LIMIT_MARKERS = ("output tokens per minute", "otpm", "reduce max_tokens",
+                         "expected output")
+
+# A cap on the reply, so Groq is asked for something that fits.
+#
+# Without one, the expected output is whatever the model can produce - on a
+# reasoning model that includes its thinking - and a free tier allowing 1000
+# output tokens a minute refuses a short chat reply for wanting 1324. Replies
+# here are cut to a few hundred characters before sending anyway, so a cap is
+# not giving anything up.
+DEFAULT_MAX_REPLY_TOKENS = 320
+MIN_MAX_REPLY_TOKENS = 96
+
 
 def is_request_too_large(error) -> bool:
     text = str(error).lower()
-    return any(m in text for m in _TOO_LARGE_MARKERS)
+    return any(m in text for m in _TOO_LARGE_MARKERS) or is_output_limit(error)
+
+
+def is_output_limit(error) -> bool:
+    """True when the cap is on the reply, not on what was sent."""
+    text = str(error).lower()
+    return any(m in text for m in _OUTPUT_LIMIT_MARKERS)
+
+
+def _reply_token_cap() -> int:
+    try:
+        cfg = load_config().get("bot", {}) or {}
+        return max(MIN_MAX_REPLY_TOKENS,
+                   int(cfg.get("max_reply_tokens", DEFAULT_MAX_REPLY_TOKENS)))
+    except Exception:
+        return DEFAULT_MAX_REPLY_TOKENS
 
 
 def fallback_model():
@@ -219,8 +258,13 @@ def fallback_model():
     return True
 
 
-async def _create_completion(messages):
-    """Attempt completion with automatic key + model fallback on rate limit."""
+async def _create_completion(messages, max_tokens=None):
+    """Attempt completion with automatic key + model fallback on rate limit.
+
+    max_tokens caps the reply. It is always sent: Groq checks the *expected*
+    output against the per-minute output allowance before generating anything,
+    and with no cap the expectation is the model's full default.
+    """
     if not _groq_clients and _local_client is None:
         init_ai()
 
@@ -237,6 +281,7 @@ async def _create_completion(messages):
             return await _local_client.chat.completions.create(
                 model=_local_model,
                 messages=messages,
+                max_tokens=max_tokens or _reply_token_cap(),
             )
         except Exception as e:
             from app.utils import apihealth
@@ -249,6 +294,7 @@ async def _create_completion(messages):
             response = await _active_client().chat.completions.create(
                 model=model,
                 messages=messages,
+                max_tokens=max_tokens or _reply_token_cap(),
             )
             return response
         except RateLimitError as e:
@@ -453,30 +499,48 @@ async def generate_response(prompt, instructions, history=None):
         else:
             messages.append({"role": "user", "content": prompt})
 
+        cap = _reply_token_cap()
         try:
-            response = await _create_completion(messages)
-        except RequestTooLarge:
-            # The conversation has grown past what one request may spend. The
-            # cap is per organisation, so no key or model can take it: the only
-            # way through is to send less. Older turns matter least, so they go
-            # first, and the system prompt is always kept.
-            trimmed = messages
-            for _ in range(3):
-                head = [m for m in trimmed if m.get("role") == "system"]
-                rest = [m for m in trimmed if m.get("role") != "system"]
-                if len(rest) <= 2:
+            response = await _create_completion(messages, max_tokens=cap)
+        except RequestTooLarge as first:
+            # Two different problems arrive as the same 429, and they need
+            # opposite fixes. Asking for the wrong one is why this used to
+            # trim the history three times and get refused three times.
+            if is_output_limit(first):
+                # The allowance is on the reply. Ask for a shorter one.
+                for _ in range(3):
+                    cap = max(MIN_MAX_REPLY_TOKENS, cap // 2)
+                    log_system(f"Reply allowance exceeded, retrying with max_tokens={cap}")
+                    try:
+                        response = await _create_completion(messages, max_tokens=cap)
+                        break
+                    except RequestTooLarge as again:
+                        if not is_output_limit(again) or cap <= MIN_MAX_REPLY_TOKENS:
+                            raise
+                else:
                     raise
-                rest = rest[len(rest) // 2:]
-                trimmed = head + rest
-                log_system(
-                    f"Request too large, retrying with the last {len(rest)} messages")
-                try:
-                    response = await _create_completion(trimmed)
-                    break
-                except RequestTooLarge:
-                    continue
             else:
-                raise
+                # The conversation has grown past what one request may spend.
+                # The cap is per organisation, so no key or model can take it:
+                # the only way through is to send less. Older turns matter
+                # least, so they go first, and the system prompt is always kept.
+                trimmed = messages
+                for _ in range(3):
+                    head = [m for m in trimmed if m.get("role") == "system"]
+                    rest = [m for m in trimmed if m.get("role") != "system"]
+                    if len(rest) <= 2:
+                        raise
+                    rest = rest[len(rest) // 2:]
+                    trimmed = head + rest
+                    log_system(
+                        f"Request too large, retrying with the last {len(rest)} messages")
+                    try:
+                        response = await _create_completion(trimmed, max_tokens=cap)
+                        break
+                    except RequestTooLarge:
+                        continue
+                else:
+                    raise
         return response.choices[0].message.content
     except Exception as e:
         # Rate-limit errors are handled and logged by the retry loop in main.py

@@ -28,6 +28,8 @@ CONFIG_SCHEMA = [
      "section": "Humanization", "min": 0.0, "max": 1.0, "step": 0.01, "requires_restart": True},
     {"key": "bot.groq_small_model", "type": "str", "label": "Utility model (memory, language)",
      "section": "General"},
+    {"key": "bot.max_reply_tokens", "type": "int", "label": "Longest reply, in tokens",
+     "section": "General"},
     {"key": "bot.typo_chance", "type": "float", "label": "Chance of a typo",
      "section": "Humanization", "min": 0.0, "max": 1.0, "step": 0.01},
     {"key": "bot.edit_after_send_chance", "type": "float", "label": "Chance of a typo fix after sending",

@@ -310,6 +310,73 @@ async def _apply_client_profile():
     session_mod.set_default_proxy(ACCOUNT_TOKEN.get("proxy"))
 
 
+SERVER_CHANNELS = (discord.TextChannel, discord.Thread, discord.ForumChannel,
+                   discord.StageChannel, discord.VoiceChannel)
+
+
+def in_server(channel) -> bool:
+    """Whether this channel is part of a guild rather than a DM."""
+    return isinstance(channel, SERVER_CHANNELS)
+
+
+def history_key(message) -> str:
+    """Where this conversation's history lives.
+
+    A DM is one conversation with one person, so both identify it. A server
+    channel is one conversation with everyone in it - and keying that per
+    author gave the bot a private thread with each person and no idea what
+    anybody else had said, so a reply in a busy channel read as though it had
+    walked in halfway through. Channel alone there.
+
+    The prefix keeps the two apart: a channel id and a user id are both
+    snowflakes, and "<id>-<id>" for a DM could otherwise collide with a
+    channel-keyed entry.
+    """
+    if in_server(message.channel):
+        return f"ch-{message.channel.id}"
+    return f"{message.author.id}-{message.channel.id}"
+
+
+def speaker_label(message) -> str:
+    """How a user turn is attributed in a shared channel.
+
+    Without this the model sees a single run of "user" turns from several
+    different people and answers as if one person said all of it.
+    """
+    author = message.author
+    return getattr(author, "display_name", None) or getattr(author, "name", "someone")
+
+
+def _recent_speakers(message, limit: int = 6) -> list:
+    """Who has been talking in this channel lately, newest first.
+
+    Read off the history that is already kept rather than fetched: the turns
+    are stored as "Name: text", so the names are right there, and asking
+    Discord would be a round trip for something already in memory.
+    """
+    key = history_key(message)
+    names, seen = [], set()
+    for entry in reversed(bot.message_history.get(key, [])):
+        if entry.get("role") != "user":
+            continue
+        head = str(entry.get("content", "")).split(":", 1)
+        if len(head) == 2 and 0 < len(head[0]) <= 40:
+            name = head[0].strip()
+            if name and name not in seen:
+                seen.add(name)
+                names.append(name)
+        if len(names) >= limit:
+            break
+    return names
+
+
+def as_turn(message, content: str) -> str:
+    """One user turn, attributed when the channel has more than one person in it."""
+    if in_server(message.channel):
+        return f"{speaker_label(message)}: {content}"
+    return content
+
+
 def create_bot() -> commands.Bot:
     """Instantiate a fully configured bot for this process's account."""
     # ── Caches ───────────────────────────────────────────────────────────────
@@ -855,7 +922,9 @@ async def _nudge_loop():
                         mark_nudge_sent(user_id, channel_id)
                         log_system(f"Nudge sent to {user.name} ({days_elapsed:.1f}d elapsed)")
 
-                        # Add to history so the conversation continues naturally
+                        # Add to history so the conversation continues naturally.
+                        # A nudge is always a DM, so this is the DM key by
+                        # construction - see history_key().
                         key = f"{user_id}-{channel_id}"
                         bot.message_history.setdefault(key, [])
                         bot.message_history[key].append({"role": "assistant", "content": nudge_text})
@@ -1271,9 +1340,9 @@ async def _tg_ipc_loop():
                             pass
                     if not target_msg:
                         _write_result(cmd_id, {"success": False, "reason": "no recent message found"}); continue
-                    hk = f"{uid}-{target_ch.id}"
+                    hk = history_key(target_msg)
                     history = bot.message_history.get(hk, [])
-                    combined = target_msg.content or "[attachment]"
+                    combined = as_turn(target_msg, target_msg.content or "[attachment]")
                     if not history or history[-1].get("content") != combined:
                         history.append({"role": "user", "content": combined})
                         bot.message_history[hk] = history
@@ -1366,7 +1435,7 @@ async def _tg_ipc_loop():
                                 if not _ra_target:
                                     results_out.append({"id": _ra_uid, "name": _ra_u.name, "success": False, "reason": "no recent message found"})
                                     continue
-                                _ra_hk2 = _ra_hk or f"{_ra_uid}-{_ra_cid}"
+                                _ra_hk2 = _ra_hk or history_key(_ra_target)
                                 _ra_hist = bot.message_history.get(_ra_hk2, [])
                                 _ra_combined = "\n".join(e["content"] for e in _ra_hist[-3:] if e["role"] == "user") or (_ra_target.content or "[attachment]")
                                 if not _ra_hist or _ra_hist[-1].get("content") != _ra_combined:
@@ -2414,6 +2483,21 @@ async def generate_response_and_reply(message, prompt, history, image_url=None, 
 
     enriched_instructions = bot.instructions + mood_block + memory_block + profile_block
 
+    # In a server the history is the whole channel, several people talking, and
+    # each of their turns is prefixed with who said it. The model has to be told
+    # that, or it reads the names as part of what was said and starts prefixing
+    # its own replies the same way.
+    if in_server(message.channel):
+        _others = ", ".join(_recent_speakers(message)) or "a few people"
+        enriched_instructions += (
+            "\n\n[This is a group channel, not a private chat. Lines in the "
+            "conversation are written as 'Name: what they said', because several "
+            "people are talking. Read them as different people and keep track of "
+            "who said what. Recently talking here: " + _others + ". "
+            f"You are replying to {speaker_label(message)}. "
+            "Write ONLY your reply, with no name prefix of your own, exactly as "
+            "you would type it into the channel.]")
+
     # Per-user persona override: inject a custom tone/personality for this user.
     # It lives in user_memory under __persona__, so the get_memory() above has
     # already fetched it; get_persona() opened a second sqlite connection for a
@@ -2529,7 +2613,7 @@ async def generate_response_and_reply(message, prompt, history, image_url=None, 
             summarized = await summarize_history(history, enriched_instructions)
             if summarized:
                 history = summarized
-                key = f"{message.author.id}-{message.channel.id}"
+                key = history_key(message)
                 bot.message_history[key] = history
         except Exception:
             pass
@@ -3176,7 +3260,7 @@ async def on_message(message):
             return
 
         user_id = target_msg.author.id
-        key = f"{user_id}-{target_msg.channel.id}"
+        key = history_key(target_msg)
 
         if key not in bot.message_history:
             bot.message_history[key] = []
@@ -3186,7 +3270,8 @@ async def on_message(message):
         # Append `combined` (not the raw target message), when a hint is
         # supplied, generate_response() drives off history, so the hint must
         # live in history or it gets silently dropped.
-        bot.message_history[key].append({"role": "user", "content": combined})
+        bot.message_history[key].append(
+            {"role": "user", "content": as_turn(target_msg, combined)})
         if len(bot.message_history[key]) > MAX_HISTORY * 2:
             bot.message_history[key] = bot.message_history[key][-(MAX_HISTORY * 2):]
 
@@ -3337,10 +3422,11 @@ async def process_message_queue(batch_key):
                     image_url = message.attachments[0].url if (message.attachments and not (message.flags.value & (1 << 13))) else _extract_image_url_from_message(message)
                     wait_time = 0
 
-                key = f"{message_to_reply_to.author.id}-{message_to_reply_to.channel.id}"
+                key = history_key(message_to_reply_to)
                 if key not in bot.message_history:
                     bot.message_history[key] = []
-                bot.message_history[key].append({"role": "user", "content": combined_content})
+                bot.message_history[key].append(
+                    {"role": "user", "content": as_turn(message_to_reply_to, combined_content)})
                 if len(bot.message_history[key]) > MAX_HISTORY * 2:
                     bot.message_history[key] = bot.message_history[key][-(MAX_HISTORY * 2):]
                 history = bot.message_history[key]

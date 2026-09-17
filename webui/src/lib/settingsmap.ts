@@ -184,6 +184,7 @@ export const TABS: Tab[] = [
         keys: [
           "bot.groq_models",
           "bot.groq_small_model",
+          "bot.max_reply_tokens",
           "bot.groq_image_model",
           "bot.groq_whisper_model",
           "bot.groq_tts_model",
