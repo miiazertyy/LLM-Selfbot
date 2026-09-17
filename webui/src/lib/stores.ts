@@ -174,6 +174,15 @@ export const themeId = persisted<string>("theme", "midnight", true);
  * deliberately not persisted: it describes files, not a preference, and a
  * stale copy would mean rendering a background that is no longer there.
  */
+/**
+ * How solid the cards are: "solid", "glass" or "frost".
+ *
+ * Glass costs more than it looks: every translucent panel makes the compositor
+ * re-blur what is behind it. Solid stays the escape hatch, and the picker says
+ * so rather than leaving someone to work out why a busy page felt heavy.
+ */
+export const surfaceId = persisted<string>("surface", "glass", true);
+
 /** Which living background is drawn behind the app. See lib/backdrops.ts. */
 export const backdropId = persisted<string>("backdrop", "aurora", true);
 

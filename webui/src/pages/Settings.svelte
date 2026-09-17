@@ -14,10 +14,17 @@
   import { api } from "../lib/api";
   import { toast, snowEnabled, motionEnabled, themeId, settingsSection, settingsPath, fontId, health,
            appearance, appearanceVersion, customBgOn, customBgDim, loadAppearance,
-           backdropId } from "../lib/stores";
+           backdropId, surfaceId } from "../lib/stores";
   import { CUSTOM_FONT_ID } from "../lib/fonts";
   import { BACKDROPS } from "../lib/backdrops";
+
+  const SURFACES = [
+    { id: "solid", name: "Solid", hint: "Opaque panels, cheapest to draw" },
+    { id: "glass", name: "Glass", hint: "See the background through them" },
+    { id: "frost", name: "Frosted", hint: "Heavier blur, more opaque" },
+  ];
   import Importer from "../lib/components/Importer.svelte";
+  import StatusDot from "../lib/components/StatusDot.svelte";
   import { THEMES } from "../lib/themes";
   import { FONTS } from "../lib/fonts";
   import { sweepTo } from "../lib/themesweep";
@@ -175,11 +182,13 @@
    * A free text box for "short, balanced or chatty" invites a typo that reads
    * as valid and silently falls back to the default.
    */
+  // Exactly what Discord calls them. The shape of the dot says the rest, and
+  // an explanation glued onto the name only makes the list harder to scan.
   const PRESENCES = [
     { value: "online", label: "Online" },
-    { value: "idle", label: "Idle, away" },
-    { value: "dnd", label: "Do not disturb" },
-    { value: "invisible", label: "Invisible, still replies" },
+    { value: "idle", label: "Idle" },
+    { value: "dnd", label: "Do Not Disturb" },
+    { value: "invisible", label: "Invisible" },
   ];
 
   const CHOICES: Record<string, { value: string; label: string }[]> = {
@@ -196,7 +205,6 @@
       { value: "127.0.0.1", label: "This machine only" },
       { value: "0.0.0.0", label: "Anything on this network" },
     ],
-    "bot.night_invisible.status": PRESENCES,
   };
 
   /**
@@ -485,6 +493,26 @@
             <option value={opt.value}>{opt.label}</option>
           {/each}
         </select>
+      <!-- One status, picked the same way as the pool below. A native select
+           cannot carry the indicator, and the indicator is the point. -->
+      {:else if f.key === "bot.night_invisible.status"}
+        <div class="flex flex-wrap justify-end gap-1.5">
+          {#each PRESENCES as p}
+            {@const picked = value(f) === p.value}
+            <button
+              type="button"
+              aria-pressed={picked}
+              onclick={() => setValue(f, p.value)}
+              class="jelly flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[12px]
+                {picked
+                  ? 'border-accent/60 bg-accent/10 text-ink'
+                  : 'border-edge text-muted hover:bg-white/[0.04]'}"
+            >
+              <StatusDot status={p.value} size={11} />
+              {p.label}
+            </button>
+          {/each}
+        </div>
       <!-- The rotation pool is a fixed set, not free text. Typing "onlien"
            used to be accepted and then never match anything. -->
       {:else if f.key === "bot.status.statuses"}
@@ -495,11 +523,12 @@
               type="button"
               aria-pressed={picked}
               onclick={() => togglePresence(f, p.value)}
-              class="jelly rounded-lg border px-2.5 py-1 text-[12px]
+              class="jelly flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[12px]
                 {picked
                   ? 'border-accent/60 bg-accent/10 text-ink'
                   : 'border-edge text-muted hover:bg-white/[0.04]'}"
             >
+              <StatusDot status={p.value} size={11} />
               {p.label}
             </button>
           {/each}
@@ -702,6 +731,30 @@
                     Turn it off to see this again.
                   </p>
                 {/if}
+              </div>
+
+              <!-- How solid the panels sitting on that background are. -->
+              <div class="mt-5">
+                <div class="mb-2 text-[12px] font-medium text-ink">Cards</div>
+                <div class="grid grid-cols-3 gap-2">
+                  {#each SURFACES as s}
+                    <button
+                      onclick={() => surfaceId.set(s.id)}
+                      class="jelly rounded-xl border p-3 text-left
+                        {$surfaceId === s.id
+                          ? 'border-accent/60 bg-accent/10'
+                          : 'border-edge hover:bg-white/[0.04]'}"
+                    >
+                      <span class="block truncate text-[12px] text-ink">{s.name}</span>
+                      <span class="mt-0.5 block text-[10px] leading-snug text-faint">{s.hint}</span>
+                    </button>
+                  {/each}
+                </div>
+                <p class="mt-2 text-[11px] leading-relaxed text-faint">
+                  Glass lets the background through every panel, which means the
+                  machine re-blurs what is behind each one. If a busy page ever
+                  feels heavy, Solid is the reason it is still here.
+                </p>
               </div>
 
               <!-- A picture of your own, behind the whole panel. The themes

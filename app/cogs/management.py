@@ -528,6 +528,18 @@ class Management(commands.Cog):
         """Save pending conversations to disk so we can reply after restart."""
         import json
 
+        try:
+            from app.utils.db import blocked_users as _stored_blocked
+            _blocked = set(_stored_blocked().keys())
+        except Exception:
+            _blocked = set()
+
+        def _is_blocked(user_id) -> bool:
+            try:
+                return int(user_id) in _blocked
+            except (TypeError, ValueError):
+                return False
+
         prefix = self.bot.command_prefix
         pending = {}
 
@@ -554,6 +566,11 @@ class Management(commands.Cog):
                 continue
             user_id, channel_id = key.split("-")
             if _is_server_channel(channel_id):
+                continue
+            # Never carry a conversation we cannot send to across a restart:
+            # it would be retried, fail with the same 403, and be written out
+            # again on the next shutdown, for ever.
+            if _is_blocked(user_id):
                 continue
 
             # Try to get the actual last message id from the internal cache
@@ -589,6 +606,8 @@ class Management(commands.Cog):
                     continue
                 if _is_server_channel(channel_id):
                     continue
+                if _is_blocked(msg.author.id):
+                    continue
                 key = f"{msg.author.id}-{channel_id}"
                 if key in pending:
                     continue
@@ -613,6 +632,8 @@ class Management(commands.Cog):
             last_msg = msgs[-1]
             channel_id = first_msg.channel.id
             if _is_server_channel(channel_id):
+                continue
+            if _is_blocked(first_msg.author.id):
                 continue
             key = f"{first_msg.author.id}-{channel_id}"
             if key in pending:

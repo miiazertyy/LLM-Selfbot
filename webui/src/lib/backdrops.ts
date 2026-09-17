@@ -22,8 +22,8 @@ export const BACKDROPS: Backdrop[] = [
   { id: "none", name: "Flat", hint: "Just the theme colour" },
   { id: "aurora", name: "Aurora", hint: "Slow drifting light in the accent colours" },
   { id: "nebula", name: "Nebula", hint: "A deep rotating haze" },
-  { id: "drift", name: "Drift", hint: "Orbs rising quietly" },
+  { id: "ripple", name: "Ripple", hint: "Slow rings breathing outward" },
 ];
 
-/** How many orbs the drift backdrop renders. */
-export const DRIFT_ORBS = 14;
+/** How many rings the ripple backdrop renders. */
+export const RIPPLE_RINGS = 5;

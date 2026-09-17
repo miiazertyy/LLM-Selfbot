@@ -3,8 +3,8 @@
   import { api } from "./lib/api";
   import { visiblePoll } from "./lib/poll";
   import { appearance, appearanceVersion, customBgOn, customBgDim, loadAppearance,
-           backdropId } from "./lib/stores";
-  import { DRIFT_ORBS } from "./lib/backdrops";
+           backdropId, surfaceId } from "./lib/stores";
+  import { RIPPLE_RINGS } from "./lib/backdrops";
   import { applyCustomFace } from "./lib/fonts";
   import { toasts, snowEnabled, motionEnabled, themeId, fontId, health, loadPrefs,
            logoOpens, logoLinkOff } from "./lib/stores";
@@ -45,15 +45,12 @@
   let page = $state<{ key: string; comp: any } | null>(null);
   const SECTIONS = ["Run", "Brain", "Insight", "Setup"] as const;
 
-  // Fixed once rather than per render, so the orbs do not jump to new lanes
-  // every time anything else on the page updates.
-  const orbs = Array.from({ length: DRIFT_ORBS }, () => ({
-    x: Math.random() * 100,
-    size: 8 + Math.random() * 26,
-    drift: (Math.random() - 0.5) * 220,
-    life: 22 + Math.random() * 26,
-    // Negative, so the screen starts mid-flight instead of empty for 20s.
-    delay: -Math.random() * 40,
+  // Evenly staggered rather than random, so there is always one ring mid-flight
+  // and they never bunch up. Negative delays start the cycle already running
+  // instead of leaving the screen empty for the first pass.
+  const rings = Array.from({ length: RIPPLE_RINGS }, (_, i) => ({
+    life: 16,
+    delay: -(i * 16) / RIPPLE_RINGS,
   }));
 
   let route = $state("dashboard");
@@ -221,6 +218,10 @@
     document.documentElement.dataset.motion = $motionEnabled ? "full" : "off";
   });
 
+  $effect(() => {
+    document.documentElement.dataset.surface = $surfaceId;
+  });
+
   // Register the uploaded typeface whenever it changes, so picking "Yours" in
   // the Typeface panel has a face to resolve to.
   $effect(() => {
@@ -340,11 +341,9 @@
      two backgrounds fighting each other is not a look. -->
 {#if $backdropId !== "none" && !($customBgOn && $appearance.background.present)}
   <div class="app-backdrop" data-kind={$backdropId} aria-hidden="true">
-    {#if $backdropId === "drift"}
-      {#each orbs as o}
-        <span class="orb"
-              style="--x:{o.x}%; --size:{o.size}px; --drift:{o.drift}px;
-                     --life:{o.life}s; --delay:{o.delay}s"></span>
+    {#if $backdropId === "ripple"}
+      {#each rings as r}
+        <span class="ring" style="--life:{r.life}s; --delay:{r.delay}s"></span>
       {/each}
     {/if}
   </div>
@@ -353,7 +352,7 @@
 <div class="app-shell flex h-screen overflow-hidden">
   <!-- ── Sidebar ─────────────────────────────────────────────────────── -->
   <aside
-    class="z-20 flex shrink-0 flex-col border-r border-edge bg-surface/70
+    class="chrome-surface z-20 flex shrink-0 flex-col border-r border-edge bg-surface/70
            {rail ? 'w-[52px]' : 'w-[212px]'}"
     style="transition: width 0.42s var(--spring)"
   >
@@ -473,7 +472,7 @@
          not part of this row, so anything laid out here runs straight underneath
          them. The padding keeps that corner clear. -->
     <header
-      class="pywebview-drag-region flex h-9 shrink-0 items-center gap-2 border-b border-edge bg-surface/70 px-4
+      class="chrome-surface pywebview-drag-region flex h-9 shrink-0 items-center gap-2 border-b border-edge bg-surface/70 px-4
         {desktop ? 'pr-[104px]' : ''}"
     >
       <h1 class="text-[13px] font-medium text-ink">{routes[route]?.title ?? ""}</h1>

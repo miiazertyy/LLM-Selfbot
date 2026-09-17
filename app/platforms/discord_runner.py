@@ -609,6 +609,16 @@ async def _reply_pending_messages():
             history = data.get("history", [])
             content = data["content"]
 
+            # Someone who cannot be messaged is the whole reason this loop kept
+            # repeating itself. The send fails with a 403, so the conversation
+            # is never answered, so it is still "unanswered" when the next
+            # shutdown writes this file - and the same dead reply was retried on
+            # every single restart, logging the same error each time. Blocked
+            # ids are loaded before this task starts.
+            if user_id in _blocked_users:
+                log_system(f"Skipping pending reply to {user_id}: cannot be messaged")
+                continue
+
             if history and history[-1].get("role") == "assistant":
                 continue
 
@@ -1361,11 +1371,26 @@ async def _tg_ipc_loop():
 
                 elif cmd == "get_status":
                     import app.utils.mood as _mood_mod
+                    # The presence the account is actually showing, so the panel
+                    # can put the same dot next to the avatar that Discord does.
+                    try:
+                        _pres = str(getattr(bot.user, "status", "") or "") or "offline"
+                    except Exception:
+                        _pres = "offline"
+                    _night, _ = night_window_state(config["bot"].get("night_invisible") or {})
                     _write_result(cmd_id, {
                         "paused": bot.paused,
                         "mood": _mood_mod.current_mood,
                         "active_channels": len(bot.active_channels),
                         "ignored_users": len(bot.ignore_users),
+                        "presence": _pres,
+                        # Worth saying: an account showing invisible at 3am is
+                        # the night schedule doing its job, not a fault.
+                        "night": bool(_night),
+                        "latency_ms": (round(bot.latency * 1000)
+                                       if bot.latency and bot.latency == bot.latency else None),
+                        "guilds": len(getattr(bot, "guilds", []) or []),
+                        "friends": len(getattr(bot, "friends", []) or []),
                     })
 
                 elif cmd == "mood_get":
