@@ -622,22 +622,38 @@ textarea {
 
 :root[data-surface="glass"] .glass,
 :root[data-surface="frost"] .glass {
-  /* The specular top edge is what stops a translucent panel reading as a
-     plain transparency. Kept subtle: on a busy background it is the border
-     and the highlight doing the work, not the fill. */
-  background:
-    linear-gradient(180deg, rgb(255 255 255 / 0.10), rgb(255 255 255 / 0.02) 42%, rgb(255 255 255 / 0.05)),
-    color-mix(in srgb, var(--color-card) var(--surface-solidity, 55%), transparent);
-  border-color: color-mix(in srgb, white 14%, var(--color-edge));
-  box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 0.07),
-    0 8px 28px rgb(0 0 0 / 0.20);
-  backdrop-filter: blur(var(--surface-blur, 18px)) saturate(1.5);
-  -webkit-backdrop-filter: blur(var(--surface-blur, 18px)) saturate(1.5);
+  /* The same material as the pickers in Appearance: a border, and the
+     background showing through. A tinted fill was the wrong instinct - it
+     turned every panel into a slab and hid the thing it was meant to reveal.
+     What little fill remains is there to keep text legible over a bright
+     patch of backdrop, not to colour the panel. */
+  background: color-mix(in srgb, var(--color-card) var(--surface-solidity, 14%), transparent);
+  border-color: var(--color-edge);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.04);
+  backdrop-filter: blur(var(--surface-blur, 14px)) saturate(1.25);
+  -webkit-backdrop-filter: blur(var(--surface-blur, 14px)) saturate(1.25);
 }
 
-:root[data-surface="glass"] { --surface-solidity: 48%; --surface-blur: 20px; }
-:root[data-surface="frost"] { --surface-solidity: 78%; --surface-blur: 30px; }
+/* The hover lift the pickers have, so a card reacts the same way they do.
+   Each mode names its own value rather than deriving one: calc() inside
+   color-mix() is not worth relying on across engines for a nicety. */
+:root[data-surface="glass"] .glass:hover,
+:root[data-surface="frost"] .glass:hover {
+  background: color-mix(in srgb, var(--color-card) var(--surface-hover, 22%), transparent);
+}
+
+:root[data-surface="glass"] {
+  --surface-solidity: 14%;
+  --surface-hover: 22%;
+  --surface-chrome: 36%;
+  --surface-blur: 14px;
+}
+:root[data-surface="frost"] {
+  --surface-solidity: 55%;
+  --surface-hover: 62%;
+  --surface-chrome: 74%;
+  --surface-blur: 26px;
+}
 
 /* The two chrome surfaces follow the cards, so the whole panel is one material
    rather than glass panels sitting on an opaque frame. */
@@ -645,7 +661,9 @@ textarea {
 :root[data-surface="frost"] .chrome-surface {
   backdrop-filter: blur(var(--surface-blur, 18px)) saturate(1.4);
   -webkit-backdrop-filter: blur(var(--surface-blur, 18px)) saturate(1.4);
-  background: color-mix(in srgb, var(--color-surface) var(--surface-solidity, 55%), transparent);
+  /* A touch more solid than the cards: the sidebar and header carry the nav
+     and the page title, which have to stay readable over anything. */
+  background: color-mix(in srgb, var(--color-surface) var(--surface-chrome, 36%), transparent);
 }
 
 /* The field inputs would otherwise stay opaque blocks on a glass card. */
