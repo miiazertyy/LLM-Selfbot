@@ -18,6 +18,8 @@ export type DescribeState = {
   done: number;
   failed: number;
   reason?: string;
+  /** How many Groq keys the pass is using at once, one picture each. */
+  workers?: number;
 };
 
 /** null when nothing is happening, so a page can simply not render. */

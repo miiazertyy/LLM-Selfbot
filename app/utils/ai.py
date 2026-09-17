@@ -46,6 +46,30 @@ def local_active() -> bool:
     return _local_client is not None
 
 
+def groq_key_count() -> int:
+    """How many Groq keys are loaded.
+
+    Callers that can spread independent work across keys use this to decide how
+    many to run at once. Rate limits are per key, so two keys really are two
+    separate allowances rather than one shared faster one.
+    """
+    if not _groq_clients and _local_client is None:
+        init_ai()
+    return len(_groq_clients)
+
+
+def groq_key_label(index: int) -> str:
+    """The display label for one key, for logs."""
+    if not _groq_clients:
+        return ""
+    return _groq_clients[index % len(_groq_clients)]["label"]
+
+
+def vision_is_local() -> bool:
+    """Whether pictures are read by the local server rather than by Groq."""
+    return _local_client is not None and _local_vision
+
+
 def _chat_client():
     """Whoever is writing the replies: the local server, or Groq.
 
@@ -253,12 +277,20 @@ async def _create_completion(messages):
             raise
 
 
-async def _create_image_completion(image_model, messages, **extra):
+async def _create_image_completion(image_model, messages, client_index=None, **extra):
     """Image description call with key fallback (no model fallback, image model is fixed).
 
     `extra` carries optional parameters such as max_tokens and reasoning_effort.
     Not every model accepts every one of them, so a rejection of the parameters
     themselves is retried without them rather than failing the whole call.
+
+    `client_index` pins the call to one specific Groq key instead of using
+    whichever is currently active. That is for callers running several of these
+    at once - describing a folder of pictures, say - where each worker wants its
+    own key and its own rate-limit allowance. A pinned call does not rotate on
+    failure: rotating would land it on a key another worker is already using,
+    and the caller is the one that knows how to back off. Left as None it
+    behaves exactly as it always did.
     """
     if not _groq_clients and _local_client is None:
         init_ai()
@@ -281,9 +313,13 @@ async def _create_image_completion(image_model, messages, **extra):
             "Reading images needs a Groq key, or a local model that can see "
             "with 'Use it for images too' turned on.")
 
+    pinned = client_index is not None
+    if pinned:
+        client = _groq_clients[client_index % len(_groq_clients)]["client"]
+
     while True:
         try:
-            response = await _active_client().chat.completions.create(
+            response = await (client if pinned else _active_client()).chat.completions.create(
                 model=image_model,
                 messages=messages,
                 **params,
@@ -292,7 +328,7 @@ async def _create_image_completion(image_model, messages, **extra):
         except RateLimitError as e:
             from app.utils import apihealth
             apihealth.record("rate_limit", str(e), model=image_model)
-            if _fallback_client():
+            if not pinned and _fallback_client():
                 continue
             raise
         except Exception as e:
@@ -311,7 +347,7 @@ async def _create_image_completion(image_model, messages, **extra):
             else:
                 from app.utils import apihealth
                 apihealth.record("rate_limit", text, model=image_model)
-            if _fallback_client():
+            if not pinned and _fallback_client():
                 continue
             raise
 

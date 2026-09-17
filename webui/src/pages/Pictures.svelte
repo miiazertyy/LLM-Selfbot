@@ -225,6 +225,11 @@
     <div class="flex items-baseline justify-between gap-3">
       <span class="text-[12px] text-ink">
         Describing the new pictures, {describing.done} of {describing.total}
+        <!-- Worth saying: with several keys this is genuinely running that many
+             at once, so the rate is not what one key would manage. -->
+        {#if (describing.workers ?? 1) > 1}
+          <span class="text-muted">· {describing.workers} keys at once</span>
+        {/if}
       </span>
       {#if describing.failed}
         <span class="shrink-0 text-[11px] text-warn">{describing.failed} failed</span>

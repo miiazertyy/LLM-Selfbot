@@ -73,9 +73,79 @@ def _save(data: bytes, original: str) -> tuple[str, bytes]:
 # Describing a zip of thirty photos is thirty model calls, which is far longer
 # than a request should stay open. The files land immediately and the
 # descriptions fill in behind them, with progress the page can poll.
-_describe_state = {"running": False, "total": 0, "done": 0, "failed": 0, "reason": ""}
+_describe_state = {"running": False, "total": 0, "done": 0, "failed": 0,
+                   "reason": "", "workers": 1}
 _describe_queue: list = []
 _describe_task = None
+
+# Groq's limits are per key, so two keys are two separate allowances rather than
+# one shared faster one. Describing ran strictly one picture at a time on
+# whichever key happened to be active, only touching the others when that one
+# hit its ceiling - so a second key did nothing for a big import except get used
+# once the first was exhausted. One worker per key, each pinned to its own,
+# turns them into real parallelism.
+#
+# Capped because the point is to use the keys, not to open an unbounded number
+# of concurrent uploads: each call carries a base64 image.
+MAX_DESCRIBE_WORKERS = 4
+
+
+async def _describe_worker(slot: int):
+    """Drain the shared queue, describing each picture on this worker's key.
+
+    `slot` is both the worker number and the Groq key index, so two workers
+    never spend the same allowance. The queue is shared and popped from the
+    front, so a worker whose key is throttled simply takes fewer pictures
+    rather than holding up the ones that are not.
+    """
+    import asyncio
+
+    while _describe_queue:
+        name = _describe_queue.pop(0)
+        try:
+            path = PICTURES_DIR / name
+            if not path.exists():
+                continue
+            ext = os.path.splitext(name)[1].lower()
+            data = await asyncio.to_thread(path.read_bytes)
+
+            # A per minute limit clears by waiting, so a rate limited picture
+            # is worth a second and third go. Anything else is a real failure
+            # and retrying it just wastes the allowance.
+            description, reason = "", ""
+            for backoff in (0, 20, 40):
+                if backoff:
+                    _describe_state["reason"] = (
+                        f"Waiting {backoff}s for the rate limit to clear.")
+                    await asyncio.sleep(backoff)
+                description, reason = await _describe(name, data, ext, client_index=slot)
+                if description or "rate" not in reason.lower():
+                    break
+            _describe_state["reason"] = ""
+
+            if description:
+                bus.append("pictures", f"Described {name}.")
+            else:
+                _describe_state["failed"] += 1
+                _describe_state["reason"] = reason
+                bus.append("pictures", f"Could not describe {name}: {reason}", "warn")
+        except Exception as exc:
+            # One bad file must not stop the rest of the batch, and an escaping
+            # exception here would be an unhandled task error.
+            _describe_state["failed"] += 1
+            _describe_state["reason"] = str(exc)
+            bus.append("pictures", f"Could not describe {name}: {exc}", "warn")
+        finally:
+            _describe_state["done"] += 1
+            if _describe_state["done"] > _describe_state["total"]:
+                _describe_state["total"] = _describe_state["done"]
+
+        # Spacing keeps one key under its per minute ceiling instead of
+        # tripping it on the second picture. Each worker paces its own key, so
+        # more keys means more pictures in the same wall time, not a tighter
+        # gap on any one of them.
+        if _describe_queue:
+            await asyncio.sleep(3)
 
 
 async def _describe_pending():
@@ -87,51 +157,27 @@ async def _describe_pending():
     already going.
     """
     import asyncio
-    _describe_state.update(running=True, done=0, failed=0, reason="")
+    from app.utils.ai import groq_key_count, vision_is_local
+
+    # A local vision model is one server with one queue, so spreading work
+    # across "keys" there would just queue up on the same machine.
     try:
-        while _describe_queue:
-            name = _describe_queue.pop(0)
-            _describe_state["total"] = _describe_state["done"] + len(_describe_queue) + 1
-            try:
-                path = PICTURES_DIR / name
-                if not path.exists():
-                    continue
-                ext = os.path.splitext(name)[1].lower()
+        keys = 1 if vision_is_local() else max(1, groq_key_count())
+    except Exception:
+        keys = 1
+    workers = max(1, min(keys, MAX_DESCRIBE_WORKERS))
 
-                # A per minute limit clears by waiting, so a rate limited
-                # picture is worth a second and third go. Anything else is a
-                # real failure and retrying it just wastes the allowance.
-                description, reason = "", ""
-                for attempt, backoff in enumerate((0, 20, 40)):
-                    if backoff:
-                        _describe_state["reason"] = (
-                            f"Waiting {backoff}s for the rate limit to clear.")
-                        await asyncio.sleep(backoff)
-                    description, reason = await _describe(name, path.read_bytes(), ext)
-                    if description or "rate" not in reason.lower():
-                        break
-                _describe_state["reason"] = ""
-
-                if description:
-                    bus.append("pictures", f"Described {name}.")
-                else:
-                    _describe_state["failed"] += 1
-                    _describe_state["reason"] = reason
-                    bus.append("pictures", f"Could not describe {name}: {reason}", "warn")
-            except Exception as exc:
-                # One bad file must not stop the rest of the batch, and an
-                # escaping exception here would be an unhandled task error.
-                _describe_state["failed"] += 1
-                _describe_state["reason"] = str(exc)
-                bus.append("pictures", f"Could not describe {name}: {exc}", "warn")
-            finally:
-                _describe_state["done"] += 1
-            # Spacing the calls out keeps a batch under the per minute ceiling
-            # instead of tripping it on the second picture.
-            if _describe_queue:
-                await asyncio.sleep(3)
+    _describe_state.update(running=True, done=0, failed=0, reason="",
+                           workers=workers, total=len(_describe_queue))
+    if workers > 1:
+        bus.append("pictures",
+                   f"Describing with {workers} keys at once.")
+    try:
+        await asyncio.gather(*(_describe_worker(slot) for slot in range(workers)))
     finally:
         _describe_state["running"] = False
+        # `workers` deliberately keeps its value: with running False it reads as
+        # "that last pass used N keys", which is what the page wants to say.
         failed = _describe_state["failed"]
         bus.append("pictures",
                    "Finished describing the new pictures."
@@ -156,7 +202,10 @@ async def describe_missing(request: Request):
     if not pending:
         return {"ok": True, "queued": 0, "running": _describe_state["running"]}
     _describe_queue.extend(pending)
-    if not _describe_state["running"]:
+    if _describe_state["running"]:
+        # Joining a pass already under way: the total was fixed when it began.
+        _describe_state["total"] += len(pending)
+    else:
         _describe_task = asyncio.create_task(_describe_pending())
     return {"ok": True, "queued": len(pending), "running": True}
 
@@ -209,7 +258,9 @@ async def upload(request: Request, file: UploadFile = File(...)):
                    + (f", skipped {len(skipped)}" if skipped else "") + ".")
         if added:
             _describe_queue.extend(added)
-            if not _describe_state["running"]:
+            if _describe_state["running"]:
+                _describe_state["total"] += len(added)
+            else:
                 _describe_task = asyncio.create_task(_describe_pending())
         return {"ok": True, "zip": True, "added": added, "skipped": skipped,
                 "describing": bool(added)}
@@ -224,7 +275,7 @@ async def upload(request: Request, file: UploadFile = File(...)):
             "added": [name], "skipped": []}
 
 
-async def _describe(name: str, data: bytes, ext: str):
+async def _describe(name: str, data: bytes, ext: str, client_index=None):
     """Ask the model what is in the picture.
 
     Returns the description and, when there is none, the reason. Swallowing the
@@ -249,6 +300,7 @@ async def _describe(name: str, data: bytes, ext: str):
         data_url = f"data:{mime};base64,{base64.b64encode(data).decode()}"
         resp = await _create_image_completion(
             model,
+            client_index=client_index,
             messages=[{
                 "role": "user",
                 "content": [
