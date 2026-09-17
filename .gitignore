@@ -63,3 +63,7 @@ Thumbs.db
 # ── Owner's own notes, not part of the project ────────────────────────────────
 # Without this, git add . would publish it.
 /donotread.txt
+
+# Written by the build from the git tag, read by app/version.py.
+# Generated per build, never committed.
+app/_build.py

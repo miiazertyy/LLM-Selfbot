@@ -1,15 +1,35 @@
 """
 app/version.py - what build this is, and how to compare it with a release.
 
-One constant, imported everywhere, so the About panel, the update check and the
-packaged exe can never disagree. Bump `__version__` when cutting a release and
-tag the release to match; the comparison strips a leading "v" so `v1.6.0` and
-`1.6.0` are the same thing.
+One value, imported everywhere, so the About panel, the update check and the
+packaged exe can never disagree. The comparison strips a leading "v" so
+`v1.6.0` and `1.6.0` are the same thing.
+
+Where the value comes from
+--------------------------
+The git tag, stamped in at build time. This used to be a constant that had to
+be edited by hand for every release, which is a step that is easy to forget -
+and forgetting it is worse than it sounds: the app goes on reporting the old
+number, so the update check compares the new release against that stale value
+and keeps offering an update that has already been installed, for good.
+
+So the tag is the single source of truth. The build writes app/_build.py (see
+the "Stamp the version" step in .github/workflows/build-exe.yml) and this reads
+it. A source checkout has no such file and falls back to the constant below,
+which is why running from source reports a development version rather than
+pretending to be a release.
 """
 
 import re
 
-__version__ = "1.0.0"
+# Fallback for source checkouts and untagged builds. Not worth editing: a
+# tagged build overrides it, and an untagged one is honestly a dev build.
+_FALLBACK = "0.0.0-dev"
+
+try:
+    from app._build import VERSION as __version__  # type: ignore
+except Exception:
+    __version__ = _FALLBACK
 
 
 def _parts(value: str) -> tuple:

@@ -80,9 +80,9 @@ Nothing is zipped, and nothing needs Python installed: it is all inside.
 |---|---|---|
 | Windows | `LLMSelfbotSetup.exe` | Run it. Start Menu shortcut, and an uninstaller |
 | Windows, no install | `LLMSelfbot-portable.exe` | One file, run it. Takes a few seconds to open, as it unpacks itself each time |
-| Linux | `selfbot-linux-x86_64` | `chmod +x` it and run it |
-| Raspberry Pi, ARM | `selfbot-linux-aarch64` | Same |
-| macOS | `selfbot-macos-arm64` | Same |
+| Linux | `LLMSelfbot-linux-x86_64` | `chmod +x` it and run it |
+| Raspberry Pi, ARM | `LLMSelfbot-linux-aarch64` | Same |
+| macOS | `LLMSelfbot-macos-arm64` | Same |
 
 Only Windows gets the desktop window. Everywhere else the app serves the panel
 and prints the address to open in a browser, which is what makes it useful on a
@@ -288,7 +288,7 @@ pyinstaller packaging/selfbot.spec --noconfirm
 |---|---|
 | `selfbot.spec` | `dist/LLMSelfbot/`: the exe, a console twin for reading errors, and `_internal/`. Starts instantly. What the installer wraps |
 | `selfbot-onefile.spec` | one `LLMSelfbot.exe` with nothing beside it |
-| `selfbot-headless.spec` | `dist/selfbot/`, no window, for Linux, ARM and macOS |
+| `selfbot-headless.spec` | `dist/LLMSelfbot/`, no window, for Linux, ARM and macOS |
 | `selfbot-headless-onefile.spec` | one `selfbot` binary, same platforms |
 
 All four take their contents from `packaging/specparts.py`, so a hidden import

@@ -1,6 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
-# Single file build for Linux x86_64, Linux aarch64 and macOS: one `selfbot`
-# binary with nothing beside it. Run from the repo root:
+# Single file build for Linux x86_64, Linux aarch64 and macOS: one
+# `LLMSelfbot` binary with nothing beside it. Run from the repo root:
 #   pyinstaller packaging/selfbot-headless-onefile.spec --noconfirm
 #
 # The same trade as on Windows. One file is far easier to drop on a server or
@@ -42,7 +42,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name="selfbot",
+    name="LLMSelfbot",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

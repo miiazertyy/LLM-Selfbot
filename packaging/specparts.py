@@ -120,6 +120,9 @@ def build_parts(root, gui=True):
             print(f"[spec] skipping {pkg}: {exc}")
 
     hiddenimports += _HIDDEN
+    # Picks up app/_build.py too, the version the CI stamps from the git tag.
+    # It has to exist before this runs, which is why the "Stamp the version"
+    # step comes before the build steps in the workflow.
     app_modules = collect_submodules("app")
 
     if gui:

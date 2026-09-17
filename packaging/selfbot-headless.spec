@@ -7,8 +7,8 @@
 # control panel on 127.0.0.1:8787 and you open that in a browser, which is what
 # makes it useful on a server, a Raspberry Pi or over Tailscale.
 #
-# Produces dist/selfbot/selfbot plus its _internal folder. For a single file
-# with nothing beside it, see selfbot-headless-onefile.spec.
+# Produces dist/LLMSelfbot/LLMSelfbot plus its _internal folder. For a single
+# file with nothing beside it, see selfbot-headless-onefile.spec.
 #
 # The contents come from specparts.py, shared with the Windows specs, so a
 # hidden import added for one platform is added for all of them. This file used
@@ -45,7 +45,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="selfbot",
+    name="LLMSelfbot",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -59,5 +59,5 @@ coll = COLLECT(
     a.datas,
     strip=False,
     upx=False,
-    name="selfbot",
+    name="LLMSelfbot",
 )

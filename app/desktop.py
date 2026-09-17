@@ -115,7 +115,7 @@ def _run_tray(url: str, supervisor_holder: dict):
         os._exit(0)
 
     icon = pystray.Icon(
-        "selfbot",
+        "LLMSelfbot",
         _icon_image(),
         APP_TITLE,
         menu=pystray.Menu(
