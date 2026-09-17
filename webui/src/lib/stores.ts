@@ -161,6 +161,45 @@ export const fontId = persisted<string>("font", "mikhak", true);
 
 export const themeId = persisted<string>("theme", "midnight", true);
 
+/**
+ * A background image and a typeface of the user's own.
+ *
+ * The files themselves live on the server (see app/web/routes/appearance_routes.py):
+ * localStorage is per-origin and gets wiped by the desktop webview, which is
+ * the same reason the other preferences are mirrored server-side, and a font
+ * is far too big for it anyway. What is kept here is only the choice to use
+ * them and how far the image is dimmed.
+ *
+ * `appearance` is the server's answer about what is actually uploaded. It is
+ * deliberately not persisted: it describes files, not a preference, and a
+ * stale copy would mean rendering a background that is no longer there.
+ */
+export const customBgOn = persisted<boolean>("customBgOn", false, true);
+export const customBgDim = persisted<number>("customBgDim", 0.72, true);
+
+export type AppearanceInfo = {
+  background: { present: boolean; name?: string; size?: number };
+  font: { present: boolean; name?: string; size?: number; format?: string };
+};
+
+export const appearance = writable<AppearanceInfo>({
+  background: { present: false },
+  font: { present: false },
+});
+
+/** Bumped on every upload, so cached copies of the old file are not reused. */
+export const appearanceVersion = writable<number>(Date.now());
+
+/** Ask the server what is uploaded. Safe to call whenever. */
+export async function loadAppearance() {
+  try {
+    const data = await fetch("/api/appearance").then((r) => r.json());
+    if (data && data.background && data.font) appearance.set(data);
+  } catch {
+    /* an older build, or offline: the panel just shows nothing uploaded */
+  }
+}
+
 // The Mica/Acrylic themes were removed; anyone still holding one of those ids
 // in localStorage is moved to the default rather than left on a dead value.
 themeId.update((id) => (id === "mica" || id === "acrylic" ? "midnight" : id));

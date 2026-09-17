@@ -50,6 +50,8 @@ CONFIG_SCHEMA = [
      "section": "Status"},
     {"key": "bot.night_invisible.hours", "type": "str", "label": "Night hours (24h, local, e.g. 2-8)",
      "section": "Status"},
+    {"key": "bot.night_invisible.status", "type": "str", "label": "Status during night hours",
+     "section": "Status"},
     {"key": "bot.priority_prefix", "type": "str", "label": "Priority prefix",
      "section": "General", "requires_restart": True},
     {"key": "bot.trigger_bypasses_ignore", "type": "bool", "label": "Triggers bypass ignore chance",

@@ -4,7 +4,8 @@
  * A bar sweeps across the screen and the colours change behind its leading
  * edge, so the new theme arrives with the wipe instead of every surface
  * flipping at once. Sparks trail off the edge because the sweep is otherwise a
- * plain rectangle crossing the screen.
+ * plain rectangle crossing the screen, and stars twinkle across the whole
+ * viewport in its wake, each lighting up as the edge reaches it.
  *
  * The sweep is a plain DOM element on top of everything, drawn with the
  * Web Animations API. No library, and if anything at all goes wrong the theme
@@ -15,6 +16,7 @@ import { motionEnabled, themeId } from "./stores";
 
 const DURATION = 620;
 const SPARKS = 26;
+const STARS = 34;
 
 let running = false;
 
@@ -47,6 +49,24 @@ export function sweepTo(id: string) {
     spark.style.setProperty("--size", `${2 + Math.random() * 3}px`);
     spark.style.setProperty("--delay", `${Math.random() * DURATION * 0.55}ms`);
     bar.appendChild(spark);
+  }
+
+  // Stars are scattered over the whole viewport rather than riding the bar.
+  // Delay tracks horizontal position, so each one lights up roughly as the
+  // leading edge passes it and the screen fills in behind the wipe.
+  for (let i = 0; i < STARS; i++) {
+    const star = document.createElement("span");
+    star.className = "theme-sweep-star";
+    const x = Math.random() * 100;
+    star.style.left = `${x}%`;
+    star.style.top = `${Math.random() * 100}%`;
+    star.style.setProperty("--size", `${6 + Math.random() * 12}px`);
+    star.style.setProperty("--life", `${420 + Math.random() * 260}ms`);
+    // Spread around the edge's arrival rather than exactly on it, so they do
+    // not fire in a straight vertical line.
+    const arrival = (x / 100) * DURATION * 0.8;
+    star.style.setProperty("--delay", `${Math.max(0, arrival + (Math.random() - 0.4) * 140)}ms`);
+    layer.appendChild(star);
   }
 
   document.body.appendChild(layer);

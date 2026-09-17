@@ -10,6 +10,8 @@
    */
   import { onMount, onDestroy } from "svelte";
   import { api } from "../api";
+  import { resource } from "../resource";
+  import { get } from "svelte/store";
   import { toast } from "../stores";
   import Button from "./Button.svelte";
   import Toggle from "./Toggle.svelte";
@@ -50,39 +52,64 @@
 
   let timer: any = null;
 
+  // Both of these probe network endpoints that wait out their own timeouts when
+  // nothing is listening, and the subtab remounts every time it is opened. They
+  // ran one after the other, uncached, so leaving and coming back cost the full
+  // round again. Cached and concurrent: a return visit paints from what is
+  // already held and revalidates behind it.
+  const statusRes = resource("localStatus", () => api.localStatus(), null as any);
+  const detectRes = resource("localDetect", () => api.localDetect(), null as any);
+
   onMount(async () => {
-    await load();
-    await refresh();
+    // Only show the skeleton when there is genuinely nothing to show.
+    loading = !get(statusRes).data;
+    await Promise.all([load(), refresh()]);
     loading = false;
   });
   onDestroy(() => clearInterval(timer));
 
-  async function load() {
+  function apply(s: any) {
+    enabled = s.settings.enabled;
+    baseUrl = s.settings.base_url;
+    model = s.settings.model;
+    vision = s.settings.vision;
+    reachable = s.reachable;
+    probeError = s.error || "";
+    models = s.models || [];
+    canPull = s.can_pull;
+    modelMissing = s.model_missing;
+    pull = s.pull;
+    stored = JSON.stringify({ enabled, baseUrl, model, vision });
+    watchPull();
+  }
+
+  async function load(force = false) {
+    // Paint from whatever is already held before touching the network. Both
+    // endpoints probe a server that is usually not there, so each waits out its
+    // own timeout, and this subtab remounts every single time it is opened -
+    // which is why leaving and coming back used to mean sitting through the
+    // whole round again. A stale answer on screen while the fresh one arrives
+    // is the right trade for something that changes this rarely.
+    const held = !force && get(statusRes).data;
+    if (held) apply(held);
+
     try {
-      const s = await api.localStatus();
-      enabled = s.settings.enabled;
-      baseUrl = s.settings.base_url;
-      model = s.settings.model;
-      vision = s.settings.vision;
-      reachable = s.reachable;
-      probeError = s.error || "";
-      models = s.models || [];
-      canPull = s.can_pull;
-      modelMissing = s.model_missing;
-      pull = s.pull;
-      stored = JSON.stringify({ enabled, baseUrl, model, vision });
-      watchPull();
+      const s = await statusRes.refresh(force ? { force: true } : { maxAge: 20000 });
+      if (s) apply(s);
     } catch (e: any) {
-      toast(e?.message || "Could not read the local settings", "err");
+      if (!held) toast(e?.message || "Could not read the local settings", "err");
     }
   }
 
   /** Look for servers that are running, so nothing has to be typed. */
-  async function refresh() {
+  async function refresh(force = false) {
+    const held = !force && get(detectRes).data;
+    if (held) servers = held.servers || [];
     try {
-      servers = (await api.localDetect()).servers || [];
+      const d = await detectRes.refresh(force ? { force: true } : { maxAge: 20000 });
+      if (d) servers = d.servers || [];
     } catch {
-      servers = [];
+      if (!held) servers = [];
     }
   }
 
@@ -128,7 +155,7 @@
           : "Saved. Replies go to Groq again after a restart.",
         "ok",
       );
-      await load();
+      await load(true);
     } catch (e: any) {
       toast(e?.message || "Could not save", "err");
     }
@@ -370,7 +397,7 @@
       {dirty ? "Save changes" : "Saved"}
     </Button>
     {#if dirty}
-      <Button kind="ghost" size="sm" onclick={() => { loading = true; load().then(() => (loading = false)); }}>
+      <Button kind="ghost" size="sm" onclick={() => { loading = true; load(true).then(() => (loading = false)); }}>
         Revert
       </Button>
     {/if}

@@ -2,6 +2,8 @@
   import { onMount } from "svelte";
   import { api } from "./lib/api";
   import { visiblePoll } from "./lib/poll";
+  import { appearance, appearanceVersion, customBgOn, customBgDim, loadAppearance } from "./lib/stores";
+  import { applyCustomFace } from "./lib/fonts";
   import { toasts, snowEnabled, motionEnabled, themeId, fontId, health, loadPrefs,
            logoOpens, logoLinkOff } from "./lib/stores";
   import { applyTheme } from "./lib/themes";
@@ -180,6 +182,10 @@
     // leaving the bar hidden until someone opens Pictures.
     checkDescribeOnce();
 
+    // Whether a backdrop and a typeface have been uploaded. Needed at startup,
+    // not just when the Appearance tab is opened, because both apply app-wide.
+    loadAppearance();
+
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
@@ -200,6 +206,39 @@
 
   $effect(() => {
     document.documentElement.dataset.motion = $motionEnabled ? "full" : "off";
+  });
+
+  // Register the uploaded typeface whenever it changes, so picking "Yours" in
+  // the Typeface panel has a face to resolve to.
+  $effect(() => {
+    applyCustomFace($appearance.font.present ? ($appearance.font.format || "") : "", $appearanceVersion);
+  });
+
+  /**
+   * The uploaded image, painted as two background layers on <body>.
+   *
+   * A fixed element behind the app would have meant relying on how negative
+   * z-index interacts with the root background propagating to the canvas,
+   * which is exactly the sort of thing that renders differently in a webview.
+   * Two background layers on one element have no such ambiguity, and because
+   * the scrim is written in terms of var(--color-bg) it re-tints itself when
+   * the theme changes rather than needing to be recomputed.
+   */
+  $effect(() => {
+    const root = document.documentElement;
+    const on = $customBgOn && $appearance.background.present;
+    if (!on) {
+      root.style.removeProperty("--app-backdrop");
+      root.style.removeProperty("--app-backdrop-scrim");
+      return;
+    }
+    const pct = Math.round(Math.min(1, Math.max(0, $customBgDim)) * 100);
+    const scrim = `color-mix(in srgb, var(--color-bg) ${pct}%, transparent)`;
+    root.style.setProperty(
+      "--app-backdrop",
+      `url("/api/appearance/background?v=${$appearanceVersion}")`,
+    );
+    root.style.setProperty("--app-backdrop-scrim", `linear-gradient(${scrim}, ${scrim})`);
   });
 
   $effect(() => {

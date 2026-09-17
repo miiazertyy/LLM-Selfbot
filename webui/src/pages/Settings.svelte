@@ -12,7 +12,10 @@
    */
   import { onMount } from "svelte";
   import { api } from "../lib/api";
-  import { toast, snowEnabled, motionEnabled, themeId, settingsSection, settingsPath, fontId } from "../lib/stores";
+  import { toast, snowEnabled, motionEnabled, themeId, settingsSection, settingsPath, fontId, health,
+           appearance, appearanceVersion, customBgOn, customBgDim, loadAppearance } from "../lib/stores";
+  import { CUSTOM_FONT_ID } from "../lib/fonts";
+  import Importer from "../lib/components/Importer.svelte";
   import { THEMES } from "../lib/themes";
   import { FONTS } from "../lib/fonts";
   import { sweepTo } from "../lib/themesweep";
@@ -170,6 +173,13 @@
    * A free text box for "short, balanced or chatty" invites a typo that reads
    * as valid and silently falls back to the default.
    */
+  const PRESENCES = [
+    { value: "online", label: "Online" },
+    { value: "idle", label: "Idle, away" },
+    { value: "dnd", label: "Do not disturb" },
+    { value: "invisible", label: "Invisible, still replies" },
+  ];
+
   const CHOICES: Record<string, { value: string; label: string }[]> = {
     "bot.message_style.mode": [
       { value: "short", label: "Short, a line or two" },
@@ -184,7 +194,33 @@
       { value: "127.0.0.1", label: "This machine only" },
       { value: "0.0.0.0", label: "Anything on this network" },
     ],
+    "bot.night_invisible.status": PRESENCES,
   };
+
+  /**
+   * The statuses Discord actually has.
+   *
+   * The rotation list used to be free text, so a typo ("onlien") was accepted
+   * and silently never matched, leaving the account stuck on whatever it had.
+   */
+  const PRESENCE_KEYS = PRESENCES.map((p) => p.value);
+
+  /**
+   * Add or remove one status from the rotation pool.
+   *
+   * Kept in PRESENCE_KEYS order rather than click order, so the optional
+   * weights list in config.yaml, which is positional, stays meaningful.
+   * The last one cannot be removed: an empty pool leaves the runner with
+   * nothing to pick and the account frozen on whatever it had.
+   */
+  function togglePresence(f: FieldDef, key: string) {
+    const current: string[] = Array.isArray(value(f)) ? value(f) : [];
+    const next = current.includes(key)
+      ? current.filter((v) => v !== key)
+      : [...current, key];
+    if (!next.length) return;
+    setValue(f, PRESENCE_KEYS.filter((k) => next.includes(k)));
+  }
 
   /**
    * How far along a slider's value sits, as a percentage.
@@ -262,6 +298,68 @@
     dirty = {};
     toast(failed ? "Some settings failed to save." : "Saved.", failed ? "err" : "ok");
     load();
+    revalidate();
+  }
+
+  /**
+   * Re-run the health checks against what was just saved.
+   *
+   * /api/health hands back the last snapshot and only refreshes behind it, so
+   * a warning you have just fixed - a model that cannot do vision, say - stayed
+   * on screen until the background refresh and the next 15s poll had both come
+   * round. Saving is exactly the moment to find out whether it worked, so this
+   * asks for the uncached answer and updates the banner with it.
+   */
+  let bgBusy = $state(false);
+  let fontBusy = $state(false);
+
+  /**
+   * Take one uploaded file and make it live immediately.
+   *
+   * The version bump is what makes a replacement show up: both files are
+   * served with a long max-age, so without it the browser would happily go on
+   * using the previous image or face.
+   */
+  async function uploadAppearance(kind: "background" | "font", file: File) {
+    if (kind === "background") bgBusy = true;
+    else fontBusy = true;
+    try {
+      await api.uploadAppearance(kind, file);
+      await loadAppearance();
+      appearanceVersion.set(Date.now());
+      // Switching it on is the obvious intent of having just dropped it in.
+      if (kind === "background") customBgOn.set(true);
+      else fontId.set(CUSTOM_FONT_ID);
+      toast(kind === "background" ? "Background set." : "Typeface set.", "ok");
+    } catch (e: any) {
+      toast(e?.message || "Could not use that file", "err");
+    }
+    bgBusy = false;
+    fontBusy = false;
+  }
+
+  async function clearAppearance(kind: "background" | "font") {
+    try {
+      await api.clearAppearance(kind);
+      await loadAppearance();
+      appearanceVersion.set(Date.now());
+      // Nothing to fall back to, so move off it rather than leaving the panel
+      // pointing at a file that is no longer there.
+      if (kind === "background") customBgOn.set(false);
+      else if ($fontId === CUSTOM_FONT_ID) fontId.set("mikhak");
+      toast("Removed.", "ok");
+    } catch (e: any) {
+      toast(e?.message || "Could not remove it", "err");
+    }
+  }
+
+  async function revalidate() {
+    try {
+      const h = await api.healthNow();
+      if (h && Array.isArray(h.issues) && h.routes) health.set(h);
+    } catch {
+      /* the 15s poll still catches up; this is only about being prompt */
+    }
   }
 
   async function openRaw() {
@@ -275,6 +373,7 @@
       toast("Config saved.", "ok");
       rawOpen = false;
       load();
+      revalidate();
     } catch (e: any) {
       toast(e.message, "err");
     }
@@ -384,6 +483,25 @@
             <option value={opt.value}>{opt.label}</option>
           {/each}
         </select>
+      <!-- The rotation pool is a fixed set, not free text. Typing "onlien"
+           used to be accepted and then never match anything. -->
+      {:else if f.key === "bot.status.statuses"}
+        <div class="flex flex-wrap justify-end gap-1.5">
+          {#each PRESENCES as p}
+            {@const picked = Array.isArray(value(f)) && value(f).includes(p.value)}
+            <button
+              type="button"
+              aria-pressed={picked}
+              onclick={() => togglePresence(f, p.value)}
+              class="jelly rounded-lg border px-2.5 py-1 text-[12px]
+                {picked
+                  ? 'border-accent/60 bg-accent/10 text-ink'
+                  : 'border-edge text-muted hover:bg-white/[0.04]'}"
+            >
+              {p.label}
+            </button>
+          {/each}
+        </div>
       <!-- A plain list of words or phrases is edited as items, not as JSON:
            adding one word should not mean getting the quoting and the commas
            right, with a missing bracket rejecting the save. -->
@@ -554,6 +672,60 @@
                   </button>
                 {/each}
               </div>
+
+              <!-- A picture of your own, behind the whole panel. The themes
+                   above still set the palette; this sits under them. -->
+              <div class="mt-4 space-y-3">
+                <Importer
+                  title="Drop a background image here"
+                  hint="Any format works, including HEIC straight off a phone. It is
+                        converted for you, sits behind the whole panel, and the
+                        theme you picked above still decides the colours."
+                  accept="image/*,.heic,.heif,.avif,.bmp,.tif,.tiff"
+                  busy={bgBusy}
+                  busyLabel="Adding background"
+                  onpick={(f) => uploadAppearance("background", f)}
+                />
+
+                {#if $appearance.background.present}
+                  <div class="glass flex flex-wrap items-center gap-3 rounded-xl p-3">
+                    <img
+                      src="/api/appearance/background?v={$appearanceVersion}"
+                      alt="" aria-hidden="true"
+                      class="h-12 w-20 shrink-0 rounded-lg object-cover ring-1 ring-edge"
+                    />
+                    <div class="min-w-0 flex-1">
+                      <div class="truncate text-[12px] text-ink">{$appearance.background.name}</div>
+                      <div class="text-[11px] text-faint">
+                        {Math.round(($appearance.background.size ?? 0) / 1024)} KB
+                      </div>
+                    </div>
+                    <Toggle checked={$customBgOn} onchange={(v) => customBgOn.set(v)} />
+                    <Button kind="ghost" size="sm" onclick={() => clearAppearance("background")}>
+                      Remove
+                    </Button>
+                    <div class="flex w-full items-center gap-3">
+                      <span class="shrink-0 text-[11px] text-muted">Dim</span>
+                      <input
+                        type="range" min="0" max="1" step="0.02"
+                        value={$customBgDim}
+                        oninput={(e) => customBgDim.set(parseFloat((e.target as HTMLInputElement).value))}
+                        style="--fill: {Math.round($customBgDim * 100)}%"
+                        class="slider min-w-0 flex-1"
+                        disabled={!$customBgOn}
+                      />
+                      <span class="slider-value shrink-0 font-mono text-[12px] text-ink">
+                        {Math.round($customBgDim * 100)}%
+                      </span>
+                    </div>
+                    <p class="w-full text-[11px] leading-relaxed text-faint">
+                      Dim is the theme's own background colour laid over the picture.
+                      Turn it down to see more of the image, up if text is getting
+                      hard to read.
+                    </p>
+                  </div>
+                {/if}
+              </div>
             {:else if sub.panel === "typeface"}
               <div class="grid grid-cols-1 gap-2 min-[380px]:grid-cols-2">
                 {#each FONTS as f}
@@ -574,6 +746,51 @@
                     <div class="mt-1 text-[10px] leading-snug text-faint">{f.note}</div>
                   </button>
                 {/each}
+
+                {#if $appearance.font.present}
+                  <button
+                    onclick={() => fontId.set(CUSTOM_FONT_ID)}
+                    class="jelly rounded-xl border p-3 text-left
+                      {$fontId === CUSTOM_FONT_ID
+                        ? 'border-accent/60 bg-accent/10'
+                        : 'border-edge hover:bg-white/[0.04]'}"
+                  >
+                    <div class="truncate text-[15px] text-ink" style="font-family: 'PanelCustom', ui-sans-serif, system-ui, sans-serif">
+                      Yours
+                    </div>
+                    <div class="mt-0.5 truncate text-[11px] text-muted" style="font-family: 'PanelCustom', ui-sans-serif, system-ui, sans-serif">
+                      The quick brown fox jumps
+                    </div>
+                    <div class="mt-1 truncate text-[10px] leading-snug text-faint">
+                      {$appearance.font.name}
+                    </div>
+                  </button>
+                {/if}
+              </div>
+
+              <div class="mt-4 space-y-3">
+                <Importer
+                  title="Drop a font file here"
+                  hint="woff2, woff, ttf or otf. It is stored with the app, so the
+                        panel looks the same from any machine you open it on."
+                  accept=".woff2,.woff,.ttf,.otf,font/woff2,font/woff,font/ttf,font/otf"
+                  busy={fontBusy}
+                  busyLabel="Adding typeface"
+                  onpick={(f) => uploadAppearance("font", f)}
+                />
+                {#if $appearance.font.present}
+                  <div class="glass flex items-center gap-3 rounded-xl p-3">
+                    <div class="min-w-0 flex-1">
+                      <div class="truncate text-[12px] text-ink">{$appearance.font.name}</div>
+                      <div class="text-[11px] text-faint">
+                        {Math.round(($appearance.font.size ?? 0) / 1024)} KB
+                      </div>
+                    </div>
+                    <Button kind="ghost" size="sm" onclick={() => clearAppearance("font")}>
+                      Remove
+                    </Button>
+                  </div>
+                {/if}
               </div>
             {:else if sub.panel === "interface"}
               <div class="divide-y divide-edge/60">

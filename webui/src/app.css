@@ -73,7 +73,15 @@
 html,
 body {
   height: 100%;
-  background: var(--color-bg);
+  /* Two layers over the theme colour: the scrim first, then the uploaded
+     image. Both are empty unless a backdrop is switched on, so this costs
+     nothing in the normal case. */
+  background-color: var(--color-bg);
+  background-image: var(--app-backdrop-scrim, none), var(--app-backdrop, none);
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-attachment: fixed;
   transition: background-color 0.35s var(--swift);
   color: var(--color-ink);
   font-family: var(--font-sans);
@@ -707,6 +715,44 @@ mark {
     transparent 100%
   );
   filter: blur(0.4px);
+}
+
+/* Four-point stars scattered over the whole screen, not just off the bar.
+   Each one pops in, twinkles a few times quickly, and is gone. The delay is
+   tied to where it sits horizontally, so they light up in the sweep's wake
+   rather than all at once. Drawn with two crossed gradients: an SVG or an
+   image would be another asset to ship for a shape this simple. */
+.theme-sweep-star {
+  position: absolute;
+  width: var(--size, 10px);
+  height: var(--size, 10px);
+  margin: calc(var(--size, 10px) / -2) 0 0 calc(var(--size, 10px) / -2);
+  opacity: 0;
+  background:
+    linear-gradient(to bottom,
+      transparent 0%,
+      color-mix(in srgb, var(--color-accent-2, var(--color-accent)) 55%, #fff) 50%,
+      transparent 100%) center / 18% 100% no-repeat,
+    linear-gradient(to right,
+      transparent 0%,
+      color-mix(in srgb, var(--color-accent-2, var(--color-accent)) 55%, #fff) 50%,
+      transparent 100%) center / 100% 18% no-repeat;
+  filter: drop-shadow(0 0 3px color-mix(in srgb, var(--color-accent) 75%, transparent));
+  animation: theme-star var(--life, 560ms) linear both;
+  animation-delay: var(--delay, 0ms);
+  will-change: transform, opacity;
+}
+
+/* Three fast blinks on the way out: opacity is cheap to animate, and the
+   scale wobble is what stops it reading as a plain fade. */
+@keyframes theme-star {
+  0%   { opacity: 0;    transform: scale(0.2) rotate(0deg); }
+  12%  { opacity: 1;    transform: scale(1) rotate(15deg); }
+  28%  { opacity: 0.15; transform: scale(0.75) rotate(25deg); }
+  42%  { opacity: 1;    transform: scale(1.15) rotate(35deg); }
+  58%  { opacity: 0.2;  transform: scale(0.8) rotate(45deg); }
+  72%  { opacity: 0.95; transform: scale(1.05) rotate(55deg); }
+  100% { opacity: 0;    transform: scale(0.3) rotate(70deg); }
 }
 
 .theme-sweep-spark {

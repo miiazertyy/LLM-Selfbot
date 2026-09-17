@@ -174,6 +174,8 @@ bot:
     enabled: true
     hours: "2-8"
     timezone: "Europe/Paris"
+    # What the account shows during those hours: online | idle | dnd | invisible
+    status: invisible
 
   # --- Message style (verbosity) ---
   # short: terse 1-2 sentence replies. balanced (recommended): casual, one

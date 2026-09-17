@@ -8,9 +8,11 @@ from fastapi.staticfiles import StaticFiles
 
 from app.utils.paths import APP_DIR, seed_data_dir
 from app.web.logbus import bus
-from app.web.routes import (account_routes, chat_routes, config_routes, env_routes,
-                            health_routes, local_routes, media_routes, people_routes,
-                            stats_routes, status_routes, system_routes, prefs_routes)
+from app.web.routes import (account_routes, appearance_routes, chat_routes,
+                            config_routes, env_routes, health_routes,
+                            local_routes, media_routes, people_routes,
+                            stats_routes, status_routes, system_routes,
+                            prefs_routes)
 
 
 def create_app(supervisor=None):
@@ -50,6 +52,7 @@ def create_app(supervisor=None):
     app.include_router(system_routes.router)
     app.include_router(prefs_routes.router)
     app.include_router(local_routes.router)
+    app.include_router(appearance_routes.router)
 
     @app.websocket("/api/ws")
     async def ws_endpoint(websocket: WebSocket):

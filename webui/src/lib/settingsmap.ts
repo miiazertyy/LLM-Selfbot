@@ -99,6 +99,7 @@ export const TABS: Tab[] = [
           "bot.night_invisible.enabled",
           "bot.night_invisible.hours",
           "bot.night_invisible.timezone",
+          "bot.night_invisible.status",
         ],
       },
       {

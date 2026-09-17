@@ -116,19 +116,25 @@ def detect(timeout: float = 0.6) -> list:
     """Which of the known servers are running right now.
 
     Deliberately a short timeout on each: this runs behind a page load, and
-    three servers that are not installed must not cost three seconds between
-    them. A closed port refuses immediately anyway.
+    servers that are not installed must not cost a second each. A closed port
+    refuses immediately anyway - but a port that is open and unresponsive, or
+    one being firewalled with a DROP rather than a refuse, waits out the whole
+    timeout. Probing them together bounds that at one timeout rather than four.
     """
-    found = []
-    for server in KNOWN_SERVERS:
-        result = probe(server["root"], timeout=timeout)
-        found.append({
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(max_workers=len(KNOWN_SERVERS) or 1) as pool:
+        results = list(pool.map(lambda s: probe(s["root"], timeout=timeout),
+                                KNOWN_SERVERS))
+    return [
+        {
             **server,
             "running": result["ok"],
             "models": result["models"],
             "base_url": normalise_base_url(server["root"]),
-        })
-    return found
+        }
+        for server, result in zip(KNOWN_SERVERS, results)
+    ]
 
 
 # ── Pulling a model ───────────────────────────────────────────────────────────

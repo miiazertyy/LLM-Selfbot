@@ -523,7 +523,13 @@ async def random_status_loop():
         night, secs_until_day = night_window_state(night_cfg)
 
         if night:
-            target = discord.Status.invisible
+            # Which status the night window uses is a setting. It was hardcoded
+            # to invisible, which is the sensible default but not everyone's:
+            # some accounts read as more natural asleep on dnd or idle.
+            target = status_map.get(
+                str(night_cfg.get("status", "invisible")).strip().lower(),
+                discord.Status.invisible,
+            )
         else:
             target = _pick_status(status_cfg, status_map, _DEFAULT_WEIGHTS)
 

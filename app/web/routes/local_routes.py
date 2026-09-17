@@ -29,8 +29,12 @@ async def detect(request: Request):
 async def status(request: Request):
     """Whether the configured server is actually there, and its model list."""
     cfg = localai.settings(load_config())
-    result = await asyncio.to_thread(localai.probe, cfg["base_url"], 4.0)
-    can_pull = await asyncio.to_thread(localai.pull_supported, cfg["base_url"])
+    # Independent of each other, and each waits out its own timeout when the
+    # server is not there, so they run together rather than back to back.
+    result, can_pull = await asyncio.gather(
+        asyncio.to_thread(localai.probe, cfg["base_url"], 4.0),
+        asyncio.to_thread(localai.pull_supported, cfg["base_url"]),
+    )
     # A model set in config but missing from the server answers every request
     # with a 404 that reads like the app is broken, so it is called out.
     missing = bool(cfg["model"]) and result["ok"] and cfg["model"] not in result["models"]

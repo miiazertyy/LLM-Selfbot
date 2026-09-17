@@ -105,6 +105,10 @@ export const api = {
   models: (refresh = false) => request(`/api/models${refresh ? "?refresh=true" : ""}`),
   // What is stopping the bot working, tagged by the page that fixes it.
   health: () => request("/api/health"),
+  // The uncached answer. /api/health serves the last snapshot and refreshes
+  // behind it, which is right for a background poll and wrong straight after
+  // a save, when the whole point is to see whether the change fixed anything.
+  healthNow: () => request("/api/health/blocking"),
   // Profile card behind a clicked name, assembled from local data only.
   person: (uid: string) => request(`/api/people/${uid}`),
   peopleSettings: () => request("/api/people/settings"),
@@ -165,6 +169,16 @@ export const api = {
     request(`/api/memory/${uid}`, { method: "PUT", body: JSON.stringify(body) }),
   memoryDelete: (uid: string, body: any) =>
     request(`/api/memory/${uid}`, { method: "DELETE", body: JSON.stringify(body) }),
+  // ── A background and a typeface of your own ──────────────────────────────
+  appearance: () => request("/api/appearance"),
+  uploadAppearance: (kind: "background" | "font", file: File) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    return request(`/api/appearance/${kind}`, { method: "POST", body: fd });
+  },
+  clearAppearance: (kind: "background" | "font") =>
+    request(`/api/appearance/${kind}`, { method: "DELETE" }),
+
   pictures: () => request("/api/pictures"),
   uploadPicture: (file: File) => {
     const fd = new FormData();

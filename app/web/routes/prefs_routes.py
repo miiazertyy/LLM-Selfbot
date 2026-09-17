@@ -32,6 +32,9 @@ PREFS_PATH = DATA_DIR / "config" / "panel.json"
 # whatever it liked into a file the app reads on every start.
 ALLOWED = {
     "theme", "font", "snow", "motion", "dashOrder", "rail",
+    # Whether the uploaded backdrop is in use, and how far it is dimmed. The
+    # image itself lives in config/appearance/; these are just the choice.
+    "customBgOn", "customBgDim",
 }
 
 _lock = threading.Lock()
