@@ -17,6 +17,8 @@ no headless backend worth shipping, and app/desktop.py cannot even be imported
 off Windows because app/utils/backdrop.py reaches for ctypes.wintypes.
 """
 
+import sys
+
 from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 # Packages that resolve things at runtime. collect_all pulls submodules, data
@@ -92,6 +94,17 @@ _HIDDEN = [
 EXCLUDES = ["tkinter", "matplotlib", "pytest", "pydoc_data", "test", "unittest",
             "numpy"]
 
+# Packages the app cannot run without, checked after collection.
+#
+# collect_all does not raise when it cannot see a package: it logs
+# "skipping ... as it is not a package" and hands back empty lists. So running
+# PyInstaller under an interpreter that does not have the project's
+# dependencies installed - easily done when several Pythons are on PATH and the
+# `pyinstaller` launcher belongs to the wrong one - produces an exe that builds
+# cleanly, passes a --help smoke test, and then dies with ModuleNotFoundError
+# the moment a real user starts it. Failing the build here instead.
+_REQUIRED = ("fastapi", "starlette", "uvicorn", "groq", "discord", "yaml", "PIL")
+
 # Do NOT try to drop libx265 from the pillow_heif wheel to save its ~22.7 MB.
 # It looks like dead weight - it is the HEVC *encoder* and the app only ever
 # decodes HEIC (app/utils/imageimport.py calls register_heif_opener and never
@@ -99,6 +112,28 @@ EXCLUDES = ["tkinter", "matplotlib", "pytest", "pydoc_data", "test", "unittest",
 # loading it on demand. Tested: with the DLL removed, importing _pillow_heif
 # fails outright with "DLL load failed", so HEIC support breaks completely
 # rather than losing only encoding. libde265 is the decoder and is separate.
+
+
+def _assert_collected(hiddenimports):
+    """Stop the build if a required package collected nothing."""
+    missing = [
+        pkg for pkg in _REQUIRED
+        if not any(h == pkg or h.startswith(pkg + ".") for h in hiddenimports)
+    ]
+    if not missing:
+        return
+    lines = [
+        "",
+        "[spec] These packages collected nothing: " + ", ".join(missing),
+        "[spec] PyInstaller is almost certainly running under an interpreter",
+        "[spec] that does not have this project's dependencies installed.",
+        "[spec]   building with: " + sys.executable,
+        "[spec]   python:        " + sys.version.split()[0],
+        "[spec] Build with the interpreter that has them, for example:",
+        "[spec]   python -m PyInstaller packaging/selfbot-onefile.spec --noconfirm",
+        "",
+    ]
+    raise SystemExit(chr(10).join(lines))
 
 
 def build_parts(root, gui=True):
@@ -118,6 +153,8 @@ def build_parts(root, gui=True):
             hiddenimports += h
         except Exception as exc:        # a package may be absent on some setups
             print(f"[spec] skipping {pkg}: {exc}")
+
+    _assert_collected(hiddenimports)
 
     hiddenimports += _HIDDEN
     # Picks up app/_build.py too, the version the CI stamps from the git tag.
