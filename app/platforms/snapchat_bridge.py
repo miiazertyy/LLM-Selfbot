@@ -71,6 +71,20 @@ CMD_FILE    = IPC_DIR / f"tg_commands_{_TG_SFX}.json"
 RESULT_FILE = IPC_DIR / f"tg_results_{_TG_SFX}.json"
 UPDATE_FLAG = Path(resource_path(f"config/update_{_TG_SFX}.flag"))
 
+# ── Wake channel ─────────────────────────────────────────────────────────────
+# The JSON files below stay the transport: they are the durable record, they
+# survive either side restarting, and they keep working on their own. What they
+# could never do is tell the other side that something had arrived, so both ends
+# polled on a timer and a reply carried roughly four seconds of pure waiting -
+# up to two coming in, up to two going out - before the model was even asked.
+#
+# This is a loopback socket that carries nothing but "look again now". It holds
+# no state and no payload, so losing it costs latency and never data: both sides
+# still poll underneath at exactly the intervals they always did. Port 0 lets
+# the OS pick a free port, published in PORT_FILE, so several accounts on one
+# machine cannot collide.
+PORT_FILE      = IPC_DIR / f"snap_port{_SFX}"
+
 POLL_INTERVAL    = 2.0    # seconds between incoming-message polls
 TG_POLL_INTERVAL = 2.0    # seconds between Telegram command polls
 MAX_MSG_AGE      = 300.0  # ignore messages older than 5 minutes (stale)
@@ -91,9 +105,94 @@ STATE = {
 # chat_id -> display name, populated as messages arrive so /reply can label users
 CHAT_NAMES: dict[str, str] = {}
 
-# Serialises AI generation so the message loop and /reply commands never
-# interleave their awaits and corrupt shared history ordering.
-_GEN_LOCK = asyncio.Lock()
+# One generation lock per conversation, not one for the whole account.
+#
+# The lock is there so the message loop and a /reply command cannot interleave
+# their awaits and corrupt history ordering. That state is keyed per chat
+# though - message_history by (user, channel), _memory_cache by user - so two
+# different conversations never touch the same entries. A single account-wide
+# lock meant a backlog of five chats cost five full generations strictly back to
+# back, everyone waiting on whoever happened to be first.
+_gen_locks: dict = {}
+
+# ...but not unlimited concurrency either. Generations are Groq calls, and the
+# account-wide lock was implicitly capping how many could be in flight at once.
+# Lifting it entirely would let a burst of chats fan out into a burst of
+# requests and trip rate limiting, which costs far more than it saves. A small
+# ceiling keeps the throughput win without that.
+_GEN_SLOTS = asyncio.Semaphore(3)
+
+
+def _gen_lock(key: str) -> asyncio.Lock:
+    """The generation lock for one conversation."""
+    lock = _gen_locks.get(key)
+    if lock is None:
+        lock = _gen_locks[key] = asyncio.Lock()
+    return lock
+
+# Set when Node says new messages have landed; the incoming loop waits on this
+# instead of sleeping out its full interval.
+_wake_incoming = asyncio.Event()
+# Connected Node clients, to poke when a reply is ready to send.
+_node_writers: set = set()
+
+
+async def _wake_server():
+    """Accept Node's connection and turn its pokes into an asyncio.Event.
+
+    Never raises into the caller: if the socket cannot be set up at all, the
+    bridge simply keeps polling the way it always has.
+    """
+    async def handle(reader, writer):
+        _node_writers.add(writer)
+        try:
+            while True:
+                line = await reader.readline()
+                if not line:
+                    break
+                try:
+                    msg = json.loads(line)
+                except Exception:
+                    continue          # a malformed poke is not worth dying over
+                if msg.get("kind") == "incoming":
+                    _wake_incoming.set()
+        except Exception:
+            pass
+        finally:
+            _node_writers.discard(writer)
+            try:
+                writer.close()
+            except Exception:
+                pass
+
+    try:
+        server = await asyncio.start_server(handle, "127.0.0.1", 0)
+    except Exception as e:
+        log_system(f"Snapchat wake channel unavailable ({e}); polling only")
+        return
+
+    port = server.sockets[0].getsockname()[1]
+    try:
+        PORT_FILE.parent.mkdir(parents=True, exist_ok=True)
+        PORT_FILE.write_text(str(port), encoding="utf-8")
+    except OSError as e:
+        log_system(f"Could not publish the wake port ({e}); polling only")
+        return
+    log_system(f"Snapchat wake channel listening on 127.0.0.1:{port}")
+    async with server:
+        await server.serve_forever()
+
+
+def _poke_node(kind: str):
+    """Ask Node to look at the files now rather than at its next poll."""
+    if not _node_writers:
+        return
+    payload = (json.dumps({"kind": kind}) + "\n").encode("utf-8")
+    for writer in list(_node_writers):
+        try:
+            writer.write(payload)
+        except Exception:
+            _node_writers.discard(writer)
 
 
 def _read_json(path: Path, default):
@@ -123,6 +222,10 @@ def _append_response(msg_id: str, text: str, chat_id: str = None, name: str = No
     else:
         responses[msg_id] = text  # legacy string form
     _write_json(RESPONSES_FILE, responses)
+    # The file is written and durable; this only saves Node the wait until its
+    # next drain tick. If nothing is connected it is a no-op and the poll picks
+    # the reply up as before.
+    _poke_node("response")
 
 
 def _queue_outgoing(chat_id: str, text: str, image: str = None):
@@ -212,12 +315,31 @@ def _notify_telegram_error(title: str, detail: str):
         pass
 
 
+# Python is the only writer of the processed ledger - Node creates it empty at
+# startup if it is missing and never touches it again - so the in-memory copy is
+# authoritative, and fresher than the file. It used to be read, parsed, appended
+# to and rewritten in full on every single message: eight times per pass, up to
+# 500 ids each way.
+_processed_cache = None
+
+
+def _processed_list() -> list:
+    """The processed-id ledger, loaded from disk once."""
+    global _processed_cache
+    if _processed_cache is None:
+        raw = _read_json(PROCESSED_FILE, [])
+        _processed_cache = raw if isinstance(raw, list) else []
+    return _processed_cache
+
+
 def _mark_processed(msg_id: str):
-    processed = _read_json(PROCESSED_FILE, [])
+    processed = _processed_list()
     if msg_id not in processed:
         processed.append(msg_id)
     if len(processed) > 500:
-        processed = processed[-500:]
+        del processed[:-500]
+    # Still written on every mark: a crash part-way through a pass must not make
+    # the bot answer the same message twice. What is saved is the read + parse.
     _write_json(PROCESSED_FILE, processed)
 
 
@@ -227,13 +349,19 @@ async def process_incoming():
     log_system("Snapchat bridge started, polling for messages")
 
     while True:
-        await asyncio.sleep(POLL_INTERVAL)
+        # Wake the moment Node says something landed, and fall back to the old
+        # interval when the socket is not there.
+        try:
+            await asyncio.wait_for(_wake_incoming.wait(), timeout=POLL_INTERVAL)
+        except asyncio.TimeoutError:
+            pass
+        _wake_incoming.clear()
 
         messages = _read_json(INCOMING_FILE, [])
         if not messages:
             continue
 
-        processed = set(_read_json(PROCESSED_FILE, []))
+        processed = set(_processed_list())
         pending = [m for m in messages if m.get("id") not in processed]
 
         if not pending:
@@ -261,7 +389,7 @@ async def process_incoming():
                     _mark_processed(msg_id)
                     continue
                 try:
-                    async with _GEN_LOCK:
+                    async with _gen_lock(channel_id), _GEN_SLOTS:
                         decline = await _generate_call_decline(channel_id, user_name)
                 except Exception as e:
                     log_error("Snap call decline", str(e))
@@ -340,7 +468,7 @@ async def process_incoming():
             log_incoming(user_name, "Snapchat DM", "Snapchat", content)
 
             try:
-                async with _GEN_LOCK:
+                async with _gen_lock(channel_id), _GEN_SLOTS:
                     response = await generate_ai_response(msg)
             except Exception as e:
                 log_error("Snap AI Error", str(e))
@@ -359,10 +487,12 @@ async def process_incoming():
 
             _mark_processed(msg_id)
 
-        # Re-read both files before pruning, Node keeps appending to the
-        # incoming file while we generate replies, and writing back a filtered
-        # copy of the stale list would silently drop those new messages.
-        fresh_processed = set(_read_json(PROCESSED_FILE, []))
+        # Re-read the incoming file before pruning: Node keeps appending to it
+        # while we generate replies, and writing back a filtered copy of the
+        # stale list would silently drop those new messages. The processed
+        # ledger needs no re-read - this process is its only writer, so the
+        # in-memory copy is already the newest there is.
+        fresh_processed = set(_processed_list())
         current = _read_json(INCOMING_FILE, [])
         if not isinstance(current, list):
             current = []
@@ -627,7 +757,7 @@ async def _handle_command(cmd: str, payload: dict, cmd_id: str) -> None:
 async def _reply_to_chat(chat_id: str) -> tuple[bool, str]:
     """Generate a reply to the trailing unanswered messages and queue it for sending."""
     name = CHAT_NAMES.get(chat_id, chat_id)
-    async with _GEN_LOCK:
+    async with _gen_lock(chat_id), _GEN_SLOTS:
         combined = engine.pop_pending_user_messages(chat_id, chat_id)
         if not combined:
             return False, "no unanswered message found"
@@ -837,6 +967,11 @@ async def _cleanup_loop():
         await asyncio.sleep(3600)  # hourly
         try:
             cleared = []
+            # One lock per chat ever seen, so prune the idle ones.
+            if len(_gen_locks) > 500:
+                cleared.append("gen locks")
+                for k in [k for k, v in list(_gen_locks.items()) if not v.locked()]:
+                    _gen_locks.pop(k, None)
             if len(engine._lang_cache) > 500:
                 cleared.append("language")
                 engine._lang_cache.clear()
@@ -876,7 +1011,7 @@ def _prune_temp_media(max_age_seconds: float = 21600):  # 6 hours
 
 async def _main_async():
     cfg = load_config()
-    tasks = [process_incoming(), tg_command_loop(), _cleanup_loop()]
+    tasks = [process_incoming(), tg_command_loop(), _cleanup_loop(), _wake_server()]
 
     # Mood shifts over time, exactly like the Discord runner.
     if cfg.get("bot", {}).get("mood", {}).get("enabled", True):

@@ -9,6 +9,7 @@
 import SnapBot from "./snapbot.js";
 import dotenv from "dotenv";
 import fs from "fs";
+import net from "net";
 import path from "path";
 import { fileURLToPath } from "url";
 import { randomUUID } from "crypto";
@@ -48,6 +49,69 @@ const INCOMING_FILE  = path.join(IPC_DIR, `snap_incoming${SFX}.json`);
 const RESPONSES_FILE = path.join(IPC_DIR, `snap_responses${SFX}.json`);
 const OUTGOING_FILE  = path.join(IPC_DIR, `snap_outgoing${SFX}.json`);
 const PROCESSED_FILE = path.join(IPC_DIR, `snap_processed${SFX}.json`);
+const PORT_FILE      = path.join(IPC_DIR, `snap_port${SFX}`);
+
+// ── Wake channel ─────────────────────────────────────────────────────────────
+// See the matching note in snapchat_bridge.py. The JSON files above remain the
+// transport; this socket carries nothing but "look again now". Both sides still
+// poll underneath, so if it never connects the only thing lost is the couple of
+// seconds it saves in each direction.
+let wakeSock = null;
+let wakeBuf = "";
+let onResponsePoke = null;     // set by the drain loop
+
+function connectWake(retry = 0) {
+  const backoff = () =>
+    setTimeout(() => connectWake(Math.min(retry + 1, 6)), Math.min(1000 * 2 ** retry, 15000));
+
+  let port = NaN;
+  try {
+    port = parseInt(fs.readFileSync(PORT_FILE, "utf-8").trim(), 10);
+  } catch {
+    /* the bridge has not published one yet */
+  }
+  if (!Number.isInteger(port) || port <= 0) {
+    backoff();
+    return;
+  }
+
+  const sock = net.createConnection({ host: "127.0.0.1", port }, () => {
+    wakeSock = sock;
+    wakeBuf = "";
+  });
+  sock.on("data", (chunk) => {
+    wakeBuf += chunk.toString("utf-8");
+    let i;
+    while ((i = wakeBuf.indexOf("\n")) >= 0) {
+      const line = wakeBuf.slice(0, i);
+      wakeBuf = wakeBuf.slice(i + 1);
+      let msg;
+      try {
+        msg = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      if (msg && msg.kind === "response" && onResponsePoke) onResponsePoke();
+    }
+  });
+  sock.on("error", () => {
+    try { sock.destroy(); } catch { /* already gone */ }
+  });
+  sock.on("close", () => {
+    if (wakeSock === sock) wakeSock = null;
+    backoff();
+  });
+}
+
+/** Tell Python to look now. Silent no-op when nothing is connected. */
+function pokePython(kind) {
+  if (!wakeSock) return;
+  try {
+    wakeSock.write(JSON.stringify({ kind }) + "\n");
+  } catch {
+    /* the poll on the other side covers it */
+  }
+}
 
 // ── Config ────────────────────────────────────────────────────────────────────
 const POLL_INTERVAL_MS     = parseInt(process.env.SNAP_POLL_INTERVAL_MS  || "8000");
@@ -436,6 +500,8 @@ async function handleIncomingCall(bot) {
     ts: Date.now() / 1000,
   });
   writeJson(INCOMING_FILE, incoming);
+  // The file is written; this just saves Python the wait until its next poll.
+  pokePython("incoming");
   pendingReplies.set(msgId, { chatId, name: callerName, ts: Date.now() });
 }
 
@@ -444,10 +510,26 @@ async function handleIncomingCall(bot) {
  * every ~2s) and declining incoming calls. Fires replies within ~2s of the AI
  * finishing instead of waiting a whole poll cycle.
  */
+/** Sleep, but return early if Python says a reply is ready. */
+function sleepOrPoke(ms) {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      if (onResponsePoke === finish) onResponsePoke = null;
+      resolve();
+    };
+    const timer = setTimeout(finish, ms);
+    onResponsePoke = finish;
+  });
+}
+
 async function drainWindow(bot, ms) {
   const until = Date.now() + ms;
   while (Date.now() < until) {
-    await delay(2000);
+    await sleepOrPoke(2000);
     if (DECLINE_CALLS) {
       try { await handleIncomingCall(bot); } catch { /* ignore */ }
     }
@@ -566,6 +648,8 @@ async function readChat(bot, chatId, chatName) {
     ts: Date.now() / 1000,
   });
   writeJson(INCOMING_FILE, incoming);
+  // The file is written; this just saves Python the wait until its next poll.
+  pokePython("incoming");
 
   // Remember where to send the reply once Python answers, then move on.
   pendingReplies.set(msgId, { chatId, name: senderName, ts: Date.now() });
@@ -725,6 +809,9 @@ async function main() {
 
   // Initialise IPC files
   if (!fs.existsSync(INCOMING_FILE)) writeJson(INCOMING_FILE, []);
+
+  // Retries on its own if the bridge has not published its port yet.
+  connectWake();
   if (!fs.existsSync(RESPONSES_FILE)) writeJson(RESPONSES_FILE, {});
   if (!fs.existsSync(OUTGOING_FILE)) writeJson(OUTGOING_FILE, []);
   if (!fs.existsSync(PROCESSED_FILE)) writeJson(PROCESSED_FILE, []);

@@ -60,6 +60,18 @@ function delay(time) {
 
 const lastTestedVersion = "v13.64.0";
 
+// ── save-in-chat budget ──────────────────────────────────────────────────────
+// Saving a message means hovering its bubble and waiting for Snapchat's hover
+// toolbar to render, which cannot be done in bulk. The cost is per bubble, per
+// poll, so the budget has to be small: at the old 30 bubbles x 3 attempts x 5
+// waits x 90ms, a chat whose toolbar never matched spent up to ~40 seconds
+// hovering on every single cycle while replies queued behind it.
+const MAX_SAVE_BUBBLES = 12;   // newest bubbles considered per pass
+const SAVE_ATTEMPTS = 2;       // hover retries before giving up on a bubble
+const SAVE_WAITS = 4;          // toolbar polls per attempt
+const SAVE_WAIT_MS = 90;       // between those polls
+const SAVE_MAX_MISSES = 2;     // consecutive total misses before leaving the chat
+
 export default class SnapBot {
   constructor() {
     this.page = null;
@@ -1088,25 +1100,23 @@ export default class SnapBot {
     await this.page.waitForSelector(
       "div.ReactVirtualized__Grid__innerScrollContainer"
     );
-    const lists = await this.page.$$("div[role='listitem']");
-    const data = [];
+    // One $$eval for the whole list. This used to walk the rows in Node and
+    // make two separate page.evaluate() round trips per row just to read an id
+    // and a string, so a 50-chat list cost ~100 CDP round trips - and
+    // sendMessage() calls this on every chat open and every reply.
+    const data = await this.page.$$eval("div[role='listitem']", (rows) =>
+      rows
+        .map((row) => {
+          const titleSpan = row.querySelector("span[id^='title-']");
+          if (!titleSpan) return null;
+          return {
+            id: titleSpan.id.replace(/^title-/, ""),
+            name: (titleSpan.textContent || "").trim(),
+          };
+        })
+        .filter(Boolean)
+    );
 
-    for (const listItem of lists) {
-      const titleSpan = await listItem.$("span[id^='title-']");
-      if (titleSpan) {
-        let id = await this.page.evaluate((el) => el.id, titleSpan);
-        const name = await this.page.evaluate(
-          (el) => el.textContent.trim(),
-          titleSpan
-        );
-        id = id.replace(/^title-/, "");
-        data.push({ id, name });
-      }
-
-      //status
-    }
-
-    // console.log(data);
     return data;
   }
 
@@ -1269,18 +1279,20 @@ export default class SnapBot {
       const here = await this.page.$(`#title-${obj.chat}`).catch(() => null);
       if (!here) await this._scrollListToChat(obj.chat);
     }
-    const lists = await this.page.$$("div[role='listitem']");
-
     const targetId = "title-" + obj.chat;
     let matched = false;
     let typedOk = true; // for open-only calls (no message), success == matched
 
-    for (const listItem of lists) {
-      const titleSpan = await listItem.$("span[id^='title-']");
-      if (!titleSpan) continue;
-      const id = await this.page.evaluate((el) => el.id, titleSpan);
-      if (id !== targetId) continue;
+    // Straight to the row we want. This used to walk every listitem, making two
+    // CDP round trips per row just to compare an id - about a hundred of them
+    // on a 50-chat list, on every chat open and every reply. Attribute form
+    // rather than #id so an id that is not a valid CSS identifier (one starting
+    // with a digit, say) still selects cleanly.
+    const titleSpan = await this.page
+      .$(`span[id="${targetId}"]`)
+      .catch(() => null);
 
+    if (titleSpan) {
       matched = true;
 
       // Never re-click an already-open chat, a second click toggles it closed.
@@ -1314,7 +1326,6 @@ export default class SnapBot {
       if (obj.exit) {
         await titleSpan.click(); // go back
       }
-      break;
     }
 
     if (!matched) {
@@ -1835,13 +1846,14 @@ export default class SnapBot {
 
     // Only the most recent bubbles, never re-hover the whole history each poll.
     let bubbles = await container.$$("li.T1yt2 li, li.T1yt2");
-    if (bubbles.length > 30) bubbles = bubbles.slice(-30);
+    if (bubbles.length > MAX_SAVE_BUBBLES) bubbles = bubbles.slice(-MAX_SAVE_BUBBLES);
 
     // First time we open this chat, BASELINE its existing messages: record them
     // as handled WITHOUT clicking, since we can't tell if they're already saved.
     const firstPass = !this._savedChatsInit.has(userId);
 
     let saved = 0;
+    let misses = 0;
     for (const bubble of bubbles) {
       try {
         const txt = await bubble
@@ -1884,7 +1896,7 @@ export default class SnapBot {
         };
 
         let result = "none";
-        for (let attempt = 0; attempt < 3 && result === "none"; attempt++) {
+        for (let attempt = 0; attempt < SAVE_ATTEMPTS && result === "none"; attempt++) {
           // Reset the pointer so the next hover re-triggers the toolbar.
           try { await this.page.mouse.move(8, 8); } catch { /* ignore */ }
           try { await bubble.hover(); } catch { /* ignore */ }
@@ -1895,9 +1907,9 @@ export default class SnapBot {
               try { row.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true })); } catch {}
             }
           }).catch(() => {});
-          // Poll for the toolbar to render (~up to 450ms this attempt).
-          for (let w = 0; w < 5 && result === "none"; w++) {
-            await delay(90);
+          // Poll for the toolbar to render.
+          for (let w = 0; w < SAVE_WAITS && result === "none"; w++) {
+            await delay(SAVE_WAIT_MS);
             result = await bubble.evaluate(findAndSave).catch(() => "none");
           }
         }
@@ -1906,9 +1918,11 @@ export default class SnapBot {
           // "saved2" (2nd toolbar button) is the normal path on builds where
           // the save icon has no label, not an anomaly.
           saved++;
+          misses = 0;
           this._savedSigs.add(sig);
           await delay(110);
         } else if (result === "already") {
+          misses = 0;
           this._savedSigs.add(sig); // don't keep re-checking it
         } else if (result === "none" && SNAP_DEBUG) {
           // Only dump when a real (labelled) toolbar was present but unmatched.
@@ -1927,6 +1941,21 @@ export default class SnapBot {
           const labelled = dump.some((b) => b.aria || b.title || b.text);
           if (labelled)
             console.log("[save] no save button matched; hover buttons:", JSON.stringify(dump));
+        }
+        if (result === "none") {
+          // Nothing matched after the full retry budget. On a Snapchat build
+          // whose hover toolbar this selector does not recognise, that is the
+          // outcome for EVERY bubble - and paying the whole budget for each of
+          // them turned one chat into tens of seconds of hovering and sleeping,
+          // every poll, while replies queued behind it. A couple of misses in a
+          // row is enough to conclude the toolbar is not matchable right now,
+          // so give up on this chat until the next cycle. A build where saving
+          // works never gets here, because the first bubble succeeds.
+          if (++misses >= SAVE_MAX_MISSES) {
+            if (SNAP_DEBUG)
+              console.log(`[save] giving up on ${userId} this cycle after ${misses} misses`);
+            break;
+          }
         }
       } catch { /* ignore this bubble */ }
     }
