@@ -2290,13 +2290,15 @@ async def _error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> 
 async def _error_notification_loop(app):
     """Poll the IPC commands file for error notifications sent by the selfbot
     and forward them as Telegram DMs to the owner."""
-    import yaml
     _POLL_INTERVAL = 3.0
 
     def _tg_notifications_enabled() -> bool:
+        # load_config() is mtime-cached, so this is a stat() rather than a full
+        # YAML parse. Opening and parsing config.yaml directly, every 3 seconds
+        # for the life of the process, was about 28,800 parses a day.
+        from app.utils.helpers import load_config
         try:
-            with open(_CONFIG_YAML, "r", encoding="utf-8") as f:
-                cfg = yaml.safe_load(f)
+            cfg = load_config() or {}
             return cfg.get("notifications", {}).get("telegram_error_notifications", False)
         except Exception:
             return False

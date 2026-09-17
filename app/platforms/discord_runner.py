@@ -134,6 +134,31 @@ set_default_proxy(ACCOUNT_TOKEN.get("proxy"))
 PREFIX = config["bot"]["prefix"]
 OWNER_ID = config["bot"]["owner_id"]
 TRIGGER = config["bot"]["trigger"].lower().split(",")
+
+
+def _compile_triggers(words):
+    """One compiled alternation for all trigger words.
+
+    Matching ran re.escape() and built a pattern per keyword, against a freshly
+    lowercased copy of the message, for every message the account saw - not
+    just the ones it answered.
+
+    The words are used exactly as config gives them, NOT stripped or filtered:
+    "John, Jon" splits to ["john", " jon"], and that leading space is part of
+    what the old per-keyword search matched on. An alternation of the same
+    escaped words is equivalent to any() over the same individual searches, so
+    this is a speed change only. (Two consequences of that are worth knowing
+    about, but they are pre-existing and not for this change to alter: a word
+    with a leading space will not match at the very start of a message, and an
+    empty word - from a trailing comma - matches every message.)
+    """
+    if not words:
+        return None
+    parts = [re.escape(w) for w in words]
+    return re.compile(r"\b(?:" + "|".join(parts) + r")\b")
+
+
+TRIGGER_RE = _compile_triggers(TRIGGER)
 DISABLE_MENTIONS = config["bot"]["disable_mentions"]
 PRIORITY_PREFIX = config["bot"]["priority_prefix"]
 
@@ -195,6 +220,8 @@ def refresh_config(bot=None) -> None:
     PREFIX = b["prefix"]
     OWNER_ID = b["owner_id"]
     TRIGGER = b["trigger"].lower().split(",")
+    global TRIGGER_RE
+    TRIGGER_RE = _compile_triggers(TRIGGER)
     DISABLE_MENTIONS = b["disable_mentions"]
     PRIORITY_PREFIX = b["priority_prefix"]
     IGNORE_CHANCE = b["ignore_chance"]
@@ -2114,10 +2141,9 @@ async def is_trigger_message(message):
         replied_to = False
 
     content_has_trigger = (
-        not is_server and any(
-            re.search(rf"\b{re.escape(keyword)}\b", message.content.lower())
-            for keyword in TRIGGER
-        )
+        not is_server
+        and TRIGGER_RE is not None
+        and TRIGGER_RE.search(message.content.lower()) is not None
     )
 
     if (
@@ -2245,6 +2271,52 @@ def _get_random_picture() -> list | None:
     return files if files else None
 
 
+# asyncio only holds a weak reference to a running task, so a fire-and-forget
+# create_task() can be collected before it finishes. Keeping them here until
+# they are done is the documented way to stop that.
+_memory_tasks: set = set()
+
+
+def _spawn_memory_update(author, prompt, response):
+    """Run the post-reply memory work without blocking the reply."""
+    task = asyncio.create_task(_update_memory_after_reply(author, prompt, response))
+    _memory_tasks.add(task)
+    task.add_done_callback(_memory_tasks.discard)
+
+
+async def _update_memory_after_reply(author, prompt, response):
+    """Deletion detection and fact extraction, off the reply's critical path.
+
+    Extraction runs on EVERY reply, same as the Snapchat engine path. The old
+    "every 4th message" cadence silently dropped one-off facts ("my name is
+    X") from short conversations. The extractor dedupes against stored facts
+    and returns {} when there is nothing new, so the cost is one small-model
+    call per reply - it just no longer happens where the user can feel it.
+    """
+    uid = author.id
+    try:
+        current_mem = bot._memory_cache.get(uid, {})
+        if current_mem:
+            keys_to_delete = await detect_memory_deletion(prompt, current_mem)
+            for key in keys_to_delete:
+                if key in current_mem:
+                    delete_memory(uid, key)
+                    bot._memory_cache.get(uid, {}).pop(key, None)
+                    log_system(f"Memory deleted for {author.name}: {key}")
+
+        current_mem_snapshot = dict(bot._memory_cache.get(uid, {}))
+        facts = await extract_memory(prompt, response, existing_memory=current_mem_snapshot)
+        for key, value in facts.items():
+            value = str(value).strip()
+            if not value:
+                continue
+            set_memory(uid, key, value)
+            bot._memory_cache.setdefault(uid, {})[key] = value
+            log_system(f"Memory saved for {author.name}: {key} = {value}")
+    except Exception as mem_err:
+        log_error("Memory Error", str(mem_err))
+
+
 async def generate_response_and_reply(message, prompt, history, image_url=None, wait_time=0, bypass_cooldown=False, bypass_typing=False):
     uid = message.author.id
     if uid not in bot._memory_cache:
@@ -2268,8 +2340,12 @@ async def generate_response_and_reply(message, prompt, history, image_url=None, 
 
     enriched_instructions = bot.instructions + mood_block + memory_block + profile_block
 
-    # Per-user persona override: inject a custom tone/personality for this specific user
-    _persona = get_persona(uid)
+    # Per-user persona override: inject a custom tone/personality for this user.
+    # It lives in user_memory under __persona__, so the get_memory() above has
+    # already fetched it; get_persona() opened a second sqlite connection for a
+    # value sitting in `memory`. format_memory_for_prompt() filters __-prefixed
+    # keys, so it never leaks into the memory block.
+    _persona = memory.get("__persona__")
     if _persona:
         enriched_instructions += (
             f"\n\n[PERSONA OVERRIDE FOR THIS USER: {_persona} "
@@ -2457,35 +2533,14 @@ async def generate_response_and_reply(message, prompt, history, image_url=None, 
                 response = None
 
             if response:
-                try:
-                    uid = message.author.id
-
-                    current_mem = bot._memory_cache.get(uid, {})
-                    if current_mem:
-                        keys_to_delete = await detect_memory_deletion(prompt, current_mem)
-                        for key in keys_to_delete:
-                            if key in current_mem:
-                                delete_memory(uid, key)
-                                bot._memory_cache.get(uid, {}).pop(key, None)
-                                log_system(f"Memory deleted for {message.author.name}: {key}")
-
-                    # Extract on EVERY reply, same as the Snapchat engine path.
-                    # The old "every 4th message" cadence silently dropped
-                    # one-off facts ("my name is X") from short conversations.
-                    # The extractor dedupes against stored facts and returns
-                    # {} when there is nothing new, so the only cost is one
-                    # small-model call per reply.
-                    current_mem_snapshot = dict(bot._memory_cache.get(uid, {}))
-                    facts = await extract_memory(prompt, response, existing_memory=current_mem_snapshot)
-                    for key, value in facts.items():
-                        value = str(value).strip()
-                        if not value:
-                            continue
-                        set_memory(uid, key, value)
-                        bot._memory_cache.setdefault(uid, {})[key] = value
-                        log_system(f"Memory saved for {message.author.name}: {key} = {value}")
-                except Exception as mem_err:
-                    log_error("Memory Error", str(mem_err))
+                # Memory upkeep is two more sequential Groq round trips, and
+                # neither of them changes the reply that has just been
+                # generated. Awaiting them here put 1-6 seconds between the
+                # reply existing and the user seeing it, so they run alongside
+                # the send instead. The trade is that a fact learned this turn
+                # may not be in the cache yet if the same person fires another
+                # message within a second or two.
+                _spawn_memory_update(message.author, prompt, response)
 
                 if late_opener:
                     # Opener is injected via system instruction above, no prepend.

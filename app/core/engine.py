@@ -6,6 +6,7 @@ and get back a plain string reply. All platform-specific logic lives in the
 adapters.
 """
 
+import asyncio
 import random
 from dataclasses import dataclass, field
 from typing import Optional
@@ -173,6 +174,42 @@ def _get_late_opener(prompt: str) -> str:
 
 # ── Main engine function ─────────────────────────────────────────────────────
 
+# asyncio keeps only a weak reference to a running task, so a bare
+# create_task() can be collected before it finishes, silently dropping the write.
+_memory_tasks: set = set()
+
+
+def _spawn_memory_update(uid, content, response, memory):
+    """Run the post-reply memory work without holding up the reply."""
+    task = asyncio.create_task(_update_memory_after_reply(uid, content, response, memory))
+    _memory_tasks.add(task)
+    task.add_done_callback(_memory_tasks.discard)
+
+
+async def _update_memory_after_reply(uid, content, response, memory):
+    """Deletion detection and fact extraction, off the reply's critical path."""
+    try:
+        keys_to_delete = await detect_memory_deletion(content, memory)
+        for key in keys_to_delete:
+            delete_memory(uid, key)  # type: ignore[arg-type]
+            memory.pop(key, None)
+
+        new_facts = await extract_memory(content, response, memory)
+        for key, value in new_facts.items():
+            set_memory(uid, key, value)  # type: ignore[arg-type]
+            memory[key] = value
+
+        if new_facts:
+            # Visible on purpose: extraction failing silently is why memory
+            # looked broken for a long time, with only names ever stored.
+            log_system(f"Remembered for {uid}: " + ", ".join(new_facts))
+        if new_facts or keys_to_delete:
+            _memory_cache[uid] = memory
+    except Exception as exc:
+        # Was `pass`, which hid every extraction failure completely.
+        log_system(f"[Memory] could not update memory for {uid}: {exc}")
+
+
 async def generate_ai_response(msg: IncomingMessage) -> Optional[str]:
     """
     Given a normalised IncomingMessage, return the AI's reply string (or None
@@ -197,8 +234,10 @@ async def generate_ai_response(msg: IncomingMessage) -> Optional[str]:
     base_instructions = load_instructions()
     enriched = base_instructions + mood_block + memory_block
 
-    # Per-user persona override
-    persona = get_persona(uid)  # type: ignore[arg-type]
+    # Per-user persona override. Stored in user_memory under __persona__, so
+    # the get_memory() above already fetched it; get_persona() opened a second
+    # sqlite connection for a value already sitting in `memory`.
+    persona = memory.get("__persona__")
     if persona:
         enriched += (
             f"\n\n[PERSONA OVERRIDE FOR THIS USER: {persona} "
@@ -333,26 +372,10 @@ async def generate_ai_response(msg: IncomingMessage) -> Optional[str]:
         return None
 
     # ── Post-response: memory extraction ────────────────────────────────────
-    try:
-        keys_to_delete = await detect_memory_deletion(msg.content, memory)
-        for key in keys_to_delete:
-            delete_memory(uid, key)  # type: ignore[arg-type]
-            memory.pop(key, None)
-
-        new_facts = await extract_memory(msg.content, response, memory)
-        for key, value in new_facts.items():
-            set_memory(uid, key, value)  # type: ignore[arg-type]
-            memory[key] = value
-
-        if new_facts:
-            # Visible on purpose: extraction failing silently is why memory
-            # looked broken for a long time, with only names ever stored.
-            log_system(f"Remembered for {uid}: " + ", ".join(new_facts))
-        if new_facts or keys_to_delete:
-            _memory_cache[uid] = memory
-    except Exception as e:
-        # Was `pass`, which hid every extraction failure completely.
-        log_system(f"[Memory] could not update memory for {uid}: {e}")
+    # Two more sequential model calls, neither of which changes the reply that
+    # has already been generated. Awaiting them here delayed every Snapchat
+    # reply by however long they took, so they run alongside the send instead.
+    _spawn_memory_update(uid, msg.content, response, memory)
 
     # ── Update history with reply ────────────────────────────────────────────
     history.append({"role": "assistant", "content": response})

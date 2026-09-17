@@ -78,6 +78,13 @@ def load_tokens() -> list[dict]:
     return tokens
 
 
+# The Snapchat engine called load_instructions() on every single message, which
+# meant an open() and a full read of config/instructions.txt per message. The
+# Discord runner had sidestepped it by caching the result on the bot object; a
+# cache here covers every caller instead.
+_instructions_cache: dict = {}
+
+
 def load_instructions(account: int = None):
     """The persona this account writes with.
 
@@ -108,11 +115,22 @@ def load_instructions(account: int = None):
     paths.append(resource_path("config/instructions.txt"))
 
     for path in paths:
-        if os.path.exists(path):
+        try:
+            st = os.stat(path)
+        except OSError:
+            continue
+        key = (path, st.st_mtime_ns, st.st_size)
+        hit = _instructions_cache.get(key)
+        if hit is None:
             with open(path, "r", encoding="utf-8", errors="replace") as file:
-                text = file.read()
-            if text.strip():
-                return text
+                hit = file.read()
+            # Keyed on path+mtime+size, so an edit is picked up on the next
+            # call. Cleared wholesale rather than grown: only a couple of
+            # personas are ever live at once.
+            _instructions_cache.clear()
+            _instructions_cache[key] = hit
+        if hit.strip():
+            return hit
     return ""
 
 
