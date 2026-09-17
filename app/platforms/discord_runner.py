@@ -2770,8 +2770,8 @@ async def generate_response_and_reply(message, prompt, history, image_url=None, 
 
         channel_name, guild_name = get_channel_context(message)
         # Whether anything actually reached Discord, as opposed to being generated.
-    _delivered = False
-    for i, chunk in enumerate(chunks):
+        _delivered = False
+        for i, chunk in enumerate(chunks):
             if getattr(bot, "disable_mentions", DISABLE_MENTIONS):
                 chunk = chunk.replace("@", "@\u200b")
 
