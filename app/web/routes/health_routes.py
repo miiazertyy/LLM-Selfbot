@@ -20,23 +20,18 @@ from app.utils.credentials import real, real_int
 router = APIRouter(tags=["health"])
 
 # level: "error" stops the bot working, "warn" degrades it.
-_chrome_cache = {"at": 0.0, "value": ""}
-# Asking Puppeteer where Chrome is starts node, which takes about four and
-# a half seconds. Chrome does not appear or vanish minute to minute, so a
-# short cache bought nothing and paid that cost every single minute.
-_CHROME_TTL = 900.0
-
-
 def _chrome_path_cached() -> str:
-    now = time.time()
-    if now - _chrome_cache["at"] > _CHROME_TTL:
-        try:
-            from app.web.routes.system_routes import chrome_path
-            _chrome_cache["value"] = chrome_path()
-        except Exception:
-            _chrome_cache["value"] = ""
-        _chrome_cache["at"] = now
-    return _chrome_cache["value"]
+    """Chrome's path, or "" if it cannot be found.
+
+    The TTL cache that used to live here now sits on chrome_path() itself, so
+    /api/snapchat/status shares it rather than paying the ~4.5s node probe on
+    its own 3-second poll.
+    """
+    try:
+        from app.web.routes.system_routes import chrome_path
+        return chrome_path()
+    except Exception:
+        return ""
 
 
 _RATE_MARKERS = ("rate_limit_exceeded", "RateLimitError", "rate limited",

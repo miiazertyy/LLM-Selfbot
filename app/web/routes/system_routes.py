@@ -51,8 +51,30 @@ def _snap_dir_for_probe() -> Path:
     return src if (src / "node_modules").is_dir() else SNAP_DIR
 
 
-def chrome_path() -> str:
-    """The Chrome executable Puppeteer would use, or "" if it is not usable."""
+# Starting node to ask Puppeteer where Chrome is takes about four and a half
+# seconds. health_routes wrapped its own cache around this; /api/snapchat/status
+# did not, and the Settings page polls that every 3 seconds, so the whole panel
+# stalled in four-second blocks for as long as the page was open. The cache
+# belongs on the call itself, where it covers every caller.
+_chrome_path_cache = {"at": 0.0, "value": ""}
+_CHROME_PATH_TTL = 900.0
+
+
+def chrome_path(force: bool = False) -> str:
+    """The Chrome executable Puppeteer would use, or "" if it is not usable.
+
+    Cached for _CHROME_PATH_TTL: Chrome does not appear or vanish minute to
+    minute. Pass force=True right after an install to re-probe immediately.
+    """
+    now = time.time()
+    if not force and now - _chrome_path_cache["at"] <= _CHROME_PATH_TTL:
+        return _chrome_path_cache["value"]
+    value = _chrome_path_probe()
+    _chrome_path_cache.update(at=now, value=value)
+    return value
+
+
+def _chrome_path_probe() -> str:
     node = _which("node")
     work = _snap_dir_for_probe()
     if not node or not (work / "node_modules").is_dir():
@@ -680,6 +702,13 @@ async def ignore_update(request: Request):
 
 @router.get("/api/system/update/check")
 async def update_check(request: Request):
+    import asyncio
+    # Synchronous httpx on the event loop stalled every other request for as
+    # long as GitHub took to answer. The client caches the result already.
+    return await asyncio.to_thread(_update_check_blocking)
+
+
+def _update_check_blocking():
     try:
         import httpx
         resp = httpx.get(
@@ -731,9 +760,10 @@ async def update_run(request: Request):
 # ── Snapchat on-demand installer ─────────────────────────────────────────────
 @router.get("/api/snapchat/status")
 async def snap_status(request: Request):
-    modules = ((SNAP_DIR / "node_modules").is_dir()
-               or (APP_DIR / "app" / "platforms" / "snapchat" / "node_modules").is_dir())
-    chrome = chrome_path() if modules else ""
+    import asyncio
+    # Even cached, the first probe shells out to node for several seconds, and
+    # the .is_dir() checks touch disk. None of that belongs on the event loop.
+    modules, chrome = await asyncio.to_thread(_snap_probe)
     return {
         "node": _which("node"),
         "npm": _which("npm"),
@@ -745,6 +775,13 @@ async def snap_status(request: Request):
         "installing": _install_lock.locked(),
         "dir": str(SNAP_DIR),
     }
+
+
+def _snap_probe() -> tuple[bool, str]:
+    """(node_modules present, Chrome path). Blocking; call it on a thread."""
+    modules = ((SNAP_DIR / "node_modules").is_dir()
+               or (APP_DIR / "app" / "platforms" / "snapchat" / "node_modules").is_dir())
+    return modules, (chrome_path() if modules else "")
 
 
 @router.post("/api/snapchat/install")
@@ -788,7 +825,7 @@ async def snap_install(request: Request):
             # npm install alone is not enough: Puppeteer's browser download is a
             # postinstall step that can fail quietly. Ask for the browser
             # explicitly, then verify rather than trust the exit code.
-            if not chrome_path():
+            if not chrome_path(force=True):
                 bus.append("snapchat-install",
                            "Chrome not found after npm install, downloading it explicitly "
                            "(~180 MB).")
@@ -800,7 +837,7 @@ async def snap_install(request: Request):
                     bus.append("snapchat-install",
                                f"Browser download failed with code {code}", "error")
 
-            found = chrome_path()
+            found = chrome_path(force=True)
             if found:
                 bus.append("snapchat-install",
                            f"Install complete, Chrome at {found}. "

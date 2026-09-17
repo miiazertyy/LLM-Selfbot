@@ -28,16 +28,45 @@ def mask(value: str) -> str:
     return f"{value[:4]}…{value[-4:]}"
 
 
-def read_env() -> dict:
+# Every secrets, env and account endpoint calls read_env(), and several call it
+# more than once per request, so the file was re-read and re-parsed constantly.
+# Keyed on mtime+size, the same way helpers.load_config() caches config.yaml.
+_env_cache = {"key": None, "value": {}}
+
+
+def _parse_env(text: str) -> dict:
     out = {}
-    if ENV_PATH.exists():
-        for line in ENV_PATH.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, _, val = line.partition("=")
-            out[key.strip()] = val.strip()
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        out[key.strip()] = val.strip()
     return out
+
+
+def read_env() -> dict:
+    """The parsed .env, cached until the file changes.
+
+    Returns a copy: callers mutate what they get back before handing it to
+    write_env(), and handing out the cached dict itself would let one caller's
+    edits leak into the next reader.
+    """
+    try:
+        st = ENV_PATH.stat()
+        key = (st.st_mtime_ns, st.st_size)
+    except OSError:
+        _env_cache["key"] = None
+        _env_cache["value"] = {}
+        return {}
+
+    if key != _env_cache["key"]:
+        try:
+            _env_cache["value"] = _parse_env(ENV_PATH.read_text(encoding="utf-8"))
+            _env_cache["key"] = key
+        except OSError:
+            return {}
+    return dict(_env_cache["value"])
 
 
 def write_env(values: dict):
@@ -47,6 +76,10 @@ def write_env(values: dict):
     comment in the file the first time secrets were saved from the UI.
     """
     ENV_PATH.parent.mkdir(parents=True, exist_ok=True)
+    # The next read_env() re-stats and sees the new mtime, so the cache cannot
+    # go stale across a write. Cleared anyway: mtime granularity on Windows is
+    # coarse enough that a write inside the same tick could otherwise be missed.
+    _env_cache["key"] = None
     if ENV_PATH.exists():
         shutil.copyfile(ENV_PATH, ENV_PATH.parent / ".env.bak")
 

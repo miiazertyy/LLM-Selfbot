@@ -4,6 +4,10 @@ from fastapi import APIRouter, HTTPException, Request
 
 from app.core import ipc
 from app.utils.paths import DATA_DIR
+# connect_raw() instead of a bare sqlite3.connect(): a plain connection sets
+# no busy_timeout, so these queries failed with "database is locked" rather
+# than waiting whenever a bot runner happened to be writing.
+from app.utils.db import connect_raw
 
 router = APIRouter(tags=["chats"])
 
@@ -70,7 +74,7 @@ async def archive(request: Request, limit: int = 40):
     covers every account, and costs a local query instead of a round trip to a
     bot that might be busy.
     """
-    conn = sqlite3.connect(DB_PATH)
+    conn = connect_raw()
     try:
         try:
             rows = conn.execute(
@@ -197,7 +201,7 @@ async def reply_all(request: Request):
 
 
 def _conn():
-    return sqlite3.connect(DB_PATH)
+    return connect_raw()
 
 
 @router.get("/api/memory")

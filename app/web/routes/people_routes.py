@@ -18,6 +18,10 @@ import time
 from fastapi import APIRouter, HTTPException, Request
 
 from app.utils.paths import DATA_DIR
+# connect_raw() instead of a bare sqlite3.connect(): a plain connection sets
+# no busy_timeout, so these queries failed with "database is locked" rather
+# than waiting whenever a bot runner happened to be writing.
+from app.utils.db import connect_raw
 
 router = APIRouter(tags=["people"])
 
@@ -146,7 +150,7 @@ async def person(request: Request, uid: str):
 
     # And how much they actually talk.
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = connect_raw()
         try:
             row = conn.execute(
                 "SELECT COUNT(*), MIN(ts), MAX(ts) FROM message_log WHERE user_id = ?",

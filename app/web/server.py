@@ -2,6 +2,7 @@ import asyncio
 import json
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -26,6 +27,13 @@ def create_app(supervisor=None):
         print(f"[Supervisor] could not initialise the database: {e}", flush=True)
     app = FastAPI(title="LLMSelfbot", docs_url=None, redoc_url=None, openapi_url=None)
     app.state.supervisor = supervisor
+
+    # Nothing was compressed before. The built panel is ~100KB of JS plus
+    # ~65KB of CSS, which gzip takes to roughly a third of that - and it is a
+    # real transfer, not just loopback, whenever services.webui.bind is opened
+    # up to the LAN. minimum_size keeps it off the many small JSON replies,
+    # where the header overhead would outweigh the saving.
+    app.add_middleware(GZipMiddleware, minimum_size=1024)
 
     # account_routes FIRST: its literal /api/accounts/slots/... paths would
     # otherwise be swallowed by status_routes' /api/accounts/{child_id}/{action},

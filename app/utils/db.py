@@ -8,6 +8,29 @@ db_path = "config/bot_data.db"
 _pragmas_applied = False
 
 
+def connect_raw() -> sqlite3.Connection:
+    """A connection with the pragmas this database needs, for callers that
+    want to run several queries without reopening between each one.
+
+    journal_mode is persistent in the file, but busy_timeout and synchronous
+    are per-connection, so they have to be set every time. Routes that used
+    bare sqlite3.connect() got neither, which meant they raised
+    "database is locked" immediately instead of waiting whenever a bot runner
+    happened to be writing.
+    """
+    conn = sqlite3.connect(resource_path(db_path), timeout=15)
+    global _pragmas_applied
+    if not _pragmas_applied:
+        conn.execute("PRAGMA journal_mode=WAL")
+        _pragmas_applied = True
+    conn.execute("PRAGMA busy_timeout=15000")
+    # WAL already guarantees durability across process crashes; FULL adds an
+    # fsync per commit to also survive a power cut, which is not a trade worth
+    # making for a chat log written on every message.
+    conn.execute("PRAGMA synchronous=NORMAL")
+    return conn
+
+
 @contextmanager
 def _connect():
     """Open the shared DB with WAL + a busy timeout, always closing on exit.
@@ -15,13 +38,8 @@ def _connect():
     WAL lets the Discord runner, Snapchat bridge and Telegram controller read
     and write concurrently instead of tripping over "database is locked".
     """
-    global _pragmas_applied
-    conn = sqlite3.connect(resource_path(db_path), timeout=15)
+    conn = connect_raw()
     try:
-        if not _pragmas_applied:
-            conn.execute("PRAGMA journal_mode=WAL")
-            _pragmas_applied = True
-        conn.execute("PRAGMA busy_timeout=15000")
         yield conn
         conn.commit()
     finally:
@@ -115,6 +133,12 @@ def init_db():
         cursor.execute(
             "CREATE INDEX IF NOT EXISTS idx_message_log_user_ts ON message_log (user_id, ts)"
         )
+        # /api/stats/overview filters and groups on ts alone; the composite
+        # index above is useless for that, so those queries scanned the whole
+        # table.
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_message_log_ts ON message_log (ts)"
+        )
 
         # Snapchat chat ids are UUID strings, separate text-keyed stats tables.
         cursor.execute(
@@ -141,6 +165,18 @@ def init_db():
 
         cursor.execute(
             "CREATE INDEX IF NOT EXISTS idx_message_log_snap_ts ON message_log_snap (chat_id, ts)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_message_log_snap_tsonly ON message_log_snap (ts)"
+        )
+        # The unfiltered leaderboard orders by message_count, which had no
+        # index and so cost a full scan plus a sort every time.
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_user_stats_count ON user_stats (message_count DESC)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_user_stats_snap_count "
+            "ON user_stats_snap (message_count DESC)"
         )
 
 

@@ -5,6 +5,7 @@ import re
 import threading
 import time
 from collections import deque
+from itertools import islice
 from datetime import datetime
 
 from app.utils.paths import DATA_DIR
@@ -41,17 +42,37 @@ MAX_FILE_BYTES = 5 * 1024 * 1024
 class LogBus:
     def __init__(self):
         self.buffer: deque = deque(maxlen=MAX_BUFFER)
-        self.subscribers: set = set()
+        # queue -> the loop it belongs to, so entries published from a worker
+        # thread can be handed over with call_soon_threadsafe.
+        self.subscribers: dict = {}
         self.lock = threading.Lock()
         self.file_path = LOGS_DIR / "app.jsonl"
         LOGS_DIR.mkdir(parents=True, exist_ok=True)
+        # Held open rather than reopened per line, with the size tracked in
+        # memory so rotation costs no stat() on every write either.
+        self._fh = None
+        self._written = 0
+
+    def _open(self):
+        if self._fh is not None:
+            return
+        try:
+            self._written = self.file_path.stat().st_size
+        except OSError:
+            self._written = 0
+        self._fh = open(self.file_path, "a", encoding="utf-8")
 
     def _rotate(self):
-        if self.file_path.exists() and self.file_path.stat().st_size > MAX_FILE_BYTES:
-            try:
-                os.replace(self.file_path, self.file_path.with_suffix(".jsonl.1"))
-            except OSError:
-                pass
+        if self._written <= MAX_FILE_BYTES:
+            return
+        try:
+            if self._fh is not None:
+                self._fh.close()
+            self._fh = None
+            os.replace(self.file_path, self.file_path.with_suffix(".jsonl.1"))
+        except OSError:
+            pass
+        self._written = 0
 
     def append(self, source: str, text: str, level: str = None):
         text = _ANSI_RE.sub("", str(text)).rstrip()
@@ -72,43 +93,69 @@ class LogBus:
             self.buffer.append(entry)
             try:
                 self._rotate()
-                with open(self.file_path, "a", encoding="utf-8") as f:
-                    f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+                self._open()
+                line = json.dumps(entry, ensure_ascii=False) + "\n"
+                self._fh.write(line)
+                self._fh.flush()
+                self._written += len(line.encode("utf-8"))
             except OSError:
-                pass
+                # Losing the line on disk must not lose it for live viewers;
+                # the next append reopens.
+                self._fh = None
         self.publish(entry)
 
     def tail(self, n: int = 100) -> list:
         with self.lock:
-            return list(self.buffer)[-n:]
+            # islice over the deque's tail, rather than copying all MAX_BUFFER
+            # entries and then slicing: tail(50) copied 2000 of them.
+            start = max(0, len(self.buffer) - n)
+            return list(islice(self.buffer, start, None))
 
     def subscribe(self):
         q = asyncio.Queue(maxsize=500)
-        self.subscribers.add(q)
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        self.subscribers[q] = loop
         return q
 
     def unsubscribe(self, q):
-        self.subscribers.discard(q)
+        self.subscribers.pop(q, None)
 
     def publish(self, entry):
         """Hand an entry to every WebSocket subscriber.
 
-        Called from supervisor reader threads rather than the event loop, so it
-        stays synchronous, put_nowait is safe cross-thread for a queue that is
-        only awaited on one loop.
+        Called from supervisor reader threads, not from the event loop. A bare
+        put_nowait from another thread does not wake the loop's selector, so
+        the waiting coroutine only picked entries up when the loop happened to
+        wake for something else - lines surfaced late, in bursts, or at the
+        25s ping timeout. Handing the put to the owning loop is also the only
+        thread-safe way to do it.
         """
-        for q in list(self.subscribers):
+        for q, loop in list(self.subscribers.items()):
             try:
+                if loop is not None and not loop.is_closed():
+                    loop.call_soon_threadsafe(self._offer, q, entry)
+                else:
+                    self._offer(q, entry)
+            except RuntimeError:
+                pass          # loop shut down between the check and the call
+
+    @staticmethod
+    def _offer(q, entry):
+        """Put one entry on one subscriber's queue, on that queue's own loop."""
+        try:
+            q.put_nowait(entry)
+        except asyncio.QueueFull:
+            # Slow consumer, drop its oldest line to make room for this one.
+            try:
+                q.get_nowait()
                 q.put_nowait(entry)
-            except asyncio.QueueFull:
-                # Slow consumer, drop its oldest line to make room for this one.
-                try:
-                    q.get_nowait()
-                    q.put_nowait(entry)
-                except Exception:
-                    pass
             except Exception:
                 pass
+        except Exception:
+            pass
 
 
 bus = LogBus()

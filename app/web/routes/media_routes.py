@@ -36,8 +36,14 @@ def _next_index() -> int:
 
 
 @router.get("/api/pictures")
-async def pictures(request: Request):
-    from app.utils.db import get_picture_description
+def pictures(request: Request):
+    # One query for every description, not one connection per picture. The
+    # per-file lookup opened and closed a sqlite connection for each image on
+    # every request, which is what get_all_picture_descriptions() exists for.
+    # Plain def, so FastAPI runs the directory scan and stat()s on its
+    # threadpool instead of the event loop.
+    from app.utils.db import get_all_picture_descriptions
+    descriptions = get_all_picture_descriptions()
     out = []
     for f in _files():
         try:
@@ -46,7 +52,7 @@ async def pictures(request: Request):
             size = 0
         out.append({
             "name": f,
-            "description": get_picture_description(f) or "",
+            "description": descriptions.get(f, ""),
             "size": size,
         })
     return {"pictures": out}
