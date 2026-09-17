@@ -394,7 +394,7 @@
       <div
         role="listbox"
         aria-label="Account to answer as"
-        class="glass absolute left-0 right-0 top-full z-30 mt-1 overflow-hidden rounded-xl p-1 shadow-xl"
+        class="glass floating absolute left-0 right-0 top-full z-30 mt-1 overflow-hidden rounded-xl p-1 shadow-xl"
       >
         {#each accounts as a (a.id)}
           <button

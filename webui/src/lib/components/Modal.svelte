@@ -39,7 +39,7 @@
     <!-- Column layout with a scrolling body. Without a max height a tall form
          simply overflowed the viewport, and because the dialog is centred the
          overflow went off the TOP of the screen where it could not be reached. -->
-    <div class="glass glow pop flex max-h-[88vh] flex-col overflow-hidden
+    <div class="glass floating glow pop flex max-h-[88vh] flex-col overflow-hidden
                 {wide ? 'w-[min(880px,94vw)]' : 'w-[min(560px,94vw)]'}">
       <div class="flex shrink-0 items-center justify-between gap-3 border-b border-edge px-5 py-3.5">
         <h3 class="min-w-0 truncate text-[15px] font-semibold tracking-tight">{title}</h3>

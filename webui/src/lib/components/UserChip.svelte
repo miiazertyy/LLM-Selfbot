@@ -174,7 +174,7 @@
       aria-label="About {heading}"
       tabindex="-1"
       onclick={(e) => e.stopPropagation()}
-      class="user-card glass absolute w-[320px] max-w-[calc(100vw-16px)] overflow-y-auto rounded-xl p-4 shadow-2xl"
+      class="user-card glass floating absolute w-[320px] max-w-[calc(100vw-16px)] overflow-y-auto rounded-xl p-4 shadow-2xl"
       style="top: {pos.top}px; left: {pos.left}px; max-height: min(70vh, 520px);"
     >
   {#if loading}

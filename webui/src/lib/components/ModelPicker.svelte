@@ -228,7 +228,7 @@
   {#if open}
     <div
       role="listbox"
-      class="glass absolute right-0 z-40 mt-1 max-h-80 w-full min-w-[260px] overflow-y-auto rounded-xl p-1 shadow-xl"
+      class="glass floating absolute right-0 z-40 mt-1 max-h-80 w-full min-w-[260px] overflow-y-auto rounded-xl p-1 shadow-xl"
     >
       {#if loading}
         <div class="space-y-1 p-1">

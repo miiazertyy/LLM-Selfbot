@@ -620,8 +620,20 @@ textarea {
    these modes there is finally something back there worth blurring - which is
    exactly why it is conditional rather than simply restored. */
 
-:root[data-surface="glass"] .glass,
-:root[data-surface="frost"] .glass {
+/* Anything that floats over the page keeps a solid back. A card sits in the
+   layout with the backdrop behind it, so letting the backdrop through is the
+   whole point; a popover or a dialog sits over arbitrary content, and made
+   translucent it renders the page's own text straight through whatever it is
+   trying to tell you. The profile popover has no scrim at all behind it, so it
+   was the worst of them.
+
+   :not(.floating) is the whole mechanism - excluded from the rule, they keep
+   the plain opaque .glass they have always had, gradient and all. An explicit
+   override was tried first and was worse: unlayered rules beat the layered
+   base regardless of specificity, so it silently flattened the one highlight
+   that makes a card look like a card. */
+:root[data-surface="glass"] .glass:not(.floating),
+:root[data-surface="frost"] .glass:not(.floating) {
   /* The same material as the pickers in Appearance: a border, and the
      background showing through. A tinted fill was the wrong instinct - it
      turned every panel into a slab and hid the thing it was meant to reveal.
@@ -637,8 +649,8 @@ textarea {
 /* The hover lift the pickers have, so a card reacts the same way they do.
    Each mode names its own value rather than deriving one: calc() inside
    color-mix() is not worth relying on across engines for a nicety. */
-:root[data-surface="glass"] .glass:hover,
-:root[data-surface="frost"] .glass:hover {
+:root[data-surface="glass"] .glass:not(.floating):hover,
+:root[data-surface="frost"] .glass:not(.floating):hover {
   background: color-mix(in srgb, var(--color-card) var(--surface-hover, 22%), transparent);
 }
 

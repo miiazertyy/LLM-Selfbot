@@ -85,7 +85,7 @@
     onclick={(e) => e.target === e.currentTarget && onclose?.()}
     onkeydown={onKey}
   >
-    <div class="glass glow pop w-[min(660px,95vw)] overflow-hidden p-0">
+    <div class="glass floating glow pop w-[min(660px,95vw)] overflow-hidden p-0">
       <div class="flex items-center gap-3 border-b border-edge px-4 py-3">
         <Icon name="search" size={17} class="shrink-0 text-muted" />
         <input
