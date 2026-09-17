@@ -2,4 +2,8 @@
 -r requirements.txt
 pyinstaller
 
+# One-off: converting the bundled Mikhak faces to woff2 (webui/src/assets/fonts).
+# Not needed to build or run, only to regenerate those files.
+fonttools[woff]
+
 # The web UI is a separate npm project: cd webui && npm install

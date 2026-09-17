@@ -85,7 +85,20 @@ _HIDDEN = [
     "sqlite3",
 ]
 
-EXCLUDES = ["tkinter", "matplotlib", "pytest", "pydoc_data", "test", "unittest"]
+# numpy is not imported anywhere in app/ and is not in requirements.txt, but it
+# is a common thing to have installed globally, and PyInstaller will happily
+# bundle it - numpy.libs alone is ~37 MB of OpenBLAS. Excluding it keeps a
+# developer's machine from quietly producing a much larger build than CI does.
+EXCLUDES = ["tkinter", "matplotlib", "pytest", "pydoc_data", "test", "unittest",
+            "numpy"]
+
+# Do NOT try to drop libx265 from the pillow_heif wheel to save its ~22.7 MB.
+# It looks like dead weight - it is the HEVC *encoder* and the app only ever
+# decodes HEIC (app/utils/imageimport.py calls register_heif_opener and never
+# writes one) - but libheif.dll imports it in its PE import table rather than
+# loading it on demand. Tested: with the DLL removed, importing _pillow_heif
+# fails outright with "DLL load failed", so HEIC support breaks completely
+# rather than losing only encoding. libde265 is the decoder and is separate.
 
 
 def build_parts(root, gui=True):

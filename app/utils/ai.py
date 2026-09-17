@@ -26,11 +26,14 @@ current_model_index = 0
 # are different classes even though one SDK is built on the other. Catching only
 # one of them meant a local server under load fell through to the generic
 # handler and looked like a crash.
-try:
-    from openai import RateLimitError as _OpenAIRateLimit
-    RATE_LIMITED = (RateLimitError, _OpenAIRateLimit)
-except Exception:      # pragma: no cover - openai is a hard dependency
-    RATE_LIMITED = (RateLimitError,)
+#
+# openai is NOT imported here to widen the tuple. It is a heavy import - around
+# 620ms on top of groq, measured, and paid by every worker process on every
+# launch - and it is only ever needed when a local server is configured.
+# init_ai() adds the class when it builds the local client, by which point
+# openai is being imported anyway. Every `except RATE_LIMITED` re-reads this
+# global, so extending it later covers the handlers that already exist.
+RATE_LIMITED = (RateLimitError,)
 
 
 def _active_client():
@@ -60,6 +63,7 @@ def _chat_model() -> str:
 def init_ai():
     global _groq_clients, _client_index, model, groq_models, current_model_index
     global _local_client, _local_model, _local_vision
+    global RATE_LIMITED
     env_path = get_env_path()
     config = load_config()
     load_dotenv(dotenv_path=env_path, override=True)
@@ -69,6 +73,11 @@ def init_ai():
     _local_client, _local_model, _local_vision = None, "", False
     if localai.active(config):
         from openai import AsyncOpenAI
+        # openai is loaded now regardless, so this is the moment to teach the
+        # rate-limit check about its RateLimitError.
+        from openai import RateLimitError as _OpenAIRateLimit
+        if _OpenAIRateLimit not in RATE_LIMITED:
+            RATE_LIMITED = (*RATE_LIMITED, _OpenAIRateLimit)
         cfg = localai.settings(config)
         # An explicit timeout, because the SDK's default is ten minutes and a
         # local server that accepts the connection and then never answers (one
