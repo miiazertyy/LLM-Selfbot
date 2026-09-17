@@ -13,8 +13,10 @@
   import { onMount } from "svelte";
   import { api } from "../lib/api";
   import { toast, snowEnabled, motionEnabled, themeId, settingsSection, settingsPath, fontId, health,
-           appearance, appearanceVersion, customBgOn, customBgDim, loadAppearance } from "../lib/stores";
+           appearance, appearanceVersion, customBgOn, customBgDim, loadAppearance,
+           backdropId } from "../lib/stores";
   import { CUSTOM_FONT_ID } from "../lib/fonts";
+  import { BACKDROPS } from "../lib/backdrops";
   import Importer from "../lib/components/Importer.svelte";
   import { THEMES } from "../lib/themes";
   import { FONTS } from "../lib/fonts";
@@ -673,9 +675,38 @@
                 {/each}
               </div>
 
+              <!-- What moves behind the app. Drawn from the theme variables
+                   above, so each one takes on whatever palette is selected
+                   rather than needing its own artwork. -->
+              <div class="mt-5">
+                <div class="mb-2 text-[12px] font-medium text-ink">Background</div>
+                <div class="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  {#each BACKDROPS as b}
+                    <button
+                      onclick={() => backdropId.set(b.id)}
+                      class="jelly relative overflow-hidden rounded-xl border p-3 text-left
+                        {$backdropId === b.id
+                          ? 'border-accent/60 bg-accent/10'
+                          : 'border-edge hover:bg-white/[0.04]'}"
+                    >
+                      <span class="backdrop-swatch mb-2 h-10 w-full rounded-lg border border-edge/60"
+                            data-kind={b.id}></span>
+                      <span class="block truncate text-[12px] text-ink">{b.name}</span>
+                      <span class="mt-0.5 block text-[10px] leading-snug text-faint">{b.hint}</span>
+                    </button>
+                  {/each}
+                </div>
+                {#if $customBgOn && $appearance.background.present && $backdropId !== "none"}
+                  <p class="mt-2 text-[11px] leading-relaxed text-warn">
+                    Your own image is switched on below, so it is showing instead.
+                    Turn it off to see this again.
+                  </p>
+                {/if}
+              </div>
+
               <!-- A picture of your own, behind the whole panel. The themes
                    above still set the palette; this sits under them. -->
-              <div class="mt-4 space-y-3">
+              <div class="mt-5 space-y-3">
                 <Importer
                   title="Drop a background image here"
                   hint="Any format works, including HEIC straight off a phone. It is

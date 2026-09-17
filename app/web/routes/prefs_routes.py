@@ -35,6 +35,8 @@ ALLOWED = {
     # Whether the uploaded backdrop is in use, and how far it is dimmed. The
     # image itself lives in config/appearance/; these are just the choice.
     "customBgOn", "customBgDim",
+    # Which living background is drawn behind the app.
+    "backdrop",
 }
 
 _lock = threading.Lock()

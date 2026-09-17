@@ -34,6 +34,10 @@
   let dragOver = $state(false);
   let busy = $state<Record<string, boolean>>({});
   let confirming = $state<Pic | null>(null);
+  /** Names ticked for bulk delete. Empty means the page is in its normal mode. */
+  let selected = $state<Set<string>>(new Set());
+  let confirmingBulk = $state(false);
+  let deleting = $state(false);
   let view = $state<Pic | null>(null);
   let queueing = $state(false);
   /** Descriptions run long, so each card can be opened out in place. */
@@ -146,6 +150,37 @@
     } catch (e: any) {
       toast(e.message, "err");
     }
+  }
+
+  function toggleSelect(name: string) {
+    // Reassigned rather than mutated: a Set is not deeply reactive.
+    const next = new Set(selected);
+    next.has(name) ? next.delete(name) : next.add(name);
+    selected = next;
+  }
+
+  function selectAll() {
+    selected = new Set(pics.map((p) => p.name));
+  }
+
+  function clearSelection() {
+    selected = new Set();
+  }
+
+  async function removeSelected() {
+    confirmingBulk = false;
+    const names = [...selected];
+    if (!names.length) return;
+    deleting = true;
+    try {
+      const r = await api.deletePictures(names);
+      toast(`Deleted ${r.deleted} picture${r.deleted === 1 ? "" : "s"}.`, "ok");
+      clearSelection();
+      load();
+    } catch (e: any) {
+      toast(e.message, "err");
+    }
+    deleting = false;
   }
 
   function openEdit(p: Pic) {
@@ -261,6 +296,24 @@
   </div>
 {/if}
 
+{#if !loading && pics.length > 0}
+  <div class="mb-3 flex flex-wrap items-center gap-2">
+    {#if selected.size}
+      <span class="text-[12px] text-ink">{selected.size} selected</span>
+      <Button size="sm" kind="ghost" onclick={selectAll} disabled={selected.size === pics.length}>
+        Select all {pics.length}
+      </Button>
+      <Button size="sm" kind="ghost" onclick={clearSelection}>Clear</Button>
+      <Button size="sm" kind="danger" loading={deleting} onclick={() => (confirmingBulk = true)}>
+        Delete {selected.size}
+      </Button>
+    {:else}
+      <Button size="sm" kind="ghost" onclick={selectAll}>Select pictures</Button>
+      <span class="text-[11px] text-faint">to remove several at once</span>
+    {/if}
+  </div>
+{/if}
+
 {#if loading}
   <div class="glass h-40 animate-pulse"></div>
 {:else if pics.length === 0}
@@ -272,6 +325,22 @@
   <div class="grid grid-cols-1 gap-4 md:grid-cols-2 2xl:grid-cols-3">
     {#each pics as p (p.name)}
       <Card pad={false}>
+        <div class="relative">
+          <!-- Sits over the thumbnail so ticking one never opens the viewer. -->
+          <label
+            class="absolute left-2 top-2 z-10 flex cursor-pointer items-center gap-1.5 rounded-lg
+                   border border-edge bg-bg/80 px-2 py-1 text-[11px] backdrop-blur-sm
+                   {selected.has(p.name) ? 'border-accent/60 text-ink' : 'text-muted'}"
+            title="Select for bulk delete"
+          >
+            <input
+              type="checkbox"
+              class="accent-accent"
+              checked={selected.has(p.name)}
+              onchange={() => toggleSelect(p.name)}
+            />
+            {selected.has(p.name) ? "Selected" : "Select"}
+          </label>
         <button
           type="button"
           class="block w-full bg-black/25"
@@ -285,9 +354,11 @@
             src={api.pictureUrl(p.name)}
             alt={p.name}
             loading="lazy"
-            class="h-56 w-full rounded-t-[var(--radius-card)] object-contain"
+            class="h-56 w-full rounded-t-[var(--radius-card)] object-contain
+                   {selected.has(p.name) ? 'opacity-70' : ''}"
           />
         </button>
+        </div>
 
         <div class="p-4">
           <div class="flex items-baseline justify-between gap-2">
@@ -386,6 +457,29 @@
       </p>
     {/if}
   {/if}
+</Modal>
+
+<!-- ── Bulk delete confirmation ─────────────────────────────────────────── -->
+<Modal
+  open={confirmingBulk}
+  title="Delete {selected.size} picture{selected.size === 1 ? '' : 's'}?"
+  onclose={() => (confirmingBulk = false)}
+>
+  <p class="text-[13px] leading-relaxed text-muted">
+    {selected.size === 1 ? "It is" : "They are"} removed from disk and the
+    remaining pictures are renumbered. This cannot be undone.
+  </p>
+  <ul class="mt-3 max-h-40 overflow-y-auto rounded-lg border border-edge bg-black/20 p-2">
+    {#each [...selected] as name}
+      <li class="truncate font-mono text-[11px] text-muted">{name}</li>
+    {/each}
+  </ul>
+  <div class="mt-4 flex justify-end gap-2">
+    <Button kind="ghost" onclick={() => (confirmingBulk = false)}>Keep them</Button>
+    <Button kind="danger" loading={deleting} onclick={removeSelected}>
+      Delete {selected.size}
+    </Button>
+  </div>
 </Modal>
 
 <!-- ── Delete confirmation ──────────────────────────────────────────────── -->

@@ -1,7 +1,7 @@
 import base64
 import os
 
-from fastapi import APIRouter, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Body, File, HTTPException, Request, UploadFile
 
 from app.utils.paths import DATA_DIR
 from app.web.logbus import bus
@@ -367,20 +367,68 @@ async def set_desc(request: Request, name: str):
     return {"ok": True}
 
 
-@router.delete("/api/pictures/{name}")
-async def delete(request: Request, name: str):
-    path = PICTURES_DIR / name
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="picture not found")
-    path.unlink()
-    from app.utils.db import delete_picture_db, rename_picture_db
-    delete_picture_db(name)
+def _renumber():
+    """Close the gaps so the files stay IMG_1..IMG_n with nothing missing."""
+    from app.utils.db import rename_picture_db
+    renamed = 0
     for i, fname in enumerate(_files(), start=1):
         stem, ext = os.path.splitext(fname)
         if stem.startswith("IMG_") and stem[4:].isdigit() and int(stem[4:]) != i:
             new = f"IMG_{i}{ext}"
             os.rename(PICTURES_DIR / fname, PICTURES_DIR / new)
             rename_picture_db(fname, new)
+            renamed += 1
+    return renamed
+
+
+def _delete_one(name: str) -> bool:
+    """Remove one picture and its description. No renumbering."""
+    from app.utils.db import delete_picture_db
+    path = PICTURES_DIR / name
+    if not path.exists():
+        return False
+    path.unlink()
+    delete_picture_db(name)
+    return True
+
+
+@router.post("/api/pictures/delete")
+def delete_many(request: Request, body: dict = Body(...)):
+    """Delete several pictures in one go.
+
+    This exists because deleting renumbers: every file is renamed so the set
+    stays IMG_1..IMG_n with no gaps. Calling the single delete in a loop from
+    the client would therefore delete the wrong pictures - after the first
+    call every name the client is holding refers to a different file. So the
+    whole selection is removed first and the renumber happens once, at the end.
+
+    Plain def: unlink and rename are blocking, and there can be a lot of them.
+    """
+    names = body.get("names")
+    if not isinstance(names, list) or not names:
+        raise HTTPException(status_code=400, detail="names must be a non-empty list")
+
+    # Reject path traversal rather than trusting the client with a filename.
+    safe = []
+    for name in names:
+        if not isinstance(name, str) or not name or os.path.basename(name) != name:
+            raise HTTPException(status_code=400, detail=f"bad picture name: {name!r}")
+        safe.append(name)
+
+    deleted = [n for n in dict.fromkeys(safe) if _delete_one(n)]
+    missing = [n for n in dict.fromkeys(safe) if n not in deleted]
+    _renumber()
+    if deleted:
+        bus.append("pictures",
+                   f"Deleted {len(deleted)} picture{'' if len(deleted) == 1 else 's'}.")
+    return {"ok": True, "deleted": len(deleted), "missing": missing}
+
+
+@router.delete("/api/pictures/{name}")
+def delete(request: Request, name: str):
+    if not _delete_one(name):
+        raise HTTPException(status_code=404, detail="picture not found")
+    _renumber()
     return {"ok": True}
 
 

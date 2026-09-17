@@ -1,5 +1,211 @@
 @import "tailwindcss";
 
+/* ── Living backgrounds ────────────────────────────────────────────────────
+   A fixed layer under the whole app, painted from the theme's own variables so
+   each one takes on the current palette rather than needing an asset per theme.
+
+   z-index 0 with the app above it on z-index 1, deliberately: a negative
+   z-index child would depend on how the root background propagates to the
+   canvas, which is exactly the sort of thing that differs in a webview.
+
+   Everything here animates transform and opacity only. Those are compositor
+   properties, so an idle window does no layout and no paint. */
+.app-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  background: var(--color-bg);
+}
+
+.app-shell {
+  position: relative;
+  z-index: 1;
+}
+
+/* Aurora: two broad blooms of accent light drifting past each other. The blur
+   is what turns two gradients into something that reads as depth. */
+.app-backdrop[data-kind="aurora"]::before,
+.app-backdrop[data-kind="aurora"]::after {
+  content: "";
+  position: absolute;
+  width: 85vmax;
+  height: 85vmax;
+  border-radius: 50%;
+  filter: blur(90px);
+  opacity: 0.4;
+  will-change: transform;
+}
+.app-backdrop[data-kind="aurora"]::before {
+  left: -25vmax;
+  top: -30vmax;
+  background: radial-gradient(circle at 50% 50%,
+    color-mix(in srgb, var(--color-accent) 60%, transparent) 0%,
+    transparent 68%);
+  animation: aurora-a 34s ease-in-out infinite alternate;
+}
+.app-backdrop[data-kind="aurora"]::after {
+  right: -30vmax;
+  bottom: -35vmax;
+  background: radial-gradient(circle at 50% 50%,
+    color-mix(in srgb, var(--color-accent-2, var(--color-accent)) 55%, transparent) 0%,
+    transparent 68%);
+  animation: aurora-b 44s ease-in-out infinite alternate;
+}
+@keyframes aurora-a {
+  from { transform: translate3d(0, 0, 0) scale(1); }
+  to   { transform: translate3d(14vw, 8vh, 0) scale(1.18); }
+}
+@keyframes aurora-b {
+  from { transform: translate3d(0, 0, 0) scale(1.1); }
+  to   { transform: translate3d(-12vw, -10vh, 0) scale(0.92); }
+}
+
+/* Nebula: one very large conic sweep turning slowly behind a heavy blur, so
+   the colour moves without any edge ever being visible. */
+.app-backdrop[data-kind="nebula"]::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 190vmax;
+  height: 190vmax;
+  margin: -95vmax 0 0 -95vmax;
+  opacity: 0.3;
+  filter: blur(110px);
+  will-change: transform;
+  background: conic-gradient(
+    from 0deg,
+    color-mix(in srgb, var(--color-accent) 55%, transparent),
+    color-mix(in srgb, var(--color-accent-2, var(--color-accent)) 50%, transparent),
+    color-mix(in srgb, var(--color-bg) 85%, transparent),
+    color-mix(in srgb, var(--color-accent) 55%, transparent)
+  );
+  animation: nebula-spin 120s linear infinite;
+}
+@keyframes nebula-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+/* Drift: orbs rising and fading. Each one carries its own size, lane, drift
+   and duration as custom properties, set when it is created. */
+.app-backdrop[data-kind="drift"] .orb {
+  position: absolute;
+  bottom: -20vh;
+  left: var(--x, 50%);
+  width: var(--size, 14px);
+  height: var(--size, 14px);
+  border-radius: 999px;
+  opacity: 0;
+  background: radial-gradient(circle at 35% 35%,
+    color-mix(in srgb, var(--color-accent-2, var(--color-accent)) 75%, #fff) 0%,
+    color-mix(in srgb, var(--color-accent) 55%, transparent) 60%,
+    transparent 72%);
+  filter: blur(1px);
+  will-change: transform, opacity;
+  animation: orb-rise var(--life, 26s) linear infinite;
+  animation-delay: var(--delay, 0s);
+}
+@keyframes orb-rise {
+  0%   { opacity: 0;    transform: translate3d(0, 0, 0) scale(0.7); }
+  12%  { opacity: 0.55; }
+  85%  { opacity: 0.35; }
+  100% { opacity: 0;    transform: translate3d(var(--drift, 0px), -130vh, 0) scale(1.15); }
+}
+
+/* Swatches for the picker. The real backdrops size their blooms in vmax, which
+   inside a 40px preview would just be one flat colour, so these are the same
+   palette at a scale that actually reads. Animated too: a still swatch of a
+   moving background tells you nothing about it. */
+.backdrop-swatch {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  background: var(--color-bg);
+}
+.backdrop-swatch[data-kind="aurora"]::before,
+.backdrop-swatch[data-kind="aurora"]::after {
+  content: "";
+  position: absolute;
+  width: 70%;
+  height: 180%;
+  border-radius: 50%;
+  filter: blur(10px);
+  opacity: 0.75;
+}
+.backdrop-swatch[data-kind="aurora"]::before {
+  left: -10%;
+  top: -40%;
+  background: radial-gradient(circle,
+    color-mix(in srgb, var(--color-accent) 75%, transparent) 0%, transparent 70%);
+  animation: swatch-a 6s ease-in-out infinite alternate;
+}
+.backdrop-swatch[data-kind="aurora"]::after {
+  right: -10%;
+  bottom: -40%;
+  background: radial-gradient(circle,
+    color-mix(in srgb, var(--color-accent-2, var(--color-accent)) 70%, transparent) 0%,
+    transparent 70%);
+  animation: swatch-b 7.5s ease-in-out infinite alternate;
+}
+@keyframes swatch-a {
+  from { transform: translateX(0); }
+  to   { transform: translateX(35%); }
+}
+@keyframes swatch-b {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-35%); }
+}
+
+.backdrop-swatch[data-kind="nebula"]::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 220%;
+  height: 220%;
+  margin: -110% 0 0 -110%;
+  opacity: 0.7;
+  filter: blur(9px);
+  background: conic-gradient(
+    from 0deg,
+    color-mix(in srgb, var(--color-accent) 70%, transparent),
+    color-mix(in srgb, var(--color-accent-2, var(--color-accent)) 65%, transparent),
+    color-mix(in srgb, var(--color-bg) 85%, transparent),
+    color-mix(in srgb, var(--color-accent) 70%, transparent));
+  animation: nebula-spin 14s linear infinite;
+}
+
+.backdrop-swatch[data-kind="drift"]::before,
+.backdrop-swatch[data-kind="drift"]::after {
+  content: "";
+  position: absolute;
+  border-radius: 999px;
+  background: radial-gradient(circle at 35% 35%,
+    color-mix(in srgb, var(--color-accent-2, var(--color-accent)) 80%, #fff) 0%,
+    color-mix(in srgb, var(--color-accent) 60%, transparent) 60%, transparent 72%);
+}
+.backdrop-swatch[data-kind="drift"]::before {
+  left: 28%;
+  width: 9px;
+  height: 9px;
+  animation: swatch-rise 5s linear infinite;
+}
+.backdrop-swatch[data-kind="drift"]::after {
+  left: 64%;
+  width: 6px;
+  height: 6px;
+  animation: swatch-rise 7s linear infinite 1.5s;
+}
+@keyframes swatch-rise {
+  0%   { bottom: -20%; opacity: 0; }
+  20%  { opacity: 0.9; }
+  80%  { opacity: 0.5; }
+  100% { bottom: 110%; opacity: 0; }
+}
+
 /* ── Bundled family ────────────────────────────────────────────────────────
    Declared here rather than injected from JS at runtime. As a <style> built
    in applyFont(), the font could not start downloading until the whole bundle

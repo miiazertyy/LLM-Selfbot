@@ -2,7 +2,9 @@
   import { onMount } from "svelte";
   import { api } from "./lib/api";
   import { visiblePoll } from "./lib/poll";
-  import { appearance, appearanceVersion, customBgOn, customBgDim, loadAppearance } from "./lib/stores";
+  import { appearance, appearanceVersion, customBgOn, customBgDim, loadAppearance,
+           backdropId } from "./lib/stores";
+  import { DRIFT_ORBS } from "./lib/backdrops";
   import { applyCustomFace } from "./lib/fonts";
   import { toasts, snowEnabled, motionEnabled, themeId, fontId, health, loadPrefs,
            logoOpens, logoLinkOff } from "./lib/stores";
@@ -42,6 +44,17 @@
   const pageCache = new Map<string, any>();
   let page = $state<{ key: string; comp: any } | null>(null);
   const SECTIONS = ["Run", "Brain", "Insight", "Setup"] as const;
+
+  // Fixed once rather than per render, so the orbs do not jump to new lanes
+  // every time anything else on the page updates.
+  const orbs = Array.from({ length: DRIFT_ORBS }, () => ({
+    x: Math.random() * 100,
+    size: 8 + Math.random() * 26,
+    drift: (Math.random() - 0.5) * 220,
+    life: 22 + Math.random() * 26,
+    // Negative, so the screen starts mid-flight instead of empty for 20s.
+    delay: -Math.random() * 40,
+  }));
 
   let route = $state("dashboard");
 
@@ -323,7 +336,21 @@
   </div>
 {/if}
 
-<div class="flex h-screen overflow-hidden">
+<!-- Under everything, and skipped entirely when an uploaded image is in use:
+     two backgrounds fighting each other is not a look. -->
+{#if $backdropId !== "none" && !($customBgOn && $appearance.background.present)}
+  <div class="app-backdrop" data-kind={$backdropId} aria-hidden="true">
+    {#if $backdropId === "drift"}
+      {#each orbs as o}
+        <span class="orb"
+              style="--x:{o.x}%; --size:{o.size}px; --drift:{o.drift}px;
+                     --life:{o.life}s; --delay:{o.delay}s"></span>
+      {/each}
+    {/if}
+  </div>
+{/if}
+
+<div class="app-shell flex h-screen overflow-hidden">
   <!-- ── Sidebar ─────────────────────────────────────────────────────── -->
   <aside
     class="z-20 flex shrink-0 flex-col border-r border-edge bg-surface/70

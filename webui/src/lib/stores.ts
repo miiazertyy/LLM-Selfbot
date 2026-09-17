@@ -174,6 +174,9 @@ export const themeId = persisted<string>("theme", "midnight", true);
  * deliberately not persisted: it describes files, not a preference, and a
  * stale copy would mean rendering a background that is no longer there.
  */
+/** Which living background is drawn behind the app. See lib/backdrops.ts. */
+export const backdropId = persisted<string>("backdrop", "aurora", true);
+
 export const customBgOn = persisted<boolean>("customBgOn", false, true);
 export const customBgDim = persisted<number>("customBgDim", 0.72, true);
 

@@ -190,6 +190,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ description }),
     }),
+  // One request for the whole selection, not a loop: deleting renumbers every
+  // remaining picture, so after the first call the names the page is holding
+  // point at different files.
+  deletePictures: (names: string[]) =>
+    request("/api/pictures/delete", { method: "POST", body: JSON.stringify({ names }) }),
   deletePicture: (name: string) =>
     request(`/api/pictures/${encodeURIComponent(name)}`, { method: "DELETE" }),
   pictureUrl: (name: string) => `/api/pictures/${encodeURIComponent(name)}`,
