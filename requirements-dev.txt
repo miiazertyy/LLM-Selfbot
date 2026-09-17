@@ -6,4 +6,9 @@ pyinstaller
 # Not needed to build or run, only to regenerate those files.
 fonttools[woff]
 
+# One-off: regenerating webui/src/lib/emoji.ts, the picker's emoji list.
+# The generated file is committed, so this is only needed to refresh it against
+# a newer Unicode release.
+emoji
+
 # The web UI is a separate npm project: cd webui && npm install

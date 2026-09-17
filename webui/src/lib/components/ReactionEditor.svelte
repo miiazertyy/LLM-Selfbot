@@ -21,6 +21,7 @@
   import { toast } from "../stores";
   import Button from "./Button.svelte";
   import Toggle from "./Toggle.svelte";
+  import EmojiPicker from "./EmojiPicker.svelte";
   import { springValue } from "../spring";
 
   let enabled = $state(true);
@@ -28,6 +29,7 @@
   let onlyRatio = $state(0.1);
   let emojis = $state<string[]>([]);
   let draft = $state("");
+  let picking = $state(false);
   let loading = $state(true);
   let saving = $state(false);
   let stored = $state("");
@@ -64,6 +66,23 @@
       return [...seg.segment(cleaned)].map((s) => s.segment).filter(Boolean);
     } catch {
       return [...cleaned];
+    }
+  }
+
+  /**
+   * Add or remove one emoji from the set.
+   *
+   * The picker is the way in now. Pasting is still supported through the same
+   * path, because an emoji copied from somewhere else is a perfectly reasonable
+   * thing to want and the picker only offers what Unicode ships.
+   */
+  function toggleEmoji(e: string) {
+    if (emojis.includes(e)) {
+      emojis = emojis.filter((x) => x !== e);
+    } else if (emojis.length < MAX) {
+      emojis = [...emojis, e];
+    } else {
+      toast(`That is the limit of ${MAX}. Remove one first.`, "err");
     }
   }
 
@@ -214,8 +233,8 @@
       <div class="text-[13px] text-ink">The emoji it uses</div>
       <p class="mt-0.5 text-[11px] leading-relaxed text-faint">
         The AI picks from this list and nothing else, so anything it invents is
-        ignored rather than sent and rejected by Discord. Click one to remove it.
-        Paste your own with the Windows emoji picker, Win and full stop.
+        ignored rather than sent and rejected by Discord. Click one below to
+        remove it, or browse the full set to add more.
       </p>
 
       <div class="mt-2.5 flex flex-wrap gap-1.5">
@@ -236,14 +255,10 @@
         {/each}
       </div>
 
-      <div class="mt-2.5 flex flex-col gap-2 sm:flex-row">
-        <input
-          bind:value={draft}
-          placeholder="Paste emoji to add"
-          onkeydown={(e) => e.key === "Enter" && (e.preventDefault(), addDraft())}
-          class="field text-[15px]"
-        />
-        <Button kind="ghost" size="sm" onclick={addDraft} disabled={!draft.trim()}>Add</Button>
+      <div class="mt-2.5 flex flex-wrap gap-2">
+        <Button kind="ghost" size="sm" onclick={() => (picking = !picking)}>
+          {picking ? "Done picking" : "Browse emoji"}
+        </Button>
         <Button
           kind="ghost"
           size="sm"
@@ -251,6 +266,24 @@
           disabled={JSON.stringify(emojis) === JSON.stringify(DEFAULTS)}
         >Reset</Button>
       </div>
+
+      {#if picking}
+        <div class="mt-2.5 space-y-2">
+          <EmojiPicker chosen={emojis} full={emojis.length >= MAX} onpick={toggleEmoji} />
+          <!-- The escape hatch. The picker carries what Unicode shipped when
+               this was generated, so anything newer, or a sequence it does not
+               list, still has a way in. -->
+          <div class="flex flex-col gap-2 sm:flex-row">
+            <input
+              bind:value={draft}
+              placeholder="Or paste emoji the list does not have"
+              onkeydown={(e) => e.key === "Enter" && (e.preventDefault(), addDraft())}
+              class="field text-[14px]"
+            />
+            <Button kind="ghost" size="sm" onclick={addDraft} disabled={!draft.trim()}>Add</Button>
+          </div>
+        </div>
+      {/if}
       <p class="mt-1.5 text-[10px] text-faint/70">
         {emojis.length} of {MAX}. They are sent to the AI on every reply, so a
         long list costs a little of every request.
