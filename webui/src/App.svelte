@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { api } from "./lib/api";
+  import { visiblePoll } from "./lib/poll";
   import { toasts, snowEnabled, motionEnabled, themeId, fontId, health, loadPrefs,
            logoOpens, logoLinkOff } from "./lib/stores";
   import { applyTheme } from "./lib/themes";
@@ -18,31 +19,43 @@
   import Modal from "./lib/components/Modal.svelte";
   import Button from "./lib/components/Button.svelte";
 
-  import Dashboard from "./pages/Dashboard.svelte";
-  import Accounts from "./pages/Accounts.svelte";
-  import Settings from "./pages/Settings.svelte";
-  import Persona from "./pages/Persona.svelte";
-  import Chats from "./pages/Chats.svelte";
-  import Memory from "./pages/Memory.svelte";
-  import Pictures from "./pages/Pictures.svelte";
-  import Logs from "./pages/Logs.svelte";
-  import System from "./pages/System.svelte";
-
   // Grouped by what you're actually doing, not by an arbitrary split.
-  const routes: Record<string, { title: string; icon: string; component: any; section: string }> = {
-    dashboard: { title: "Dashboard", icon: "dashboard", component: Dashboard, section: "Run" },
-    accounts:  { title: "Accounts",  icon: "accounts",  component: Accounts,  section: "Run" },
-    chats:     { title: "Chats",     icon: "chats",     component: Chats,     section: "Run" },
-    persona:   { title: "Persona",   icon: "persona",   component: Persona,   section: "Brain" },
-    memory:    { title: "Memory",    icon: "memory",    component: Memory,    section: "Brain" },
-    pictures:  { title: "Pictures",  icon: "pictures",  component: Pictures,  section: "Brain" },
-    logs:      { title: "Logs",      icon: "logs",      component: Logs,      section: "Insight" },
-    settings:  { title: "Settings",  icon: "settings",  component: Settings,  section: "Setup" },
-    system:    { title: "System",    icon: "system",    component: System,    section: "Setup" },
+  // Pages load on demand. Importing all nine statically put every page in one
+  // chunk, so opening the Dashboard paid to download, parse and compile
+  // Settings, System and Chats as well.
+  const routes: Record<string, { title: string; icon: string; load: () => Promise<any>; section: string }> = {
+    dashboard: { title: "Dashboard", icon: "dashboard", load: () => import("./pages/Dashboard.svelte"), section: "Run" },
+    accounts:  { title: "Accounts",  icon: "accounts",  load: () => import("./pages/Accounts.svelte"),  section: "Run" },
+    chats:     { title: "Chats",     icon: "chats",     load: () => import("./pages/Chats.svelte"),     section: "Run" },
+    persona:   { title: "Persona",   icon: "persona",   load: () => import("./pages/Persona.svelte"),   section: "Brain" },
+    memory:    { title: "Memory",    icon: "memory",    load: () => import("./pages/Memory.svelte"),    section: "Brain" },
+    pictures:  { title: "Pictures",  icon: "pictures",  load: () => import("./pages/Pictures.svelte"),  section: "Brain" },
+    logs:      { title: "Logs",      icon: "logs",      load: () => import("./pages/Logs.svelte"),      section: "Insight" },
+    settings:  { title: "Settings",  icon: "settings",  load: () => import("./pages/Settings.svelte"),  section: "Setup" },
+    system:    { title: "System",    icon: "system",    load: () => import("./pages/System.svelte"),    section: "Setup" },
   };
+
+  // Resolved page components, so revisiting a tab is synchronous and never
+  // flashes an empty frame the way re-awaiting the import would.
+  const pageCache = new Map<string, any>();
+  let page = $state<{ key: string; comp: any } | null>(null);
   const SECTIONS = ["Run", "Brain", "Insight", "Setup"] as const;
 
   let route = $state("dashboard");
+
+  $effect(() => {
+    const key = route;
+    const hit = pageCache.get(key);
+    if (hit) {
+      page = { key, comp: hit };
+      return;
+    }
+    routes[key].load().then((m) => {
+      pageCache.set(key, m.default);
+      // Ignore a load that finished after the user already moved on.
+      if (route === key) page = { key, comp: m.default };
+    });
+  });
   let paletteOpen = $state(false);
   let desktop = $state(false);
 
@@ -156,7 +169,7 @@
       }
     };
     pollHealth();
-    const healthTimer = setInterval(pollHealth, 15000);
+    const stopHealthPoll = visiblePoll(pollHealth, 15000);
 
     // Asking an account who is waiting is an IPC round trip to the bot, slow
     // enough that fetching it when the Chats tab opens meant a skeleton every
@@ -177,7 +190,7 @@
     window.addEventListener("keydown", onKey);
 
     return () => {
-      clearInterval(healthTimer);
+      stopHealthPoll();
       stopChatPrefetch();
       window.removeEventListener("resize", onResize);
       window.removeEventListener("hashchange", parseHash);
@@ -274,7 +287,7 @@
 <div class="flex h-screen overflow-hidden">
   <!-- ── Sidebar ─────────────────────────────────────────────────────── -->
   <aside
-    class="z-20 flex shrink-0 flex-col border-r border-edge bg-surface/70 backdrop-blur-xl
+    class="z-20 flex shrink-0 flex-col border-r border-edge bg-surface/70
            {rail ? 'w-[52px]' : 'w-[212px]'}"
     style="transition: width 0.42s var(--spring)"
   >
@@ -394,7 +407,7 @@
          not part of this row, so anything laid out here runs straight underneath
          them. The padding keeps that corner clear. -->
     <header
-      class="pywebview-drag-region flex h-9 shrink-0 items-center gap-2 border-b border-edge bg-surface/70 px-4 backdrop-blur-xl
+      class="pywebview-drag-region flex h-9 shrink-0 items-center gap-2 border-b border-edge bg-surface/70 px-4
         {desktop ? 'pr-[104px]' : ''}"
     >
       <h1 class="text-[13px] font-medium text-ink">{routes[route]?.title ?? ""}</h1>
@@ -412,7 +425,10 @@
             <!-- Whatever is wrong on THIS page, named precisely. The sidebar
                  dot points at the tab; this points at the control. -->
             <PageIssues {route} />
-            <svelte:component this={routes[route].component} />
+            {#if page && page.key === route}
+              {@const Page = page.comp}
+              <Page />
+            {/if}
           </div>
         {/key}
       {/if}

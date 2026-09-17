@@ -218,7 +218,10 @@ export function startChatPrefetch(intervalMs = 60000): () => void {
   let timer: number | null = null;
 
   const pass = async () => {
-    if (stopped) return;
+    // Each pass costs every running bot a channel sweep over multi-second IPC.
+    // Doing that for a window nobody is looking at is pure waste, and this ran
+    // from app start on every page.
+    if (stopped || document.hidden) return;
     let accounts: ChatAccount[];
     try {
       accounts = await loadChatAccounts();
@@ -229,7 +232,9 @@ export function startChatPrefetch(intervalMs = 60000): () => void {
     // the queue up for everyone behind it.
     const live = accounts.filter((a) => !a.state || a.state === "running");
     for (const a of live) {
-      if (stopped) return;
+      // Re-checked each iteration: a pass is seconds long, so the window can
+      // be hidden partway through one.
+      if (stopped || document.hidden) return;
       await refreshChats(a.id, { maxAge: intervalMs / 2 });
       await new Promise((r) => setTimeout(r, 1200));
     }
@@ -237,8 +242,15 @@ export function startChatPrefetch(intervalMs = 60000): () => void {
 
   pass();
   timer = window.setInterval(pass, intervalMs);
+  // Catch up as soon as the window comes back, so opening Chats after a while
+  // away still finds warm data rather than a stale interval's worth.
+  const onVisibility = () => {
+    if (!document.hidden) pass();
+  };
+  document.addEventListener("visibilitychange", onVisibility);
   return () => {
     stopped = true;
     if (timer) clearInterval(timer);
+    document.removeEventListener("visibilitychange", onVisibility);
   };
 }

@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { api } from "../lib/api";
+  import { subscribeLogs } from "../lib/logsocket";
+  import { visiblePoll } from "../lib/poll";
   import { toast, health, dashOrder } from "../lib/stores";
   import type { ChildState } from "../lib/stores";
   import Card from "../lib/components/Card.svelte";
@@ -26,26 +28,29 @@
   let loading = $state(true);
   let loadError = $state("");
   let stats = $state<any>(null);
-  let ws: WebSocket | null = null;
 
   onMount(() => {
     load();
-    connect();
-    const t = setInterval(load, 5000);
+    // The socket only replays a backlog to whoever opens it, and it is shared
+    // now, so seed the panel once here rather than refetching it every poll.
+    fillLogs();
+    const stopPoll = visiblePoll(load, 5000);
+    const offLogs = subscribeLogs((entry) => {
+      if (entry.text) logs = [...logs.slice(-39), entry];
+    });
     return () => {
-      clearInterval(t);
-      ws?.close();
+      stopPoll();
+      offLogs();
     };
   });
 
   async function load() {
     try {
-      const [s, o, l, a] = await Promise.all([
-        api.status(), api.statsOverview(), api.logs(40), api.accounts(),
+      const [s, o, a] = await Promise.all([
+        api.status(), api.statsOverview(), api.accounts(),
       ]);
       children = s.children || [];
       stats = o;
-      logs = l.lines || [];
       accounts = a.accounts || [];
     } catch (e: any) {
       loadError = e?.message || "Could not load";
@@ -54,13 +59,12 @@
     }
   }
 
-  function connect() {
-    const proto = location.protocol === "https:" ? "wss" : "ws";
-    ws = new WebSocket(`${proto}://${location.host}/api/ws`);
-    ws.onmessage = (e) => {
-      const entry = JSON.parse(e.data);
-      if (entry.text) logs = [...logs.slice(-39), entry];
-    };
+  async function fillLogs() {
+    try {
+      logs = (await api.logs(40)).lines || [];
+    } catch {
+      /* the live stream still fills this in; an empty panel is not an error */
+    }
   }
 
   const tone = (s: string) =>
@@ -91,14 +95,32 @@
   const today = $derived(stats?.windows?.today ?? 0);
   const week = $derived(stats?.windows?.["7d"] ?? 0);
 
+  /**
+   * Hand the charts the SAME array back when the numbers have not moved.
+   *
+   * These rebuild on every poll, so a new identity landed on Chart's `data`
+   * prop every 5 seconds forever, rebuilding its <path d> and rewriting every
+   * <rect> over values that were usually unchanged.
+   */
+  function stable(prev: number[], next: number[]): number[] {
+    if (prev.length === next.length && prev.every((v, i) => v === next[i])) return prev;
+    return next;
+  }
+  let dailyPrev: number[] = [];
+  let hourlyPrev: number[] = [];
+
   /** 14 days of replies, gaps filled so a quiet day reads as zero. */
   const daily = $derived.by(() => {
     const series: { day: number; count: number }[] = stats?.series ?? [];
     const today0 = Math.floor(Date.now() / 86400000);
     const counts = new Map(series.map((s) => [s.day, s.count]));
-    return Array.from({ length: 14 }, (_, i) => counts.get(today0 - 13 + i) ?? 0);
+    const next = Array.from({ length: 14 }, (_, i) => counts.get(today0 - 13 + i) ?? 0);
+    return (dailyPrev = stable(dailyPrev, next));
   });
-  const hourly = $derived((stats?.hourly ?? []).map((h: any) => h.count));
+  const hourly = $derived.by(() => {
+    const next = (stats?.hourly ?? []).map((h: any) => h.count);
+    return (hourlyPrev = stable(hourlyPrev, next));
+  });
   const top = $derived(stats?.top ?? []);
 
   const dayLabels = $derived.by(() => {

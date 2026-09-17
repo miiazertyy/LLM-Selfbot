@@ -6,11 +6,6 @@
  * already have: shipping four more families would add megabytes to the build
  * for something most people set once.
  */
-import mikhakRegular from "../assets/fonts/Mikhak-Regular.ttf";
-import mikhakMedium from "../assets/fonts/Mikhak-Medium.ttf";
-import mikhakSemiBold from "../assets/fonts/Mikhak-SemiBold.ttf";
-import mikhakBold from "../assets/fonts/Mikhak-Bold.ttf";
-
 export type FontChoice = {
   id: string;
   name: string;
@@ -45,37 +40,11 @@ export const FONTS: FontChoice[] = [
   },
 ];
 
-/**
- * The bundled family, declared once at module load.
- *
- * A stylesheet cannot reference a bundled asset by name, so the URLs come from
- * the bundler and the rule is built here.
- */
-let injected = false;
-
-function injectMikhak() {
-  if (injected || typeof document === "undefined") return;
-  injected = true;
-  const faces: [string, number][] = [
-    [mikhakRegular, 400],
-    [mikhakMedium, 500],
-    [mikhakSemiBold, 600],
-    [mikhakBold, 700],
-  ];
-  const css = faces
-    .map(
-      ([url, weight]) => `@font-face{font-family:"Mikhak";src:url(${url}) format("truetype");`
-        + `font-weight:${weight};font-style:normal;font-display:swap;}`,
-    )
-    .join("");
-  const style = document.createElement("style");
-  style.id = "mikhak-faces";
-  style.textContent = css;
-  document.head.appendChild(style);
-}
+/* The @font-face rules for the bundled family live in app.css, so the browser
+   finds them while parsing the stylesheet instead of waiting for this module
+   to run. Nothing to inject here any more. */
 
 export function applyFont(id: string) {
-  injectMikhak();
   const choice = FONTS.find((f) => f.id === id) ?? FONTS[0];
   document.documentElement.style.setProperty("--font-sans", choice.stack);
   document.documentElement.dataset.font = choice.id;

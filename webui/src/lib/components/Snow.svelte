@@ -120,7 +120,7 @@
     buf = document.createElement("canvas");
     buf.width = cols;
     buf.height = rows;
-    bctx = buf.getContext("2d", { willReadFrequently: true });
+    bctx = buf.getContext("2d");
     img = bctx ? bctx.createImageData(cols, rows) : null;
     px = img ? img.data : null;
 
@@ -305,6 +305,15 @@
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(buf!, 0, 0, cols, rows, 0, 0, cols * CELL, rows * CELL);
 
+    // Nothing left on screen. Park the loop rather than clearing and blitting
+    // an empty buffer sixty times a second for the rest of the session: this
+    // frame already blitted the empty buffer, so the canvas is correct as it
+    // stands. onMove restarts it the moment the cursor sheds anything again.
+    if (live === 0) {
+      raf = 0;
+      return;
+    }
+
     raf = requestAnimationFrame(tick);
   }
 
@@ -316,6 +325,11 @@
     mouse.x = mouse.px = x;
     mouse.y = mouse.py = y;
     mouse.inside = true;
+    // The loop parks itself once the screen empties. Movement is the only
+    // source of new flakes, so this is the one place that needs to revive it,
+    // and only once the travel is worth a flake: a parked loop leaves
+    // mouse.moved accumulating, so a jiggle under the threshold stays parked.
+    if (!raf && enabled && mouse.moved >= MOVE_MIN) start();
   }
 
   function onLeave() {

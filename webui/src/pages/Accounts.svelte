@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { api } from "../lib/api";
+  import { visiblePoll } from "../lib/poll";
   import { toast } from "../lib/stores";
   import Card from "../lib/components/Card.svelte";
   import Icon from "../lib/components/Icon.svelte";
@@ -123,8 +124,7 @@
 
   onMount(() => {
     load();
-    const t = setInterval(loadRuntime, 5000);
-    return () => clearInterval(t);
+    return visiblePoll(loadRuntime, 5000);
   });
 
   async function load() {

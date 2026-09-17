@@ -17,15 +17,25 @@ export type Hit = {
   action?: () => void;  // optional: run instead of navigating
 };
 
-type Doc = { route: string; title: string; subtitle?: string; group: string; hay: string };
+type Doc = { route: string; title: string; subtitle?: string; group: string; hay: string; titleHay: string };
 
 let docs: Doc[] = [];
 let built = 0;
 
 const norm = (s: unknown) => String(s ?? "").toLowerCase();
 
-function add(list: Doc[], d: Omit<Doc, "hay">, ...extra: unknown[]) {
-  list.push({ ...d, hay: norm([d.title, d.subtitle, d.group, ...extra].join(" ")) });
+/* Regex-escaping for user-typed query words, shared by search() and
+   highlight() so neither rebuilds the pattern per call. */
+const ESCAPE_RE = /[.*+?^${}()|[\]\\]/g;
+const ESCAPE_TO = "\\$&";
+const BOUND_PREFIX = "\\b";
+
+function add(list: Doc[], d: Omit<Doc, "hay" | "titleHay">, ...extra: unknown[]) {
+  list.push({
+    ...d,
+    hay: norm([d.title, d.subtitle, d.group, ...extra].join(" ")),
+    titleHay: norm(d.title),
+  });
 }
 
 /** Pull everything searchable. Cheap enough to refresh whenever the palette opens. */
@@ -111,11 +121,20 @@ export function search(query: string, limit = 40): Hit[] {
       .map((d) => ({ ...d, score: 0 }));
   }
 
+  // Compiled once for the whole sweep. This built a RegExp per document per
+  // word, and the index holds every settings field, secret, account, memory
+  // user, picture and 250 log lines - so one character cost hundreds of
+  // compilations.
+  const bounds = words.map(
+    (w) => new RegExp(BOUND_PREFIX + w.replace(ESCAPE_RE, ESCAPE_TO)),
+  );
+
   const hits: Hit[] = [];
   for (const d of docs) {
     let score = 0;
     let all = true;
-    for (const w of words) {
+    for (let wi = 0; wi < words.length; wi++) {
+      const w = words[wi];
       const at = d.hay.indexOf(w);
       if (at === -1) {
         all = false;
@@ -123,8 +142,8 @@ export function search(query: string, limit = 40): Hit[] {
       }
       // Earlier and word-boundary matches rank higher; title beats body.
       score += 100 - Math.min(60, at);
-      if (norm(d.title).includes(w)) score += 60;
-      if (new RegExp(`\\b${w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`).test(d.hay)) score += 25;
+      if (d.titleHay.includes(w)) score += 60;
+      if (bounds[wi].test(d.hay)) score += 25;
     }
     if (!all) continue;
     if (d.group === "Pages") score += 40;      // navigating is the common case
@@ -140,6 +159,6 @@ export function highlight(text: string, query: string): string {
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c] as string);
   const words = norm(query).split(/\s+/).filter(Boolean);
   if (!words.length) return esc;
-  const pattern = words.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+  const pattern = words.map((w) => w.replace(ESCAPE_RE, ESCAPE_TO)).join("|");
   return esc.replace(new RegExp(`(${pattern})`, "gi"), "<mark>$1</mark>");
 }

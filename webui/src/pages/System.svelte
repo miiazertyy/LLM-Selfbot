@@ -10,6 +10,7 @@
    */
   import { onMount } from "svelte";
   import { api } from "../lib/api";
+  import { subscribeLogs } from "../lib/logsocket";
   import { toast, settingsSection } from "../lib/stores";
   import { resource } from "../lib/resource";
   import { pickFolder, pickFile, openExternal } from "../lib/window";
@@ -112,15 +113,11 @@
     doctor.refresh({ maxAge: 60000 });
     // The installers report progress over the same log stream the rest of the
     // app uses, so the page can show what is happening instead of a spinner.
-    const proto = location.protocol === "https:" ? "wss" : "ws";
-    const ws = new WebSocket(`${proto}://${location.host}/api/ws`);
-    ws.onmessage = (e) => {
-      const entry = JSON.parse(e.data);
+    return subscribeLogs((entry) => {
       if (entry.source === "ffmpeg-install" || entry.source === "snapchat-install") {
-        installLog = [...installLog.slice(-40), entry.text];
+        installLog = [...installLog.slice(-40), entry.text ?? ""];
       }
-    };
-    return () => ws.close();
+    });
   });
 
   function load() {

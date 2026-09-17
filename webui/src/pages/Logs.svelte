@@ -1,19 +1,28 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { api } from "../lib/api";
+  import { subscribeLogs } from "../lib/logsocket";
   import { toast } from "../lib/stores";
   import { saveTextFile } from "../lib/window";
   import { highlight } from "../lib/search";
   import Button from "../lib/components/Button.svelte";
   import Icon from "../lib/components/Icon.svelte";
 
-  type Line = { time: string; source: string; text: string; level: string };
+  type Line = { time: string; source: string; text: string; level: string; id?: number };
+
+  /** Monotonic row id. Log entries carry nothing unique, and a keyed {#each}
+      lets Svelte move rows as the window slides instead of rewriting them. */
+  let seq = 0;
+
+  /** How many lines the live view keeps. Matches the initial api.logs() fetch. */
+  const MAX_LINES = 500;
 
   let lines = $state<Line[]>([]);
   let query = $state("");
+  /** `query` drives the input; `q` drives the work, one beat behind. */
+  let q = $state("");
   let paused = $state(false);
   let wrap = $state(true);
-  let ws: WebSocket | null = null;
   let box: HTMLDivElement | null = $state(null);
   let stick = $state(true);
 
@@ -37,8 +46,16 @@
     { id: "system", label: "System", cls: "text-accent" },
   ];
 
+  // One beat behind the input. Each keystroke re-filters the whole window and
+  // re-highlights every visible row, which made typing stutter on a busy log.
+  $effect(() => {
+    const v = query;
+    const t = setTimeout(() => { q = v; }, 120);
+    return () => clearTimeout(t);
+  });
+
   const shown = $derived.by(() => {
-    const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+    const words = q.toLowerCase().split(/\s+/).filter(Boolean);
     return lines.filter((l) => {
       if (hidden.has(l.source)) return false;
       if (levels.size && !levels.has(l.level)) return false;
@@ -58,8 +75,13 @@
 
   onMount(() => {
     load();
-    connect();
-    return () => ws?.close();
+    return subscribeLogs((entry) => {
+      if (!entry.text) return;
+      remember(entry as Line);         // keep the picker complete even if paused
+      if (paused) return;
+      push(entry as Line);
+      if (stick) queueMicrotask(() => box?.scrollTo({ top: box.scrollHeight }));
+    });
   });
 
   function remember(entry: Line) {
@@ -69,24 +91,24 @@
   async function load() {
     try {
       const data = await api.logs(500);
-      lines = data.lines || [];
+      lines = (data.lines || []).map((l: Line) => ({ ...l, id: seq++ }));
       for (const l of lines) remember(l);
     } catch {
       /* the stream below will fill it in */
     }
   }
 
-  function connect() {
-    const proto = location.protocol === "https:" ? "wss" : "ws";
-    ws = new WebSocket(`${proto}://${location.host}/api/ws`);
-    ws.onmessage = (e) => {
-      const entry = JSON.parse(e.data);
-      if (!entry.text) return;
-      remember(entry);                 // keep the picker complete even if paused
-      if (paused) return;
-      lines = [...lines.slice(-499), entry];
-      if (stick) queueMicrotask(() => box?.scrollTo({ top: box.scrollHeight }));
-    };
+  /**
+   * Append one line, dropping the oldest once the window is full.
+   *
+   * This used to be `lines = [...lines.slice(-499), entry]`, which allocated a
+   * fresh 500-element array for every line that arrived and invalidated all
+   * three deriveds below, each of which walks the whole window.
+   */
+  function push(entry: Line) {
+    entry.id = seq++;
+    if (lines.length >= MAX_LINES) lines.splice(0, lines.length - MAX_LINES + 1);
+    lines.push(entry);
   }
 
   function toggleSource(s: string) {
@@ -258,13 +280,15 @@
       onscroll={onScroll}
       class="selectable h-[56vh] overflow-y-auto bg-black/30 px-2 py-2 font-mono text-[11px] leading-[1.6]"
     >
-      {#each shown as l}
+      {#each shown as l (l.id)}
         <div class="group flex gap-2 rounded px-1.5 py-[1px] hover:bg-white/[0.05]">
           <span class="mt-[6px] h-1.5 w-1.5 shrink-0 rounded-full {dotClass(l.level)}"></span>
           <span class="shrink-0 text-faint">{l.time}</span>
-          <span class="w-24 shrink-0 truncate text-accent/80">{@html highlight(l.source, query)}</span>
+          <span class="w-24 shrink-0 truncate text-accent/80">
+            {#if q}{@html highlight(l.source, q)}{:else}{l.source}{/if}
+          </span>
           <span class="min-w-0 flex-1 {wrap ? 'break-words' : 'truncate'} {textClass(l.level)}">
-            {@html highlight(l.text, query)}
+            {#if q}{@html highlight(l.text, q)}{:else}{l.text}{/if}
           </span>
         </div>
       {:else}

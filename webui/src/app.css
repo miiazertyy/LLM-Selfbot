@@ -1,5 +1,36 @@
 @import "tailwindcss";
 
+/* ── Bundled family ────────────────────────────────────────────────────────
+   Declared here rather than injected from JS at runtime. As a <style> built
+   in applyFont(), the font could not start downloading until the whole bundle
+   had been fetched, parsed, executed and mounted; in the stylesheet the
+   browser finds it while parsing the CSS. Vite rewrites these URLs to the
+   hashed build filenames.
+
+   woff2 rather than ttf (roughly 46% of the size), and no 700: nothing in the
+   app uses a bold weight. */
+@font-face {
+  font-family: "Mikhak";
+  src: url("./assets/fonts/Mikhak-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Mikhak";
+  src: url("./assets/fonts/Mikhak-Medium.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Mikhak";
+  src: url("./assets/fonts/Mikhak-SemiBold.woff2") format("woff2");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
 @theme {
   /* Depth ramp, every surface sits on exactly one of these. */
   --color-bg: #0a0a11;
@@ -90,6 +121,11 @@ textarea {
     border-color 0.18s var(--swift),
     color 0.18s var(--swift),
     box-shadow 0.24s var(--swift);
+}
+/* will-change only while a press is actually in flight. On the bare class it
+   promoted all 31 .jelly elements to their own compositor layer permanently. */
+.jelly:hover:not(:disabled),
+.jelly:active:not(:disabled) {
   will-change: transform;
 }
 .jelly:active:not(:disabled) {
@@ -139,7 +175,6 @@ textarea {
 }
 .page-enter {
   animation: page-in 0.3s var(--swift) both;
-  will-change: transform, opacity;
   backface-visibility: hidden;
 }
 

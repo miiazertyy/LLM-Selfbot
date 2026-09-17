@@ -67,6 +67,15 @@
   const changed = $derived(Object.keys(dirty).length);
   const searching = $derived(query.trim().length > 0);
 
+  /** The field scan runs one beat behind the input: it walks every setting,
+      lowercasing label, key and description for each one. */
+  let queryDebounced = $state("");
+  $effect(() => {
+    const v = query;
+    const t = setTimeout(() => { queryDebounced = v; }, 120);
+    return () => clearTimeout(t);
+  });
+
   /** Every field, by key, so the tree can pull them out in its own order. */
   const byKey = $derived.by(() => {
     const out: Record<string, FieldDef> = {};
@@ -101,7 +110,8 @@
 
   const results = $derived.by(() => {
     if (!searching) return [];
-    const q = query.trim().toLowerCase();
+    const q = queryDebounced.trim().toLowerCase();
+    if (!q) return [];
     return fields
       .filter(
         (f) =>

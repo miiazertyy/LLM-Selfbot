@@ -31,8 +31,18 @@
     }
   });
 
+  // Debounced: search() sweeps the whole index - every settings field, secret,
+  // account, memory user, picture and 250 log lines - and this ran on every
+  // keystroke.
+  let qDebounced = $state("");
   $effect(() => {
-    hits = search(q);
+    const v = q;
+    const t = setTimeout(() => { qDebounced = v; }, 120);
+    return () => clearTimeout(t);
+  });
+
+  $effect(() => {
+    hits = search(qDebounced);
     sel = 0;
   });
 

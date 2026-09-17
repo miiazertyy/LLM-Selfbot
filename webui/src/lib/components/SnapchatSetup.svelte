@@ -12,6 +12,8 @@
    */
   import { onMount } from "svelte";
   import { api } from "../api";
+  import { subscribeLogs } from "../logsocket";
+  import { visiblePoll } from "../poll";
   import { toast } from "../stores";
   import Button from "./Button.svelte";
   import Badge from "./Badge.svelte";
@@ -28,15 +30,18 @@
 
   let status = $state<SnapStatus | null>(null);
   let logs = $state<{ time: string; text: string }[]>([]);
-  let ws: WebSocket | null = null;
 
   onMount(() => {
     load();
-    const t = setInterval(load, 3000);
-    connect();
+    // /api/snapchat/status shells out to node to locate Chrome, so polling it
+    // behind a hidden window kept the backend busy for a view nobody had open.
+    const stopPoll = visiblePoll(load, 3000);
+    const offLogs = subscribeLogs((entry) => {
+      if (entry.source === "snapchat-install") logs = [...logs.slice(-99), entry as any];
+    });
     return () => {
-      clearInterval(t);
-      ws?.close();
+      stopPoll();
+      offLogs();
     };
   });
 
@@ -46,15 +51,6 @@
     } catch {
       /* the panel still works without it */
     }
-  }
-
-  function connect() {
-    const proto = location.protocol === "https:" ? "wss" : "ws";
-    ws = new WebSocket(`${proto}://${location.host}/api/ws`);
-    ws.onmessage = (e) => {
-      const entry = JSON.parse(e.data);
-      if (entry.source === "snapchat-install") logs = [...logs.slice(-99), entry];
-    };
   }
 
   async function install() {

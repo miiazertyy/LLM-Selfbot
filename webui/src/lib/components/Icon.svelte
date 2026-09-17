@@ -1,18 +1,7 @@
-<script lang="ts">
-  /**
-   * One stroke-based icon set, nothing in the chrome is an emoji.
-   *
-   * Paths sit on the 24px grid using whole or half units. Rendering at 18px
-   * (a clean 0.75 scale) keeps strokes off half-pixels, and non-scaling-stroke
-   * pins stroke width to device pixels so nothing looks furry or folded when
-   * the sidebar collapses to the icon rail.
-   */
-  let { name, size = 18, class: cls = "" } = $props<{
-    name: string;
-    size?: number;
-    class?: string;
-  }>();
-
+<script module lang="ts">
+  /* Allocated once for the whole app. These were instance-level, so the
+     ~60-entry path table was rebuilt for every <Icon> mounted, and
+     {#key route} destroys and recreates every icon on each navigation. */
   const paths: Record<string, string> = {
     // ── Nav ──────────────────────────────────────────────────────────────
     dashboard: "M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z",
@@ -80,9 +69,26 @@
     github:
       "M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.6-1.4-1.4-1.8-1.4-1.8-1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1.1 1.9 2.8 1.3 3.5 1 .1-.8.4-1.3.8-1.6-2.7-.3-5.5-1.3-5.5-6 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17.2 4.7 18.2 5 18.2 5c.6 1.7.2 2.9.1 3.2a4.6 4.6 0 0 1 1.2 3.2c0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3Z",
   };
+  const FILLED = new Set(["github"]);
+</script>
+
+<script lang="ts">
+  /**
+   * One stroke-based icon set, nothing in the chrome is an emoji.
+   *
+   * Paths sit on the 24px grid using whole or half units. Rendering at 18px
+   * (a clean 0.75 scale) keeps strokes off half-pixels, and non-scaling-stroke
+   * pins stroke width to device pixels so nothing looks furry or folded when
+   * the sidebar collapses to the icon rail.
+   */
+  let { name, size = 18, class: cls = "" } = $props<{
+    name: string;
+    size?: number;
+    class?: string;
+  }>();
+
 
   /** Marks that are a solid shape rather than a line drawing. */
-  const FILLED = new Set(["github"]);
   const solid = $derived(FILLED.has(name));
 </script>
 

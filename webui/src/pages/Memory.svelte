@@ -44,6 +44,14 @@
   let detail = $state<MemDetail | null>(null);
   let loadError = $derived($people.error);
   let query = $state("");
+  /** Drives the filter one beat behind the input, so typing does not re-scan
+      every user and every fact on each keystroke. */
+  let queryDebounced = $state("");
+  $effect(() => {
+    const v = query;
+    const t = setTimeout(() => { queryDebounced = v; }, 120);
+    return () => clearTimeout(t);
+  });
   let newKey = $state("");
   let newValue = $state("");
   let persona = $state("");
@@ -54,7 +62,7 @@
   const current = $derived(users.find((u) => u.user_id === selected) ?? null);
 
   const shown = $derived.by(() => {
-    const q = query.trim().toLowerCase();
+    const q = queryDebounced.trim().toLowerCase();
     if (!q) return users;
     return users.filter(
       (u) =>
