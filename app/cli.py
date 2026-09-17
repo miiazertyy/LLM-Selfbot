@@ -46,7 +46,7 @@ def is_child() -> bool:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    ap = argparse.ArgumentParser(prog="selfbot", description="LLMSelfbot")
+    ap = argparse.ArgumentParser(prog="LLMSelfbot", description="LLMSelfbot")
     ap.add_argument("--role", choices=list(ROLES), default=None,
                     help="run a single worker instead of the supervisor")
     ap.add_argument("--account", type=int, default=None,

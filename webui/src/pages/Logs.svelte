@@ -138,7 +138,7 @@
     const when = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
     const text = shown.map((l) => `${l.time} [${l.source}] ${l.text}`).join("\n");
     try {
-      const path = await saveTextFile(`selfbot-logs-${when}.txt`, text);
+      const path = await saveTextFile(`LLMSelfbot-logs-${when}.txt`, text);
       if (path) toast(`Saved ${shown.length} line${shown.length === 1 ? "" : "s"}.`, "ok");
     } catch (e: any) {
       toast(e.message || "Could not save the log", "err");

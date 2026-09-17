@@ -289,7 +289,7 @@ pyinstaller packaging/selfbot.spec --noconfirm
 | `selfbot.spec` | `dist/LLMSelfbot/`: the exe, a console twin for reading errors, and `_internal/`. Starts instantly. What the installer wraps |
 | `selfbot-onefile.spec` | one `LLMSelfbot.exe` with nothing beside it |
 | `selfbot-headless.spec` | `dist/LLMSelfbot/`, no window, for Linux, ARM and macOS |
-| `selfbot-headless-onefile.spec` | one `selfbot` binary, same platforms |
+| `selfbot-headless-onefile.spec` | one `LLMSelfbot` binary, same platforms |
 
 All four take their contents from `packaging/specparts.py`, so a hidden import
 added for one platform is added for every platform. They used to have separate
