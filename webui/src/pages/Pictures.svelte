@@ -36,6 +36,9 @@
   let confirming = $state<Pic | null>(null);
   /** Names ticked for bulk delete. Empty means the page is in its normal mode. */
   let selected = $state<Set<string>>(new Set());
+  /** Right-click menu: which picture, and where to put it. */
+  let menu = $state<{ pic: Pic; x: number; y: number } | null>(null);
+  let copying = $state("");
   let confirmingBulk = $state(false);
   let deleting = $state(false);
   let view = $state<Pic | null>(null);
@@ -150,6 +153,69 @@
     } catch (e: any) {
       toast(e.message, "err");
     }
+  }
+
+  /**
+   * Put the actual image on the clipboard, not a link to it.
+   *
+   * The clipboard wants a PNG: Chromium refuses image/jpeg outright, so
+   * anything that is not already a PNG is redrawn through a canvas first.
+   * ClipboardItem also has to be constructed synchronously with a promise
+   * inside it, rather than awaited first, or Safari treats the write as having
+   * lost the user gesture that allowed it.
+   */
+  async function copyImage(p: Pic) {
+    menu = null;
+    copying = p.name;
+    try {
+      const blob = await fetch(api.pictureUrl(p.name)).then((r) => r.blob());
+      const png = blob.type === "image/png" ? blob : await toPng(blob);
+      await navigator.clipboard.write([new ClipboardItem({ "image/png": png })]);
+      toast("Copied the image.", "ok");
+    } catch (e: any) {
+      // Firefox has no ClipboardItem image support at all, so say what to do
+      // instead of reporting a name nobody can act on.
+      toast(
+        e?.name === "ReferenceError" || e?.name === "TypeError"
+          ? "This browser will not let a page copy an image. Right click the picture itself and use Copy image."
+          : e?.message || "Could not copy it",
+        "err",
+      );
+    }
+    copying = "";
+  }
+
+  function toPng(blob: Blob): Promise<Blob> {
+    return new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(blob);
+      const img = new Image();
+      img.onload = () => {
+        const c = document.createElement("canvas");
+        c.width = img.naturalWidth;
+        c.height = img.naturalHeight;
+        const ctx = c.getContext("2d");
+        if (!ctx) return reject(new Error("no canvas context"));
+        ctx.drawImage(img, 0, 0);
+        URL.revokeObjectURL(url);
+        c.toBlob((b) => (b ? resolve(b) : reject(new Error("could not encode"))), "image/png");
+      };
+      img.onerror = () => {
+        URL.revokeObjectURL(url);
+        reject(new Error("could not read the picture"));
+      };
+      img.src = url;
+    });
+  }
+
+  /** Keep the menu on screen when the click is near an edge. */
+  function openMenu(e: MouseEvent, p: Pic) {
+    e.preventDefault();
+    const W = 190, H = 96;
+    menu = {
+      pic: p,
+      x: Math.min(e.clientX, window.innerWidth - W - 8),
+      y: Math.min(e.clientY, window.innerHeight - H - 8),
+    };
   }
 
   function toggleSelect(name: string) {
@@ -325,7 +391,7 @@
   <div class="grid grid-cols-1 gap-4 md:grid-cols-2 2xl:grid-cols-3">
     {#each pics as p (p.name)}
       <Card pad={false}>
-        <div class="relative">
+        <div class="relative" oncontextmenu={(e) => openMenu(e, p)}>
           <!-- Sits over the thumbnail so ticking one never opens the viewer. -->
           <label
             class="absolute left-2 top-2 z-10 flex cursor-pointer items-center gap-1.5 rounded-lg
@@ -458,6 +524,50 @@
     {/if}
   {/if}
 </Modal>
+
+<!-- ── Right click menu ─────────────────────────────────────────────────── -->
+{#if menu}
+  <!-- Full-screen catcher so any click, scroll or second right-click closes it,
+       the way a context menu is expected to behave. -->
+  <div
+    class="fixed inset-0 z-[70]"
+    role="presentation"
+    onclick={() => (menu = null)}
+    oncontextmenu={(e) => { e.preventDefault(); menu = null; }}
+    onwheel={() => (menu = null)}
+  >
+    <div
+      class="glass floating pop absolute w-[190px] overflow-hidden rounded-xl p-1 shadow-2xl"
+      style="left: {menu.x}px; top: {menu.y}px"
+      role="menu"
+      onclick={(e) => e.stopPropagation()}
+    >
+      <button
+        role="menuitem"
+        class="jelly flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] text-ink hover:bg-white/[0.06]"
+        onclick={() => copyImage(menu.pic)}
+      >
+        <Icon name="sparkle" size={13} /> Copy image
+      </button>
+      <a
+        role="menuitem"
+        href={api.pictureUrl(menu.pic.name)}
+        download={menu.pic.name}
+        class="jelly flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] text-ink hover:bg-white/[0.06]"
+        onclick={() => (menu = null)}
+      >
+        <Icon name="upload" size={13} /> Save as…
+      </a>
+      <button
+        role="menuitem"
+        class="jelly flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] text-bad hover:bg-bad/10"
+        onclick={() => { const pic = menu.pic; menu = null; confirming = pic; }}
+      >
+        <Icon name="trash" size={13} /> Delete
+      </button>
+    </div>
+  </div>
+{/if}
 
 <!-- ── Bulk delete confirmation ─────────────────────────────────────────── -->
 <Modal

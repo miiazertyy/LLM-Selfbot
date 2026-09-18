@@ -621,15 +621,20 @@
         <label for="tok" class="mb-1 block text-xs font-medium text-muted">
           Token {#if !adding}<span class="text-faint">, leave blank to keep the current one</span>{/if}
         </label>
-        <input
-          id="tok"
-          type="password"
-          bind:value={fToken}
-          autocomplete="off"
-          spellcheck="false"
-          placeholder={adding ? "Paste the account token" : "••••••••  (unchanged)"}
-          class="field font-mono"
-        />
+        <div class="relative">
+          <span class="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-faint">
+            <Icon name="key" size={14} />
+          </span>
+          <input
+            id="tok"
+            type="password"
+            bind:value={fToken}
+            autocomplete="off"
+            spellcheck="false"
+            placeholder={adding ? "Account token" : "••••••••  (unchanged)"}
+            class="field w-full pl-8 font-mono"
+          />
+        </div>
         <p class="mt-1 text-[11px] text-faint">
           Stored in config/.env on this machine. It is never sent back to the
           browser, so it can be replaced but not read.
@@ -643,15 +648,26 @@
     {:else}
       <div>
         <label for="usr" class="mb-1 block text-xs font-medium text-muted">Username</label>
-        <input id="usr" type="text" bind:value={fUser} spellcheck="false" autocomplete="off"
-               class="field" />
+        <div class="relative">
+          <span class="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-faint">
+            <Icon name="accounts" size={14} />
+          </span>
+          <input id="usr" type="text" bind:value={fUser} spellcheck="false" autocomplete="off"
+                 placeholder="Username" class="field w-full pl-8" />
+        </div>
       </div>
       <div>
         <label for="pwd" class="mb-1 block text-xs font-medium text-muted">
           Password {#if !adding}<span class="text-faint">, leave blank to keep the current one</span>{/if}
         </label>
-        <input id="pwd" type="password" bind:value={fPass} autocomplete="off"
-               placeholder={adding ? "" : "••••••••  (unchanged)"} class="field" />
+        <div class="relative">
+          <span class="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-faint">
+            <Icon name="key" size={14} />
+          </span>
+          <input id="pwd" type="password" bind:value={fPass} autocomplete="off"
+                 placeholder={adding ? "Password" : "••••••••  (unchanged)"}
+                 class="field w-full pl-8" />
+        </div>
       </div>
     {/if}
   </div>

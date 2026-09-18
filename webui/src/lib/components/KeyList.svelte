@@ -170,13 +170,21 @@
     </div>
 
     <div class="mt-3 flex flex-col gap-2 sm:flex-row">
-      <input
-        bind:value={adding}
-        placeholder="Paste another {label.toLowerCase()}"
-        spellcheck="false"
-        autocomplete="off"
-        class="field min-w-0 flex-1 font-mono text-[12px]"
-      />
+      <!-- The icon says what kind of thing the box wants, so the placeholder
+           does not have to narrate the action as well: "Groq API key", not
+           "Paste another groq api key". -->
+      <label class="relative min-w-0 flex-1">
+        <span class="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-faint">
+          <Icon name="key" size={14} />
+        </span>
+        <input
+          bind:value={adding}
+          placeholder={label}
+          spellcheck="false"
+          autocomplete="off"
+          class="field w-full pl-8 font-mono text-[12px]"
+        />
+      </label>
       <Button size="sm" onclick={add} disabled={!adding.trim() || busy}>Add</Button>
     </div>
     {#if extras.length}
@@ -184,13 +192,18 @@
         {#each extras as e (e.prefix)}
           <label class="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-3">
             <span class="w-20 shrink-0 text-[11px] text-faint">{e.label}</span>
-            <input
-              bind:value={addingExtras[e.prefix]}
-              placeholder={e.placeholder || e.label.toLowerCase()}
-              spellcheck="false"
-              autocomplete="off"
-              class="field min-w-0 flex-1 font-mono text-[11px]"
-            />
+            <span class="relative min-w-0 flex-1">
+              <span class="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-faint">
+                <Icon name={e.secret ? "key" : "accounts"} size={13} />
+              </span>
+              <input
+                bind:value={addingExtras[e.prefix]}
+                placeholder={e.placeholder || e.label}
+                spellcheck="false"
+                autocomplete="off"
+                class="field w-full pl-8 font-mono text-[11px]"
+              />
+            </span>
           </label>
         {/each}
       </div>

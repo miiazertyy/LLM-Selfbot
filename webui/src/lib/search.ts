@@ -24,6 +24,9 @@ let built = 0;
 
 const norm = (s: unknown) => String(s ?? "").toLowerCase();
 
+/** How many of each group the idle browse view offers before you have to type. */
+const BROWSE_PER_GROUP = 12;
+
 /* Regex-escaping for user-typed query words, shared by search() and
    highlight() so neither rebuilds the pattern per call. */
 const ESCAPE_RE = /[.*+?^${}()|[\]\\]/g;
@@ -116,9 +119,19 @@ export function indexAge(): number {
 export function search(query: string, limit = 40): Hit[] {
   const words = norm(query).split(/\s+/).filter(Boolean);
   if (!words.length) {
-    return docs
-      .filter((d) => d.group === "Pages")
-      .map((d) => ({ ...d, score: 0 }));
+    // With nothing typed the palette is a browsable index, not an empty box:
+    // every group appears so its folder can be opened. Capped per group, since
+    // the index holds 250 log lines and every settings field, and rendering
+    // all of it to sit inside a folder nobody has opened is pure waste.
+    const perGroup: Record<string, number> = {};
+    const out: Hit[] = [];
+    for (const d of docs) {
+      const n = (perGroup[d.group] = (perGroup[d.group] ?? 0) + 1);
+      if (n > BROWSE_PER_GROUP) continue;
+      out.push({ ...d, score: d.group === "Pages" ? 1 : 0 });
+    }
+    // Pages first; it is what the palette is mostly used for.
+    return out.sort((a, b) => b.score - a.score);
   }
 
   // Compiled once for the whole sweep. This built a RegExp per document per

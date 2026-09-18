@@ -46,6 +46,8 @@ CONFIG_SCHEMA = [
      "section": "General", "requires_restart": True},
     {"key": "bot.locale", "type": "str", "label": "Persona locale",
      "section": "General", "requires_restart": True},
+    {"key": "bot.desktop.build_source", "type": "str", "label": "Build number",
+     "section": "General", "requires_restart": True},
     {"key": "bot.desktop.build_number", "type": "int", "label": "Desktop client build number",
      "section": "General", "requires_restart": True},
     {"key": "bot.night_invisible.enabled", "type": "bool", "label": "Invisible during night hours",
@@ -77,6 +79,12 @@ CONFIG_SCHEMA = [
     {"key": "bot.pictures.enabled", "type": "bool", "label": "Send pictures when asked",
      "section": "Behaviour"},
     {"key": "bot.tts.enabled", "type": "bool", "label": "Voice messages (TTS)", "section": "Behaviour"},
+    # The settings tree named this key but the schema never defined it, so the
+    # row was dropped as "a key config.yaml does not have" and the voice model
+    # simply had no way to be set from the panel.
+    {"key": "bot.groq_tts_model", "type": "str", "label": "Voice model", "section": "Behaviour"},
+    {"key": "bot.tts.voice", "type": "str", "label": "Voice", "section": "Behaviour"},
+    {"key": "bot.tts.tones", "type": "json", "label": "Delivery", "section": "Behaviour"},
     {"key": "bot.late_reply.enabled", "type": "bool", "label": "Late reply openers",
      "section": "Conversation", "requires_restart": True},
     {"key": "bot.late_reply.threshold", "type": "int", "label": "Late reply threshold (s)",

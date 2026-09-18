@@ -90,8 +90,17 @@ init()
 set_theme("discord")
 
 
-def get_batch_wait_time():
-    wait_times = config["bot"]["batch_wait_times"]
+def get_batch_wait_time(server: bool = False):
+    """How long to sit on a message before answering it.
+
+    Servers get their own table when one is configured. Taking ten minutes to
+    answer a DM reads as someone who was away from their phone; taking ten
+    minutes to answer a channel means the conversation has moved three topics
+    on and the reply lands on nothing. Left unset, servers use the same table
+    as DMs and nothing changes.
+    """
+    b = config["bot"]
+    wait_times = (b.get("server_batch_wait_times") if server else None)         or b["batch_wait_times"]
     times = [item["time"] for item in wait_times]
     weights = [item["weight"] for item in wait_times]
     return random.choices(times, weights=weights, k=1)[0]
@@ -462,13 +471,33 @@ def get_channel_context(message):
     return channel_name, guild_name
 
 
-def get_late_opener(prompt: str) -> str:
-    late_cfg = config["bot"]["late_reply"]
-    french_indicators = late_cfg.get("french_indicators", [])
-    prompt_lower = prompt.lower()
-    is_french = any(word in prompt_lower.split() for word in french_indicators)
-    openers = late_cfg["openers_fr"] if is_french else late_cfg["openers_en"]
-    return random.choice(openers)
+def late_openers_for(lang: str) -> list:
+    """The written openers for one language, if any exist.
+
+    `openers` is keyed by language code, so adding Spanish means adding an "es"
+    list rather than editing code. This used to be two fixed lists picked by
+    scanning the message for French words, which gave every other language an
+    English apology. An empty result means the caller should ask the model to
+    write one instead.
+
+    The old openers_en / openers_fr keys are still read, so a config written
+    before this keeps working untouched.
+    """
+    cfg = (_LATE_CFG or config["bot"].get("late_reply") or {})
+    code = (lang or "").lower()
+    by_lang = cfg.get("openers")
+    if isinstance(by_lang, dict):
+        got = by_lang.get(code)
+        if isinstance(got, list) and got:
+            return got
+    legacy = cfg.get(f"openers_{code}")
+    return legacy if isinstance(legacy, list) and legacy else []
+
+
+def get_late_opener(prompt: str, lang: str = "en") -> str:
+    """One written opener for this language, or "" when there are none."""
+    openers = late_openers_for(lang)
+    return random.choice(openers) if openers else ""
 
 
 async def _simulate_typing(channel, text: str, fast: bool = False):
@@ -2597,16 +2626,30 @@ async def generate_response_and_reply(message, prompt, history, image_url=None, 
 
     late_opener = ""
     if _LATE_CFG.get("enabled", True) and wait_time >= _LATE_CFG.get("threshold", 300):
-        late_opener = get_late_opener(prompt)
-        # Inject the opener as a system instruction so the AI weaves it in
-        # naturally rather than prepending it raw (which caused punctuation
-        # clashes and double apologies).
-        enriched_instructions += (
-            f"\n\n[LATE REPLY: You took a while to respond. Open your reply naturally "
-            f"with something like: \"{late_opener.strip()}\", weave it in as the very "
-            f"first words of your message, then continue normally. Do NOT add 'sorry' again "
-            f"later in the message and do NOT start with a comma or dash.]"
-        )
+        # Written openers for the language actually being spoken, if any exist.
+        # Where there are none - which is every language nobody has written a
+        # list for - the model is asked for the same thing in its own words,
+        # rather than being handed an English line to use in Portuguese.
+        _written = late_openers_for(_lang_tag)
+        if _written:
+            late_opener = random.choice(_written)
+            enriched_instructions += (
+                f"\n\n[LATE REPLY: You took a while to respond. Open your reply "
+                f"naturally with something like: \"{late_opener.strip()}\", weave it in as "
+                f"the very first words of your message, then continue normally. Do NOT "
+                f"add 'sorry' again later in the message and do NOT start with a comma or dash.]"
+            )
+        else:
+            _style = (_LATE_CFG.get("style") or
+                      "casual and offhand, the way someone who was just busy would put it, "
+                      "never formal and never an apology paragraph")
+            enriched_instructions += (
+                f"\n\n[LATE REPLY: You took a while to respond. Open with a brief, "
+                f"natural acknowledgement of that in {_lang_display} - {_style}. A few words "
+                f"at most, woven into the very start of your message, then continue normally. "
+                f"Do NOT apologise twice and do NOT start with a comma or dash.]"
+            )
+            late_opener = "auto"
 
     if len(history) > 20:
         try:
@@ -3375,7 +3418,8 @@ async def process_message_queue(batch_key):
                         "image_url": first_image_url,
                     }
                     priority = message.content.startswith(PRIORITY_PREFIX)
-                    wait_time = 0 if priority else get_batch_wait_time()
+                    wait_time = 0 if priority else get_batch_wait_time(
+                        server=in_server(message.channel))
                     bot.user_message_batches[batch_key]["reply_at"] = current_time + wait_time
                     channel_name, guild_name = get_channel_context(message)
                     log_received(message.author.name, channel_name, guild_name, wait_time)

@@ -18,6 +18,7 @@ then derives everything from the gateway object so the two sides can't drift.
 import base64
 import json
 import re
+import time as _time
 
 from curl_cffi.requests import AsyncSession, impersonate
 
@@ -113,6 +114,64 @@ async def _fetch_desktop_version() -> str:
     return _DEFAULT_DESKTOP_VERSION
 
 
+_BUILD_NUMBER = None
+_BUILD_FETCHED_AT = 0.0
+_BUILD_TTL = 24 * 3600
+
+
+async def _fetch_build_number() -> int | None:
+    """Discord's current stable client build number, or None.
+
+    Discord does not publish this anywhere official. The web app carries it in
+    one of its script bundles, which is how it is found in practice: load the
+    app shell, then read the number out of the scripts it references.
+
+    That makes it inherently fragile - Discord renames and reshuffles those
+    bundles whenever it likes - so every failure path here returns None and the
+    caller keeps using the configured number. A wrong build number is cosmetic
+    (discord.py-self ships a hardcoded one of its own), so this is never worth
+    failing a login over.
+    """
+    global _BUILD_NUMBER, _BUILD_FETCHED_AT
+    now = _time.time()
+    if _BUILD_NUMBER and now - _BUILD_FETCHED_AT < _BUILD_TTL:
+        return _BUILD_NUMBER
+    try:
+        async with AsyncSession(impersonate=_TLS_TARGET, timeout=15) as s:
+            shell = await s.get("https://discord.com/app")
+            html = shell.text or ""
+            scripts = re.findall(r'src="(/assets/[^"]+\.js)"', html)
+            # Newest last in the document, and the build info sits in the
+            # later chunks, so walk from the end and stop at the first hit.
+            for path in reversed(scripts[-6:]):
+                try:
+                    js = (await s.get("https://discord.com" + path)).text or ""
+                except Exception:
+                    continue
+                m = re.search(r"build_?number.{0,6}?(\d{5,})", js, re.I)
+                if m:
+                    _BUILD_NUMBER = int(m.group(1))
+                    _BUILD_FETCHED_AT = now
+                    return _BUILD_NUMBER
+    except Exception:
+        pass
+    return None
+
+
+async def resolve_build_number(desktop_cfg: dict) -> int:
+    """The build number to present, honouring the automatic/custom choice.
+
+    Automatic falls back to the configured number, and then to the built-in
+    one, so a failed fetch degrades to exactly the old behaviour rather than
+    to something invalid.
+    """
+    configured = int(desktop_cfg.get("build_number", _DEFAULT_DESKTOP_BUILD))
+    if str(desktop_cfg.get("build_source", "custom")).lower() != "auto":
+        return configured
+    live = await _fetch_build_number()
+    return live or configured
+
+
 def desktop_ua(discord_version: str, chrome_major: int) -> str:
     electron = _CHROMIUM_TO_ELECTRON.get(chrome_major, "34")
     return (
@@ -143,7 +202,7 @@ async def build_desktop_headers(config: dict = None, web_headers=None):
     bcfg = config.get("bot") or {}
     desktop_cfg = bcfg.get("desktop") or {}
     discord_version = await _fetch_desktop_version()
-    build_number = int(desktop_cfg.get("build_number", _DEFAULT_DESKTOP_BUILD))
+    build_number = await resolve_build_number(desktop_cfg)
     ua = desktop_ua(discord_version, _TLS_MAJOR)
 
     properties = {

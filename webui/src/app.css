@@ -1,5 +1,85 @@
 @import "tailwindcss";
 
+/* ── Command palette ───────────────────────────────────────────────────────
+   Results are grouped into folders that dock open and shut, and one highlight
+   travels between rows rather than a background flicking on and off. All of it
+   is transform and opacity, so it costs the compositor and nothing else, and
+   data-motion="off" already flattens every animation here to nothing. */
+
+.palette {
+  animation: palette-in 0.38s var(--spring) both;
+  transform-origin: top center;
+}
+@keyframes palette-in {
+  from { opacity: 0; transform: translate3d(0, -14px, 0) scale(0.965); filter: blur(6px); }
+  60%  { filter: blur(0); }
+  to   { opacity: 1; transform: translate3d(0, 0, 0) scale(1); filter: blur(0); }
+}
+
+.palette-scrim { animation: scrim-in 0.28s var(--swift) both; }
+@keyframes scrim-in { from { opacity: 0; } to { opacity: 1; } }
+
+/* The folder body animates its own height without anyone measuring it:
+   grid-template-rows between 0fr and 1fr is animatable, so the row simply has
+   no height until it does. */
+.folder-body {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.34s var(--spring);
+}
+.folder-body[data-open="true"] { grid-template-rows: 1fr; }
+.folder-inner { overflow: hidden; min-height: 0; }
+
+.folder-head .folder-chevron {
+  transition: transform 0.34s var(--spring);
+}
+.folder-head[aria-expanded="true"] .folder-chevron { transform: rotate(90deg); }
+
+/* The travelling highlight. One element, moved, so the selection slides from
+   row to row and overshoots slightly on the way instead of blinking across. */
+.palette-pill {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  top: 0;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--color-accent) 16%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 35%, transparent);
+  pointer-events: none;
+  opacity: 0;
+  transition:
+    transform 0.34s var(--spring),
+    height 0.34s var(--spring),
+    opacity 0.18s var(--swift);
+  will-change: transform;
+}
+.palette-pill[data-shown="true"] { opacity: 1; }
+
+/* Rows rise in on a stagger driven by their own index, so a folder opening
+   reads as it filling rather than appearing. Capped in the markup, because a
+   hundredth row arriving two seconds late is not charm, it is a bug. */
+.palette-row {
+  animation: pal-row 0.34s var(--spring) both;
+  animation-delay: calc(var(--i, 0) * 16ms);
+}
+@keyframes pal-row {
+  from { opacity: 0; transform: translate3d(-6px, 4px, 0); }
+  to   { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+
+/* The count tag pops when its folder opens. */
+.folder-count {
+  transition: background-color 0.24s var(--swift), color 0.24s var(--swift),
+              transform 0.34s var(--jelly);
+}
+.folder-head[aria-expanded="true"] .folder-count { transform: scale(1.08); }
+
+:root[data-motion="off"] .palette,
+:root[data-motion="off"] .palette-scrim,
+:root[data-motion="off"] .palette-row { animation: none; }
+:root[data-motion="off"] .folder-body { transition: none; }
+:root[data-motion="off"] .palette-pill { transition: opacity 0.12s linear; }
+
 /* ── Living backgrounds ────────────────────────────────────────────────────
    A fixed layer under the whole app, painted from the theme's own variables so
    each one takes on the current palette rather than needing an asset per theme.

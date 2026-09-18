@@ -111,6 +111,7 @@ export const TABS: Tab[] = [
           "bot.timezone",
           "bot.locale",
           "bot.default_language",
+          "bot.desktop.build_source",
           "bot.desktop.build_number",
         ],
       },
@@ -236,6 +237,7 @@ export const TABS: Tab[] = [
         keys: [
           "bot.batch_messages",
           "bot.batch_wait_times",
+          "bot.server_batch_wait_times",
           "bot.global_cooldown_enabled",
           "bot.global_cooldown_min",
           "bot.global_cooldown_max",
@@ -248,9 +250,6 @@ export const TABS: Tab[] = [
         keys: [
           "bot.late_reply.enabled",
           "bot.late_reply.threshold",
-          "bot.late_reply.openers_en",
-          "bot.late_reply.openers_fr",
-          "bot.late_reply.french_indicators",
           "bot.stale_reply.enabled",
           "bot.stale_reply.max_messages",
           "bot.stale_reply.min_age",

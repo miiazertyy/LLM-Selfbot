@@ -163,13 +163,21 @@ message_history: dict[str, list] = {} # "{user_id}-{channel_id}" -> history list
 
 # ── Late reply openers ───────────────────────────────────────────────────────
 
-def _get_late_opener(prompt: str) -> str:
-    late_cfg = _LATE_CFG
-    french_indicators = late_cfg.get("french_indicators", [])
-    prompt_lower = prompt.lower()
-    is_french = any(word in prompt_lower.split() for word in french_indicators)
-    openers = late_cfg["openers_fr"] if is_french else late_cfg["openers_en"]
-    return random.choice(openers)
+def _get_late_opener(prompt: str, lang: str = "en") -> str:
+    """A written opener for this language, or "" to let the model write one.
+
+    This used to sniff for French words and pick one of two fixed lists, which
+    meant every other language got an English apology. Openers are keyed by
+    language now, and a language with no list returns nothing so the caller can
+    ask the model instead.
+    """
+    cfg = _LATE_CFG or {}
+    by_lang = cfg.get("openers")
+    got = by_lang.get((lang or "").lower()) if isinstance(by_lang, dict) else None
+    if not got:
+        legacy = cfg.get(f"openers_{(lang or '').lower()}")
+        got = legacy if isinstance(legacy, list) else None
+    return random.choice(got) if got else ""
 
 
 # ── Main engine function ─────────────────────────────────────────────────────
@@ -333,13 +341,27 @@ async def generate_ai_response(msg: IncomingMessage) -> Optional[str]:
 
     # ── Late reply opener ────────────────────────────────────────────────────
     if _LATE_CFG.get("enabled", True) and msg.wait_time >= _LATE_CFG.get("threshold", 300):
-        opener = _get_late_opener(msg.content)
-        enriched += (
-            f"\n\n[LATE REPLY: You took a while to respond. Open your reply naturally "
-            f"with something like: \"{opener.strip()}\", weave it in as the very "
-            f"first words of your message, then continue normally. Do NOT add 'sorry' again "
-            f"later in the message and do NOT start with a comma or dash.]"
-        )
+        # A written opener for this language if one exists; otherwise the model
+        # writes its own in whatever language it is already replying in, which
+        # is the only version that works for a language nobody listed.
+        opener = _get_late_opener(msg.content, lang_tag)
+        if opener:
+            enriched += (
+                f"\n\n[LATE REPLY: You took a while to respond. Open your reply "
+                f"naturally with something like: \"{opener.strip()}\", weave it in as "
+                f"the very first words of your message, then continue normally. Do NOT "
+                f"add 'sorry' again later in the message and do NOT start with a comma or dash.]"
+            )
+        else:
+            _style = (_LATE_CFG.get("style") or
+                      "casual and offhand, the way someone who was just busy would put it")
+            enriched += (
+                f"\n\n[LATE REPLY: You took a while to respond. Open with a brief, "
+                f"natural acknowledgement of that in the language you are replying in - "
+                f"{_style}. A few words at most, woven into the very start of your message, "
+                f"then continue normally. Do NOT apologise twice and do NOT start with a "
+                f"comma or dash.]"
+            )
 
     # ── History management ───────────────────────────────────────────────────
     history.append({"role": "user", "content": msg.content})

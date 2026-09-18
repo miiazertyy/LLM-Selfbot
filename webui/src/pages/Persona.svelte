@@ -18,6 +18,7 @@
   import ErrorNote from "../lib/components/ErrorNote.svelte";
   import MoodEditor from "../lib/components/MoodEditor.svelte";
   import ReactionEditor from "../lib/components/ReactionEditor.svelte";
+  import OpenersEditor from "../lib/components/OpenersEditor.svelte";
 
   let text = $state("");
   const persona = resource("instructions", () => api.instructions(), { text: "" });
@@ -146,6 +147,12 @@
   <div class="mt-4">
     <Card title="Reactions" subtitle="When it taps an emoji instead of writing back">
       <ReactionEditor />
+    </Card>
+  </div>
+
+  <div class="mt-4">
+    <Card title="Late openers" subtitle="How it comes back after leaving you on read">
+      <OpenersEditor />
     </Card>
   </div>
 

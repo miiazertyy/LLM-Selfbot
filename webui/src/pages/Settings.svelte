@@ -184,6 +184,39 @@
    */
   // Exactly what Discord calls them. The shape of the dot says the rest, and
   // an explanation glued onto the name only makes the list harder to scan.
+  /**
+   * The voices each speech model offers, and the delivery tags it understands.
+   *
+   * Groq publishes models over the API but not the voices inside them, so
+   * unlike the model pickers there is nothing to fetch: these come from the
+   * model cards. Listing them still beats the alternative, which was reading
+   * the docs to find out that the word to type is "diana".
+   */
+  const TTS_VOICES: Record<string, string[]> = {
+    "canopylabs/orpheus-v1-english": ["autumn", "diana", "hannah", "austin", "daniel", "troy"],
+    "canopylabs/orpheus-arabic-saudi": ["fahad", "huda", "sara", "yazeed"],
+  };
+  const TTS_TONES = [
+    "[casual]", "[warm]", "[calm]", "[cheerful]", "[excited]", "[serious]",
+    "[soft]", "[whisper]", "[fast]", "[slow]", "[sad]", "[angry]",
+    "[laugh]", "[sigh]", "[gasp]", "[sarcastic]",
+  ];
+
+  /** Voices belong to a model, so the list follows whatever is selected. */
+  const ttsVoices = $derived.by(() => {
+    const model = String(byKey["bot.groq_tts_model"]?.current || "").trim()
+      || "canopylabs/orpheus-v1-english";
+    return TTS_VOICES[model] ?? TTS_VOICES["canopylabs/orpheus-v1-english"];
+  });
+
+  function toggleTone(f: FieldDef, tone: string) {
+    const current: string[] = Array.isArray(value(f)) ? value(f) : [];
+    const next = current.includes(tone)
+      ? current.filter((t) => t !== tone)
+      : [...current, tone];
+    setValue(f, next);
+  }
+
   const PRESENCES = [
     { value: "online", label: "Online" },
     { value: "idle", label: "Idle" },
@@ -192,6 +225,10 @@
   ];
 
   const CHOICES: Record<string, { value: string; label: string }[]> = {
+    "bot.desktop.build_source": [
+      { value: "auto", label: "Automatic, follow Discord" },
+      { value: "custom", label: "Custom, use the number below" },
+    ],
     "bot.message_style.mode": [
       { value: "short", label: "Short, a line or two" },
       { value: "balanced", label: "Balanced" },
@@ -448,7 +485,7 @@
         </button>
       {/if}
 
-      {#if f.key === "bot.batch_wait_times"}
+      {#if f.key === "bot.batch_wait_times" || f.key === "bot.server_batch_wait_times"}
         <div class="w-full sm:w-80">
           <WaitTimes value={value(f)} onchange={(rows) => setValue(f, rows)} />
         </div>
@@ -493,6 +530,40 @@
             <option value={opt.value}>{opt.label}</option>
           {/each}
         </select>
+      <!-- The voice belongs to the selected speech model, so the options move
+           with it rather than being a free-text field you have to look up. -->
+      {:else if f.key === "bot.tts.voice"}
+        <select
+          value={value(f)}
+          onchange={(e) => setValue(f, (e.target as HTMLSelectElement).value)}
+          class="field w-full text-[12px] sm:w-56"
+        >
+          {#each ttsVoices as v}
+            <option value={v}>{v}</option>
+          {/each}
+          <!-- Whatever is stored stays selectable even if the model changed
+               under it, so saving cannot silently rewrite it. -->
+          {#if value(f) && !ttsVoices.includes(value(f))}
+            <option value={value(f)}>{value(f)} (not in this model)</option>
+          {/if}
+        </select>
+      {:else if f.key === "bot.tts.tones"}
+        <div class="flex flex-wrap justify-end gap-1.5">
+          {#each TTS_TONES as t}
+            {@const picked = Array.isArray(value(f)) && value(f).includes(t)}
+            <button
+              type="button"
+              aria-pressed={picked}
+              onclick={() => toggleTone(f, t)}
+              class="jelly rounded-lg border px-2 py-1 font-mono text-[11px]
+                {picked
+                  ? 'border-accent/60 bg-accent/10 text-ink'
+                  : 'border-edge text-muted hover:bg-white/[0.04]'}"
+            >
+              {t}
+            </button>
+          {/each}
+        </div>
       <!-- One status, picked the same way as the pool below. A native select
            cannot carry the indicator, and the indicator is the point. -->
       {:else if f.key === "bot.night_invisible.status"}

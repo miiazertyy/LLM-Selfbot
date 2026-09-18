@@ -88,6 +88,21 @@ bot:
     - time: 1600
       weight: 3
 
+  # The same, for server channels. Delete the whole block to make servers
+  # behave exactly like DMs again.
+  # A long wait reads as "away from my phone" in a DM. In a channel the
+  # conversation has moved on by then and the reply lands on nothing, so these
+  # are shorter and the very long tails are gone.
+  server_batch_wait_times:
+    - time: 8
+      weight: 40
+    - time: 20
+      weight: 35
+    - time: 45
+      weight: 18
+    - time: 120
+      weight: 7
+
   # Anti-detection settings
   ignore_chance: 0.08       # chance to ignore a message
   typo_chance: 0.03         # chance of a typo per message (~human rate)
@@ -151,7 +166,10 @@ bot:
 
   # Desktop spoof tuning (used only when client_profile: desktop)
   desktop:
-    build_number: 407894   # desktop client build (cosmetic, update occasionally)
+    # auto  - read Discord's current build number off its own web app on start
+    # custom - use the number below and leave it alone
+    build_source: auto
+    build_number: 407894   # used when custom, and as the fallback when auto fails
 
   # --- Random status loop ---
   status:
@@ -234,39 +252,32 @@ bot:
     enabled: true
 
   # --- Late reply openers ---
+  # What it opens with when it answers hours after you wrote.
+  #
+  # openers is keyed by language code, so adding a language is adding a list -
+  # no code, no word lists. Any language with no list here gets one written by
+  # the model in that language, guided by `style`, which is why this no longer
+  # needs to know what French looks like. The old openers_en / openers_fr keys
+  # are still read if a config still has them.
   late_reply:
     enabled: true
     threshold: 300   # 5 minutes
-    openers_en:
-      - "sorry was watching tiktok lol "
-      - "omg sorry just saw this "
-      - "sorry was busy haha "
-      - "oh sorry didn't see this "
-      - "lol sorry took a while "
-      - "sorry was distracted "
-      - "oh wait i just saw this lol "
-    openers_fr:
-      - "déso je viens de voir lol "
-      - "pardon j'étais occupée haha "
-      - "mdrr déso je t'avais pas vu "
-      - "oh pardon je regardais tiktok "
-      - "déso j'ai mis du temps "
-    french_indicators:
-      - "bonjour"
-      - "salut"
-      - "coucou"
-      - "quoi"
-      - "tu"
-      - "vous"
-      - "je"
-      - "moi"
-      - "ouais"
-      - "non"
-      - "oui"
-      - "bah"
-      - "wesh"
-      - "mdrr"
-      - "ptdr"
+    style: "casual and offhand, the way someone who was just busy would put it, never formal and never an apology paragraph"
+    openers:
+      en:
+        - "sorry was watching tiktok lol "
+        - "omg sorry just saw this "
+        - "sorry was busy haha "
+        - "oh sorry didn't see this "
+        - "lol sorry took a while "
+        - "sorry was distracted "
+        - "oh wait i just saw this lol "
+      fr:
+        - "déso je viens de voir lol "
+        - "pardon j'étais occupée haha "
+        - "mdrr déso je t'avais pas vu "
+        - "oh pardon je regardais tiktok "
+        - "déso j'ai mis du temps "
 
   # --- Abandon reply ---
   stale_reply:
