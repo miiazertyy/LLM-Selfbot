@@ -238,7 +238,7 @@ try:
 
     print("\n== SPA ==")
     st, html = req("/")
-    check("control panel HTML served", st == 200 and "<html" in str(html).lower(), str(html)[:80])
+    check("webui HTML served", st == 200 and "<html" in str(html).lower(), str(html)[:80])
 
 finally:
     stop.set()

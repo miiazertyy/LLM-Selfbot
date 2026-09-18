@@ -137,8 +137,8 @@ DESCRIPTIONS = {
     "discord.enabled": "The Discord platform itself. Off here means no account starts, whatever the switch above says.",
     "snapchat.enabled": "The Snapchat platform itself. Off here means no account starts, whatever the switch above says.",
     "services.telegram.enabled": "Start the Telegram controller when the app launches.",
-    "services.webui.enabled": "Serve this control panel.",
-    "services.webui.port": "Port the control panel listens on.",
+    "services.webui.enabled": "Serve the webui.",
+    "services.webui.port": "Port the webui listens on.",
     "services.webui.bind": "Address to listen on. Keep 127.0.0.1 unless you know why not.",
 }
 
@@ -245,8 +245,8 @@ LABELS = {
     "discord.enabled": "Discord platform",
     "snapchat.enabled": "Snapchat platform",
     "services.telegram.enabled": "Telegram controller",
-    "services.webui.enabled": "Control panel",
-    "services.webui.port": "Control panel port",
+    "services.webui.enabled": "webui",
+    "services.webui.port": "webui port",
     "services.webui.bind": "Listen address",
     "bot.night_invisible.enabled": "Go invisible at night",
     "bot.night_invisible.hours": "Night hours",

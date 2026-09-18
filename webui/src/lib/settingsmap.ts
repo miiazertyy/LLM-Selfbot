@@ -291,7 +291,7 @@ export const TABS: Tab[] = [
       },
       {
         id: "panel",
-        name: "Control panel",
+        name: "webui",
         blurb: "This page, and who can reach it.",
         keys: ["services.webui.port", "services.webui.bind"],
       },
@@ -392,6 +392,7 @@ const ALIASES: Record<string, string> = {
   "snapchat logins": "snapchat/logins",
   telegram: "app/telegram",
   services: "app/services",
+  "webui": "app/panel",
   "control panel": "app/panel",
   "error alerts": "app/alerts",
   // The old flat category names.

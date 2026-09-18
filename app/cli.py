@@ -52,13 +52,13 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--account", type=int, default=None,
                     help="account index for --role discord/snapchat")
     ap.add_argument("--no-web", action="store_true",
-                    help="supervisor without the HTTP control panel")
+                    help="supervisor without the webui")
     ap.add_argument("--port", type=int, default=None,
                     help="overrides services.webui.port in config.yaml")
     ap.add_argument("--no-window", action="store_true",
-                    help="serve the control panel without opening a desktop window")
+                    help="serve the webui without opening a desktop window")
     ap.add_argument("mode", nargs="?", choices=["discord", "snapchat", "both"],
-                    help="legacy: run platforms directly, no control panel")
+                    help="legacy: run platforms directly, no webui")
     return ap
 
 
@@ -144,7 +144,7 @@ def acquire_single_instance():
 
 
 def run_supervisor(port=None, no_web=False):
-    """Serve the control panel and own the platform workers (blocking)."""
+    """Serve the webui and own the platform workers (blocking)."""
     if is_child():
         # A worker must never become a supervisor, that is the fork bomb.
         print("[LLMSelfbot] Refusing to start a supervisor inside a worker process.", flush=True)

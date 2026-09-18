@@ -89,7 +89,7 @@ r = subprocess.run(
     capture_output=True, text=True, timeout=120, cwd=REPO)
 out = r.stdout + r.stderr
 check("desktop entry exposes the CLI parser", "--role" in out and "usage:" in out.lower(), out[-300:])
-check("desktop entry did not start a control panel", "Starting control panel" not in out, out[-200:])
+check("desktop entry did not start the webui", "Starting webui" not in out, out[-200:])
 
 print("\n%d passed, %d failed" % (len(PASS), len(FAIL)))
 sys.exit(1 if FAIL else 0)

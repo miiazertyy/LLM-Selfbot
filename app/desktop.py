@@ -318,7 +318,7 @@ def main():
     backend = threading.Thread(target=_backend, daemon=True, name="backend")
     backend.start()
 
-    print(f"[Desktop] Starting control panel at {url}")
+    print(f"[Desktop] Starting webui at {url}")
     if not _wait_until_ready(url):
         print("[Desktop] Backend did not come up in time, check the logs.")
         sys.exit(1)

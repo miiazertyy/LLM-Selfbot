@@ -1,7 +1,7 @@
 """
 main.py - Launcher for the LLMSelfbot (source checkouts).
 
-  python main.py                              → supervisor + web control panel
+  python main.py                              → supervisor + webui
   python main.py discord | snapchat | both    → legacy: platforms only, no panel
   python main.py --role discord --account N   → one Discord account worker
   python main.py --role snapchat --account N  → one Snapchat worker

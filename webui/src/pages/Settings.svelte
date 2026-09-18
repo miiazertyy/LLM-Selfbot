@@ -449,29 +449,39 @@
 
 <!-- One row for one setting, used by both the subtabs and the search results. -->
 {#snippet row(f: FieldDef, showHome: boolean)}
-  <div class="flex flex-col gap-2 py-3 sm:flex-row sm:items-start sm:gap-4">
-    <div class="min-w-0 sm:flex-1">
+  <!-- Label left, control right, at every width.
+       It used to stack below the breakpoint, which put every toggle on its own
+       line under its own description: a narrow window became a tall column of
+       text with switches adrift in the middle of it, and nothing tying a
+       switch to the thing it switched. Wide controls still wrap themselves,
+       because they state their own width.
+       The hover rail is there so a row reads as one object rather than as
+       paragraphs that happen to be near each other. -->
+  <div class="settings-row group flex items-start gap-3 py-3 sm:gap-4">
+    <div class="min-w-0 flex-1">
       <div class="flex items-center gap-1.5 text-[13px] text-ink">
         <span class="min-w-0 break-words sm:truncate">{f.label}</span>
         {#if f.key in dirty}
-          <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-accent" title="unsaved"></span>
+          <span class="settings-dirty h-1.5 w-1.5 shrink-0 rounded-full bg-accent" title="unsaved"></span>
         {/if}
       </div>
       {#if f.description}
         <p class="mt-0.5 text-[11px] leading-relaxed text-faint">{f.description}</p>
       {/if}
-      <p class="mt-0.5 flex flex-wrap items-center gap-x-2 text-[10px] text-faint/70">
-        {#if f.requires_restart}<span class="text-warn/80">needs a restart</span>{/if}
+      <p class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-faint/70">
+        {#if f.requires_restart}
+          <span class="rounded-full bg-warn/10 px-1.5 py-0.5 text-warn/90">needs a restart</span>
+        {/if}
         {#if showHome}
           <button class="underline decoration-dotted hover:text-ink" onclick={() => goToKey(f.key)}>
             {whereIs(f.key)}
           </button>
         {/if}
-        <span class="break-all font-mono opacity-60" title={f.key}>{f.key}</span>
+        <span class="settings-key break-all font-mono" title={f.key}>{f.key}</span>
       </p>
     </div>
 
-    <div class="flex items-center gap-2 sm:shrink-0">
+    <div class="flex shrink-0 items-center justify-end gap-2">
       <!-- Undo sits next to the control it reverts, so a mis-click is one
            click to put back rather than remembering the old value. -->
       {#if f.key in dirty}
@@ -548,7 +558,7 @@
           {/if}
         </select>
       {:else if f.key === "bot.tts.tones"}
-        <div class="flex flex-wrap justify-end gap-1.5">
+        <div class="flex w-full flex-wrap justify-end gap-1.5 sm:w-80">
           {#each TTS_TONES as t}
             {@const picked = Array.isArray(value(f)) && value(f).includes(t)}
             <button
@@ -567,7 +577,7 @@
       <!-- One status, picked the same way as the pool below. A native select
            cannot carry the indicator, and the indicator is the point. -->
       {:else if f.key === "bot.night_invisible.status"}
-        <div class="flex flex-wrap justify-end gap-1.5">
+        <div class="flex w-full flex-wrap justify-end gap-1.5 sm:w-80">
           {#each PRESENCES as p}
             {@const picked = value(f) === p.value}
             <button
@@ -587,7 +597,7 @@
       <!-- The rotation pool is a fixed set, not free text. Typing "onlien"
            used to be accepted and then never match anything. -->
       {:else if f.key === "bot.status.statuses"}
-        <div class="flex flex-wrap justify-end gap-1.5">
+        <div class="flex w-full flex-wrap justify-end gap-1.5 sm:w-80">
           {#each PRESENCES as p}
             {@const picked = Array.isArray(value(f)) && value(f).includes(p.value)}
             <button

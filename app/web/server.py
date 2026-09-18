@@ -143,7 +143,7 @@ DEFAULT_PORT = 8787
 
 
 def run_server(supervisor=None, port: int | None = None, no_web: bool = False, bind: str | None = None):
-    """Serve the control panel. Explicit args win over config.yaml, which wins
+    """Serve the webui. Explicit args win over config.yaml, which wins
     over the built-in defaults."""
     import uvicorn
     from app.utils.helpers import load_config
@@ -177,7 +177,7 @@ def run_server(supervisor=None, port: int | None = None, no_web: bool = False, b
 
     url = f"http://{'127.0.0.1' if bind == '0.0.0.0' else bind}:{port}"
     bus.append("supervisor", f"Web UI on {url}")
-    print(f"[Supervisor] Control panel: {url}", flush=True)
+    print(f"[Supervisor] webui: {url}", flush=True)
     if bind != "127.0.0.1":
         # The panel has no login, so reachability IS access: tokens, Groq keys
         # and every control are open to anyone who can hit this port.

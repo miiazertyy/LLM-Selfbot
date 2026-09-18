@@ -308,7 +308,7 @@ notifications:
 
 # ── Services: what the supervisor launches ────────────────────────────────────
 # Each platform can be toggled independently. The webui service controls the
-# built-in control panel (desktop window + optional remote access).
+# built-in webui (desktop window + optional remote access).
 services:
   discord:
     enabled: true
