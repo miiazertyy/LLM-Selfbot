@@ -1,5 +1,4 @@
 import re
-from groq import AsyncGroq
 from os import getenv
 from app.utils.helpers import load_config, get_env_path
 from dotenv import load_dotenv
@@ -18,9 +17,36 @@ TTS_MAX_CHARS = 180  # Orpheus hard limit is 200, stay safe with 180
 
 
 _client = None
+_local_client = None
+_local_key = None   # the settings the cached local client was built from
 
 
-def _get_client() -> AsyncGroq:
+def _get_local():
+    """The local speech backend, or None when none is configured.
+
+    Servers like LocalAI and Kokoro-FastAPI implement OpenAI's /audio/speech,
+    so once a model is named the call is byte-for-byte the one Groq gets. The
+    cache is keyed on the settings so editing them in the panel takes effect
+    without a restart.
+    """
+    global _local_client, _local_key
+    from app.utils import ai
+    cfg = ai.local_tts()
+    if not cfg:
+        _local_client, _local_key = None, None
+        return None
+    key = (cfg["base_url"], cfg["api_key"], cfg["model"])
+    if _local_client is None or _local_key != key:
+        from openai import AsyncOpenAI
+        _local_client = AsyncOpenAI(base_url=cfg["base_url"],
+                                    api_key=cfg["api_key"], timeout=180.0,
+                                    max_retries=1)
+        _local_key = key
+    return {"client": _local_client, "model": cfg["model"],
+            "voice": cfg["voice"]}
+
+
+def _get_client():
     """Groq client for TTS, built once and reused."""
     global _client
     if _client is not None:
@@ -33,12 +59,13 @@ def _get_client() -> AsyncGroq:
             api_key = getenv(f"GROQ_API_KEY_{i}")
             if api_key:
                 break
-    # Running the brain locally is allowed without any Groq key at all, and
-    # speech is the one thing no local server offers. Say which it is, rather
-    # than building a client with api_key=None and failing inside the SDK.
+    # Say which thing is missing, rather than building a client with
+    # api_key=None and failing somewhere inside the SDK.
     if not api_key:
         raise RuntimeError(
-            "Voice messages need a Groq key. Local models cannot speak.")
+            "Voice messages need a Groq key, or a local speech model set under "
+            "Local AI.")
+    from groq import AsyncGroq
     _client = AsyncGroq(api_key=api_key)
     return _client
 
@@ -96,7 +123,8 @@ def _chunk_text(text: str, max_chars: int = TTS_MAX_CHARS) -> list[str]:
 
 async def generate_voice_message(text: str) -> list[bytes] | None:
     """
-    Generate voice message audio using Groq Orpheus TTS.
+    Generate voice message audio, on the local server when one has a speech
+    model set and on Groq Orpheus otherwise.
     Returns a list of wav byte chunks (one per 180-char segment), or None on
     failure. Orpheus has a 200-char limit, so long responses are split.
     """
@@ -106,9 +134,22 @@ async def generate_voice_message(text: str) -> list[bytes] | None:
     if not tts_cfg.get("enabled", True):
         return None
 
+    local = _get_local()
     voice = tts_cfg.get("voice", "autumn")
+    # The bracketed tones are Orpheus prompt syntax, not something the audio
+    # format carries. Any other engine has no idea and simply reads "casual
+    # warm" out loud before the message, so they only go to Groq.
     tones = tts_cfg.get("tones", ["[casual]", "[warm]"])
-    tone_prefix = " ".join(tones)
+    tone_prefix = "" if local else " ".join(tones)
+    if local:
+        model = local["model"]
+        client = local["client"]
+        # Voice names are per-engine - Orpheus has "autumn", Kokoro has
+        # "af_sky" - so the local one is set alongside the local model.
+        voice = local["voice"] or voice
+    else:
+        model = _tts_model()
+        client = _get_client()
 
     cleaned = _clean_text_for_tts(text)
     if not cleaned:
@@ -118,15 +159,14 @@ async def generate_voice_message(text: str) -> list[bytes] | None:
     chunk_max = max(40, TTS_MAX_CHARS - len(tone_prefix) - 1)
     text_chunks = _chunk_text(cleaned, max_chars=chunk_max)
 
-    client = _get_client()
     audio_chunks = []
 
     for i, chunk in enumerate(text_chunks):
-        tts_input = f"{tone_prefix} {chunk}"
+        tts_input = f"{tone_prefix} {chunk}".strip() if tone_prefix else chunk
 
         try:
             response = await client.audio.speech.create(
-                model=_tts_model(),
+                model=model,
                 voice=voice,
                 input=tts_input,
                 response_format="wav",

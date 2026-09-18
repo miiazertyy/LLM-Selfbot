@@ -17,6 +17,15 @@ _client_index = 0    # which key is currently active
 _local_client = None
 _local_model = ""
 _local_vision = False
+# Per-capability models. Empty means "this server does not do that job", and the
+# call falls through to Groq exactly as it always did. Naming a model is the
+# opt-in: a server that has no /audio/speech route simply never gets one set.
+_local_vision_model = ""
+_local_stt_model = ""
+_local_tts_model = ""
+_local_tts_voice = ""
+_local_base_url = ""
+_local_api_key = ""
 
 model = None
 groq_models = []
@@ -67,15 +76,40 @@ def groq_key_label(index: int) -> str:
 
 def vision_is_local() -> bool:
     """Whether pictures are read by the local server rather than by Groq."""
-    return _local_client is not None and _local_vision
+    return _local_client is not None and bool(_local_vision_model)
+
+
+def stt_is_local() -> bool:
+    """Whether voice messages are transcribed here rather than by Groq."""
+    return _local_client is not None and bool(_local_stt_model)
+
+
+def local_tts() -> dict:
+    """What tts.py needs to talk to the local server, or {} if it cannot.
+
+    Speech lives in its own module with its own client, so rather than export
+    four globals it gets the one dict it would otherwise have to assemble.
+    """
+    if not _groq_clients and _local_client is None:
+        init_ai()
+    if _local_client is None or not _local_tts_model:
+        return {}
+    return {
+        "base_url": _local_base_url,
+        "api_key": _local_api_key,
+        "model": _local_tts_model,
+        "voice": _local_tts_voice,
+    }
 
 
 def _chat_client():
     """Whoever is writing the replies: the local server, or Groq.
 
-    Only the chat calls move. Transcription and speech stay on Groq, because
-    almost no local server offers them and silently losing voice messages would
-    be a worse outcome than a request going out to an API.
+    Each capability moves on its own. Chat follows the local server whenever one
+    is configured; images, transcription and speech follow it only once a model
+    has been named for that job, because most servers do not offer all four and
+    silently losing voice messages would be worse than a request going out to an
+    API. Name all four and no Groq key is needed at all.
     """
     return _local_client if _local_client is not None else _active_client()
 
@@ -87,6 +121,8 @@ def _chat_model() -> str:
 def init_ai():
     global _groq_clients, _client_index, model, groq_models, current_model_index
     global _local_client, _local_model, _local_vision
+    global _local_vision_model, _local_stt_model, _local_tts_model
+    global _local_tts_voice, _local_base_url, _local_api_key
     global RATE_LIMITED
     env_path = get_env_path()
     config = load_config()
@@ -95,6 +131,8 @@ def init_ai():
     # ── The local server, if one is set up ────────────────────────────────────
     from app.utils import localai
     _local_client, _local_model, _local_vision = None, "", False
+    _local_vision_model = _local_stt_model = _local_tts_model = ""
+    _local_tts_voice = _local_base_url = _local_api_key = ""
     if localai.active(config):
         from openai import AsyncOpenAI
         # openai is loaded now regardless, so this is the moment to teach the
@@ -112,7 +150,21 @@ def init_ai():
                                     timeout=240.0, max_retries=1)
         _local_model = cfg["model"]
         _local_vision = cfg["vision"]
+        _local_base_url = cfg["base_url"]
+        _local_api_key = cfg["api_key"]
+        # A separate vision model wins; otherwise the old "use it for images
+        # too" switch means the chat model does both, which is how this worked
+        # before there was anywhere to name a second one.
+        _local_vision_model = cfg["vision_model"] or (_local_model if _local_vision else "")
+        _local_stt_model = cfg["stt_model"]
+        _local_tts_model = cfg["tts_model"]
+        _local_tts_voice = cfg["tts_voice"]
         log_system(f"Replies run locally on {_local_model} via {cfg['base_url']}")
+        extra = [n for n, m in (("images", _local_vision_model),
+                                ("transcription", _local_stt_model),
+                                ("speech", _local_tts_model)) if m]
+        if extra:
+            log_system(f"Local server also handles {', '.join(extra)}")
 
     # Load keys: GROQ_API_KEY_1, GROQ_API_KEY_2, ...
     # Falls back to legacy GROQ_API_KEY if no numbered keys are set.
@@ -153,7 +205,14 @@ def init_ai():
     if key_count:
         log_system(f"Loaded {key_count} Groq API key(s), {len(groq_models)} model(s).")
     elif _local_client is not None:
-        log_system("No Groq key set. Replies are local; voice messages are off.")
+        missing = [n for n, m in (("pictures", _local_vision_model),
+                                  ("voice messages", _local_stt_model),
+                                  ("speaking", _local_tts_model)) if not m]
+        if missing:
+            log_system("No Groq key set. Replies are local; "
+                       f"{', '.join(missing)} are off.")
+        else:
+            log_system("No Groq key set, and none needed: everything is local.")
 
 
 def _fallback_client():
@@ -345,19 +404,19 @@ async def _create_image_completion(image_model, messages, client_index=None, **e
     # Only when the local model was told it can read images. Most cannot, and a
     # text model handed a picture does not say so, it describes something it
     # never saw.
-    if _local_client is not None and _local_vision:
+    if _local_client is not None and _local_vision_model:
         try:
             return await _local_client.chat.completions.create(
-                model=_local_model, messages=messages, **params
+                model=_local_vision_model, messages=messages, **params
             )
         except Exception as e:
             from app.utils import apihealth
-            apihealth.record("error", f"local vision: {e}", model=_local_model)
+            apihealth.record("error", f"local vision: {e}", model=_local_vision_model)
             raise
     if not _groq_clients:
         raise RuntimeError(
-            "Reading images needs a Groq key, or a local model that can see "
-            "with 'Use it for images too' turned on.")
+            "Reading images needs a Groq key, or a local vision model set under "
+            "Local AI.")
 
     pinned = client_index is not None
     if pinned:
@@ -402,12 +461,23 @@ async def _create_transcription(whisper_model, audio_file):
     """Whisper transcription call with key fallback."""
     if not _groq_clients and _local_client is None:
         init_ai()
-    # Local servers do not do speech. Saying so beats an IndexError from
-    # reaching into an empty client list.
+    # An OpenAI-compatible server with a whisper model loaded answers the same
+    # /audio/transcriptions route Groq does, so the call below is identical.
+    # Only servers that implement it get a model named here.
+    if _local_client is not None and _local_stt_model:
+        try:
+            return await _local_client.audio.transcriptions.create(
+                model=_local_stt_model, file=audio_file,
+            )
+        except Exception as e:
+            from app.utils import apihealth
+            apihealth.record("error", f"local transcription: {e}",
+                             model=_local_stt_model)
+            raise
     if not _groq_clients:
         raise RuntimeError(
-            "Transcribing a voice message needs a Groq key. Local servers do "
-            "not offer speech to text.")
+            "Transcribing a voice message needs a Groq key, or a local speech "
+            "to text model set under Local AI.")
     while True:
         try:
             transcription = await _active_client().audio.transcriptions.create(

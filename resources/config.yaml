@@ -45,7 +45,15 @@ bot:
     base_url: "http://127.0.0.1:11434/v1"
     model: ""
     api_key: "local"      # most servers ignore it but reject an empty one
-    vision: false         # only if the model you picked can actually read images
+    vision: false         # legacy: the chat model reads images too. Superseded
+                          # by vision_model, which still honours it if set.
+    # Name a model here and that job stops going to Groq. Leave one empty and it
+    # keeps going to Groq, so a server that only does chat needs no other change.
+    # Fill all four in and no Groq key is needed at all.
+    vision_model: ""      # reads pictures        (llava, qwen2.5-vl, ...)
+    stt_model: ""         # hears voice messages  (whisper-1, faster-whisper, ...)
+    tts_model: ""         # speaks               (kokoro, tts-1, ...)
+    tts_voice: ""         # voice names are per-engine (af_sky, alloy, ...)
 
   # TTS voice settings
   tts:

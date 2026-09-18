@@ -288,6 +288,16 @@ def settings(config: dict) -> dict:
         # Some servers want any non-empty string, and reject a blank one.
         "api_key": (local.get("api_key") or "local").strip() or "local",
         "vision": bool(local.get("vision", False)),
+        # One server, several jobs. Groq was the only thing that could read an
+        # image, hear a voice note or speak, which meant "run it locally" still
+        # needed a Groq key for any account that used those. Each is opt-in by
+        # naming a model: an OpenAI-compatible server that does not implement
+        # /audio/speech simply has no tts_model set, and that capability keeps
+        # going to Groq instead of failing.
+        "vision_model": (local.get("vision_model") or "").strip(),
+        "stt_model": (local.get("stt_model") or "").strip(),
+        "tts_model": (local.get("tts_model") or "").strip(),
+        "tts_voice": (local.get("tts_voice") or "").strip(),
     }
 
 

@@ -287,10 +287,15 @@ async def _describe(name: str, data: bytes, ext: str, client_index=None):
             from dotenv import load_dotenv
             from app.utils.helpers import get_env_path
             load_dotenv(dotenv_path=get_env_path(), override=True)
+        from app.utils.ai import init_ai, vision_is_local
         if not (os.getenv("GROQ_API_KEY") or os.getenv("GROQ_API_KEY_1")):
-            return "", "No Groq key set, so nothing can look at the picture."
+            # A local vision model reads pictures without any key at all.
+            init_ai()
+            if not vision_is_local():
+                return "", ("Nothing can look at the picture: no Groq key, and "
+                            "no local model set to read images.")
 
-        from app.utils.ai import init_ai, _create_image_completion
+        from app.utils.ai import _create_image_completion
         from app.utils.helpers import load_config
         from app.utils.humanize import plain_text
         init_ai()

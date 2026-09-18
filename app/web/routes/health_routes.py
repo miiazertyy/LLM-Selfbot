@@ -199,10 +199,22 @@ def _issues(supervisor) -> list:
                 "download it.",
                 "AI provider, Local AI", section="local ai")
         elif not has_key:
-            add("settings", "info", "Voice messages are off",
-                "Replies run locally, which is fine, but no local server does "
-                "speech. Voice notes need a Groq key.",
-                "AI provider, API keys", section="Groq keys")
+            # Each job follows the local server only once a model is named for
+            # it, so what is actually off is whatever was left blank - not
+            # everything, the way it was before those fields existed.
+            off = [n for n, k in (("reading pictures", "vision_model"),
+                                  ("hearing voice messages", "stt_model"),
+                                  ("speaking", "tts_model"))
+                   if not (local.get(k) or (k == "vision_model" and local["vision"]))]
+            if off:
+                title = (f"{off[0].capitalize()} is off" if len(off) == 1
+                         else "Some things need a Groq key")
+                add("settings", "info", title,
+                    "Replies run locally, which is fine, but with no Groq key "
+                    f"and no local model for it, {' and '.join(off)} cannot "
+                    "happen. Name a model for each under Local AI, if your "
+                    "server has one.",
+                    "AI provider, Local AI", section="local ai")
     elif not has_key:
         add("settings", "error", "No Groq API key",
             "The bot cannot generate any replies without one, unless you run a "

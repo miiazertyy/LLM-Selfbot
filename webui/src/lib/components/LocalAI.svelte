@@ -38,6 +38,12 @@
   let baseUrl = $state("");
   let model = $state("");
   let vision = $state(false);
+  // One model per job. Empty means that job keeps going to Groq, so a server
+  // that only speaks chat needs nothing filled in here.
+  let visionModel = $state("");
+  let sttModel = $state("");
+  let ttsModel = $state("");
+  let ttsVoice = $state("");
 
   let loading = $state(true);
   let saving = $state(false);
@@ -45,8 +51,18 @@
   let pullName = $state("");
   let stored = $state("");
 
-  const dirty = $derived(
-    !loading && JSON.stringify({ enabled, baseUrl, model, vision }) !== stored,
+  const snapshot = () =>
+    JSON.stringify({ enabled, baseUrl, model, visionModel, sttModel, ttsModel, ttsVoice });
+
+  const dirty = $derived(!loading && snapshot() !== stored);
+  // What still leaves the machine. The whole point of this panel is being able
+  // to answer that at a glance rather than by reading four fields.
+  const offloaded = $derived(
+    [
+      ["Pictures", visionModel],
+      ["Voice messages", sttModel],
+      ["Speaking", ttsModel],
+    ].filter(([, m]) => !m).map(([n]) => n as string),
   );
   const running = $derived(servers.filter((s) => s.running));
 
@@ -73,13 +89,20 @@
     baseUrl = s.settings.base_url;
     model = s.settings.model;
     vision = s.settings.vision;
+    // The old config had one "it can see too" switch instead of a model name.
+    // Show it as the chat model so nobody's working setup reads as empty, and
+    // saving writes it through as a real vision_model.
+    visionModel = s.settings.vision_model || (vision ? s.settings.model : "");
+    sttModel = s.settings.stt_model || "";
+    ttsModel = s.settings.tts_model || "";
+    ttsVoice = s.settings.tts_voice || "";
     reachable = s.reachable;
     probeError = s.error || "";
     models = s.models || [];
     canPull = s.can_pull;
     modelMissing = s.model_missing;
     pull = s.pull;
-    stored = JSON.stringify({ enabled, baseUrl, model, vision });
+    stored = snapshot();
     watchPull();
   }
 
@@ -146,9 +169,15 @@
     try {
       await api.configField("bot.local.base_url", baseUrl);
       await api.configField("bot.local.model", model);
-      await api.configField("bot.local.vision", vision);
+      await api.configField("bot.local.vision_model", visionModel);
+      await api.configField("bot.local.stt_model", sttModel);
+      await api.configField("bot.local.tts_model", ttsModel);
+      await api.configField("bot.local.tts_voice", ttsVoice);
+      // vision_model now carries what this switch used to mean. Clearing it
+      // stops the two disagreeing once someone empties the model box.
+      await api.configField("bot.local.vision", false);
       await api.configField("bot.local.enabled", enabled);
-      stored = JSON.stringify({ enabled, baseUrl, model, vision });
+      stored = snapshot();
       toast(
         enabled
           ? "Saved. Restart the accounts to switch them over."
@@ -379,18 +408,95 @@
       <Toggle checked={enabled} onchange={(v) => (enabled = v)} />
     </div>
 
-    <div class="flex items-center gap-4 py-3 {enabled ? '' : 'pointer-events-none opacity-40'}">
-      <div class="min-w-0 flex-1">
-        <div class="text-[13px] text-ink">Use it for images too</div>
-        <p class="mt-0.5 text-[11px] leading-relaxed text-faint">
-          Only if the model you picked can actually see. A text model handed a
-          picture does not say it cannot read it, it describes something that was
-          never there.
-        </p>
-      </div>
-      <Toggle checked={vision} onchange={(v) => (vision = v)} />
-    </div>
   </div>
+
+  <!-- ── The other three jobs ─────────────────────────────────────────────── -->
+  <section class="mt-6 {enabled ? '' : 'pointer-events-none opacity-40'}">
+    <h3 class="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-faint">
+      The other three jobs
+    </h3>
+    <p class="mb-3 text-[11px] leading-relaxed text-faint">
+      Replies are only part of it. Name a model for a job and that job stops
+      going to Groq as well; leave it empty and it carries on as before. Fill in
+      all three and no Groq key is needed at all. Only fill in the ones your
+      server really implements &mdash; most do chat and nothing else.
+    </p>
+
+    <datalist id="localmodels">
+      {#each models as m}<option value={m}></option>{/each}
+    </datalist>
+
+    <div class="grid gap-3 sm:grid-cols-2">
+      <label class="block">
+        <span class="mb-1 block text-[12px] text-ink">Reads pictures</span>
+        <input
+          bind:value={visionModel}
+          list="localmodels"
+          placeholder="llava, qwen2.5-vl&hellip;"
+          spellcheck="false"
+          class="field w-full font-mono text-[12px]"
+        />
+        <span class="mt-1 block text-[11px] leading-relaxed text-faint">
+          It has to genuinely see. A text model handed a picture does not say it
+          cannot read it, it describes something that was never there.
+        </span>
+      </label>
+
+      <label class="block">
+        <span class="mb-1 block text-[12px] text-ink">Hears voice messages</span>
+        <input
+          bind:value={sttModel}
+          list="localmodels"
+          placeholder="whisper-1, faster-whisper&hellip;"
+          spellcheck="false"
+          class="field w-full font-mono text-[12px]"
+        />
+        <span class="mt-1 block text-[11px] leading-relaxed text-faint">
+          Needs a server with an <code class="font-mono">/audio/transcriptions</code>
+          route, like LocalAI or a whisper.cpp server. Ollama has none.
+        </span>
+      </label>
+
+      <label class="block">
+        <span class="mb-1 block text-[12px] text-ink">Speaks</span>
+        <input
+          bind:value={ttsModel}
+          list="localmodels"
+          placeholder="kokoro, tts-1&hellip;"
+          spellcheck="false"
+          class="field w-full font-mono text-[12px]"
+        />
+        <span class="mt-1 block text-[11px] leading-relaxed text-faint">
+          Needs an <code class="font-mono">/audio/speech</code> route. The tone
+          tags under Voice are Orpheus syntax, so they are dropped here rather
+          than read out loud.
+        </span>
+      </label>
+
+      <label class="block">
+        <span class="mb-1 block text-[12px] text-ink">Voice to speak in</span>
+        <input
+          bind:value={ttsVoice}
+          placeholder="af_sky, alloy&hellip;"
+          spellcheck="false"
+          class="field w-full font-mono text-[12px]"
+          disabled={!ttsModel}
+        />
+        <span class="mt-1 block text-[11px] leading-relaxed text-faint">
+          Voice names belong to the engine, not to the app. Empty falls back to
+          whichever one is set under Voice.
+        </span>
+      </label>
+    </div>
+
+    <p class="mt-3 text-[11px] leading-relaxed {offloaded.length ? 'text-faint' : 'text-good'}">
+      {#if offloaded.length}
+        Still going to Groq: {offloaded.join(", ").toLowerCase()}.
+      {:else}
+        Nothing leaves this machine. Groq is not called at all.
+      {/if}
+    </p>
+  </section>
 
   <div class="mt-4 flex items-center gap-2">
     <Button size="sm" onclick={save} loading={saving} disabled={!dirty}>

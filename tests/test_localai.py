@@ -211,6 +211,64 @@ finally:
     tts.getenv = real_getenv
     tts._client = None
 
+print()
+print("== one model per job, so Groq can be dropped entirely ==")
+# Chat was always allowed to move. Pictures, voice messages and speech only
+# follow once a model is named for them, because most servers implement none of
+# the three, and a text model handed a picture invents one rather than refusing.
+try:
+    helpers.load_config = lambda: with_local()
+    ai.load_config = helpers.load_config
+    ai.init_ai()
+    check("chat alone leaves pictures on Groq", ai.vision_is_local() is False)
+    check("and voice messages on Groq", ai.stt_is_local() is False)
+    check("and speech on Groq", ai.local_tts() == {})
+
+    # The switch that existed before there was anywhere to name a second model.
+    helpers.load_config = lambda: with_local(vision=True)
+    ai.load_config = helpers.load_config
+    ai.init_ai()
+    check("the old 'it can see too' switch still reads images locally",
+          ai.vision_is_local() is True)
+    check("using the chat model, since that is what it meant",
+          ai._local_vision_model == "qwen2.5:7b")
+
+    helpers.load_config = lambda: with_local(
+        vision_model="llava", stt_model="whisper-1",
+        tts_model="kokoro", tts_voice="af_sky")
+    ai.load_config = helpers.load_config
+    ai.init_ai()
+    check("a named vision model reads images here", ai.vision_is_local() is True)
+    check("and it is that model, not the chat one", ai._local_vision_model == "llava")
+    check("a named speech-to-text model transcribes here", ai.stt_is_local() is True)
+    speech = ai.local_tts()
+    check("speech goes local with the right model", speech.get("model") == "kokoro")
+    check("and its own voice name, which is per-engine",
+          speech.get("voice") == "af_sky", str(speech))
+    check("pointed at the local server, not Groq",
+          speech.get("base_url") == localai.normalise_base_url(base),
+          str(speech.get("base_url")))
+
+    # The bracketed tones are Orpheus prompt syntax. Any other engine reads them
+    # out loud, so they must not survive the trip to a local server.
+    import app.utils.tts as tts
+    tts._local_client = tts._local_key = None
+    src = (ROOT / "app" / "utils" / "tts.py").read_text(encoding="utf-8")
+    check("tone tags are dropped for a local engine",
+          'tone_prefix = "" if local else' in src)
+    backend = tts._get_local()
+    check("tts.py finds the local backend",
+          bool(backend) and backend["model"] == "kokoro")
+    check("and caches the client it built",
+          tts._get_local()["client"] is backend["client"])
+finally:
+    # Deliberately not re-running init_ai here: the real config has local off,
+    # and this test process has no Groq key, so it would sys.exit(1).
+    helpers.load_config = real_load
+    ai.load_config = real_load
+    import app.utils.tts as tts
+    tts._local_client = tts._local_key = None
+
 print("\n== the panel knows about it ==")
 page = (ROOT / "webui" / "src" / "lib" / "components" / "LocalAI.svelte").read_text(encoding="utf-8")
 check("there is a panel", "localDetect" in page and "localPull" in page)
@@ -224,8 +282,12 @@ check("the routes are registered",
       "local_routes" in (ROOT / "app" / "web" / "server.py").read_text(encoding="utf-8"))
 check("bot.local is not also a row in Settings",
       '"bot.local"' in (ROOT / "app" / "web" / "descriptions.py").read_text(encoding="utf-8"))
-check("the shipped config documents it",
-      "local:" in (ROOT / "resources" / "config.yaml").read_text(encoding="utf-8"))
+cfg_text = (ROOT / "resources" / "config.yaml").read_text(encoding="utf-8")
+check("the shipped config documents it", "local:" in cfg_text)
+for key in ("vision_model", "stt_model", "tts_model", "tts_voice"):
+    check(f"and ships {key}", f"{key}:" in cfg_text)
+for key in ("visionModel", "sttModel", "ttsModel", "ttsVoice"):
+    check(f"the panel edits {key}", key in page)
 
 server.shutdown()
 print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
