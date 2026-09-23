@@ -73,6 +73,13 @@ def create_app(supervisor=None):
         finally:
             bus.unsubscribe(queue)
 
+    # Ask each account who is waiting before anybody opens the Chats tab.
+    # That answer costs the runner a channel sweep - seconds - and it used to be
+    # the first visit that paid for it, on every single launch.
+    @app.on_event("startup")
+    async def _warm_caches():
+        asyncio.create_task(chat_routes.warm_chats())
+
     _mount_spa(app)
     return app
 

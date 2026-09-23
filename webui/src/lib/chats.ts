@@ -207,7 +207,7 @@ export function refreshChats(
   patch(target, { loading: true });
   const run = (async () => {
     try {
-      const data = await api.chats(target);
+      const data = await api.chats(target, force);
       patch(target, {
         users: data.users || [],
         fetched: Date.now(),

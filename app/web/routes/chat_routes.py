@@ -1,4 +1,6 @@
+import asyncio
 import sqlite3
+import time
 
 from fastapi import APIRouter, HTTPException, Request
 
@@ -72,28 +74,94 @@ def _profiles_for(ids) -> dict:
     return out
 
 
+# The last answer from each runner, so opening the Chats tab does not wait.
+#
+# Asking who is waiting is not a database read: the runner sweeps its DM
+# channels and answers when it is done, which is seconds. That cost was paid on
+# every single visit to the tab, and nothing survived a relaunch, so it was paid
+# again every time the app started.
+#
+# Held here rather than in the browser on purpose. The panel already learned
+# this the hard way for preferences (see stores.ts): the desktop webview runs in
+# private mode, so localStorage is wiped on exit, and it is keyed on the origin,
+# so falling back to port 8788 because 8787 was busy starts from empty anyway.
+# The server has neither problem.
+_CHATS_CACHE: dict = {}
+_CHATS_TTL = 20.0         # a sweep is seconds; asking again inside this is waste
+_CHATS_LOCKS: dict = {}
+
+
+async def _chats_payload(tgt, fresh: bool = False) -> dict:
+    """The waiting list for one runner, from cache unless it is stale."""
+    hit = _CHATS_CACHE.get(tgt)
+    if not fresh and hit and (time.time() - hit["at"]) < _CHATS_TTL:
+        return hit["body"]
+
+    # One sweep at a time per runner. Without this the page's own refresh and
+    # the background prefetch could ask the same bot twice at once, doubling
+    # the work it does to answer the same question.
+    lock = _CHATS_LOCKS.setdefault(tgt, asyncio.Lock())
+    async with lock:
+        hit = _CHATS_CACHE.get(tgt)
+        if not fresh and hit and (time.time() - hit["at"]) < _CHATS_TTL:
+            return hit["body"]
+        result = await ipc.send_and_wait(tgt, "reply_check", timeout=10.0)
+        if result is None:
+            # A runner that is busy or restarting should not blank the tab when
+            # there is a perfectly good answer from a moment ago.
+            if hit:
+                return hit["body"]
+            raise HTTPException(status_code=504, detail="runner did not respond")
+        users = _stringify_ids(result.get("users", []), "id")
+        profiles = _profiles_for(u.get("id") for u in users)
+        for u in users:
+            meta = profiles.get(u.get("id")) or {}
+            u["avatar"] = meta.get("avatar") or ""
+            u["username"] = meta.get("username") or ""
+        body = {
+            "users": users,
+            "target": tgt,
+            "paused": result.get("paused", False),
+            "cooldown_until": result.get("cooldown_until", 0),
+            "cooldown_range": result.get("cooldown_range"),
+        }
+        _CHATS_CACHE[tgt] = {"body": body, "at": time.time()}
+        return body
+
+
+async def warm_chats() -> None:
+    """Fill the cache for every account, once, at startup.
+
+    The tab is usually opened within a few seconds of the app appearing, and
+    before this the first visit was the thing that paid for the sweep. Runners
+    take a moment to come up, so this waits for them rather than asking a
+    process that is not listening yet.
+    """
+    for attempt in range(12):                 # up to a minute
+        await asyncio.sleep(5)
+        try:
+            targets = ipc.discover_targets()
+        except Exception:
+            continue
+        if not targets:
+            continue
+        for meta in targets.values():
+            try:
+                # Staggered: each one costs that bot a channel sweep, and
+                # sweeping every account at the same moment is the one shape
+                # worth avoiding.
+                await _chats_payload(meta["target"], fresh=True)
+                await asyncio.sleep(1.2)
+            except Exception:
+                pass          # a runner that is not ready gets picked up on the
+                              # first real request instead
+        return
+
+
 @router.get("/api/chats")
-async def chats(request: Request, target: str = ""):
+async def chats(request: Request, target: str = "", fresh: bool = False):
     tgt = _resolve_target(request, target)
-    result = await ipc.send_and_wait(tgt, "reply_check", timeout=10.0)
-    if result is None:
-        raise HTTPException(status_code=504, detail="runner did not respond")
-    users = _stringify_ids(result.get("users", []), "id")
-    # The waiting list showed a grey placeholder glyph for everyone, though the
-    # avatar has been sitting in user_profiles the whole time.
-    profiles = _profiles_for(u.get("id") for u in users)
-    for u in users:
-        meta = profiles.get(u.get("id")) or {}
-        u["avatar"] = meta.get("avatar") or ""
-        u["username"] = meta.get("username") or ""
-    return {
-        "users": users,
-        "target": tgt,
-        # Why the bot has not answered yet: paused, or still inside its cooldown.
-        "paused": result.get("paused", False),
-        "cooldown_until": result.get("cooldown_until", 0),
-        "cooldown_range": result.get("cooldown_range"),
-    }
+    return await _chats_payload(tgt, fresh=fresh)
 
 
 @router.get("/api/chats/archive")
@@ -217,6 +285,7 @@ async def reply(request: Request):
         except (TypeError, ValueError):
             raise HTTPException(status_code=400, detail="user_id must be an integer for Discord")
     result = await ipc.send_and_wait(tgt, "reply_user", {"user_id": user_id}, timeout=120.0)
+    _CHATS_CACHE.pop(tgt, None)     # that person is no longer waiting
     if result is None:
         raise HTTPException(status_code=504, detail="runner did not respond")
     return result
@@ -227,6 +296,7 @@ async def reply_all(request: Request):
     body = await request.json()
     tgt = _resolve_target(request, body.get("target", ""))
     result = await ipc.send_and_wait(tgt, "reply_all", timeout=300.0)
+    _CHATS_CACHE.pop(tgt, None)
     if result is None:
         raise HTTPException(status_code=504, detail="runner did not respond")
     if isinstance(result.get("results"), list):

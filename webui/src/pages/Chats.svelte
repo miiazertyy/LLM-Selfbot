@@ -14,6 +14,7 @@
   import Empty from "../lib/components/Empty.svelte";
   import Icon from "../lib/components/Icon.svelte";
   import UserChip from "../lib/components/UserChip.svelte";
+  import Avatar from "../lib/components/Avatar.svelte";
   import ErrorNote from "../lib/components/ErrorNote.svelte";
 
   type ChatUser = {
@@ -53,10 +54,6 @@
     /** Unix seconds when the bot will accept it on its own, if scheduled. */
     accept_at?: number | null;
   };
-  // A Discord CDN link expires, and a dead <img> is worse than the glyph it
-  // replaced, so a failed load falls back rather than showing a broken image.
-  let brokenAvatars = $state<Record<string, boolean>>({});
-
   let requests = $state<FriendRequest[]>([]);
   let friendsSupported = $state(true);
   let friendBusy = $state<Record<string, boolean>>({});
@@ -508,14 +505,7 @@
     <div class="space-y-1.5">
       {#each incoming as r (r.id)}
         <div class="flex items-center gap-3 rounded-lg bg-white/[0.04] px-2.5 py-2">
-          {#if r.avatar}
-            <img src={r.avatar} alt="" referrerpolicy="no-referrer"
-                 class="h-8 w-8 shrink-0 rounded-full object-cover ring-1 ring-edge" />
-          {:else}
-            <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/[0.06] text-faint">
-              <Icon name="accounts" size={14} />
-            </span>
-          {/if}
+          <Avatar src={r.avatar} name={r.display_name || r.username} size={32} />
           <span class="min-w-0 flex-1">
             <span class="block truncate text-[13px] text-ink">
               {r.display_name || r.username}
@@ -581,15 +571,7 @@
   <div class="space-y-2">
     {#each ordered as u (u.id)}
       <div class="glass flex flex-wrap items-start gap-x-4 gap-y-3 p-4">
-        {#if u.avatar && !brokenAvatars[u.id]}
-          <img src={u.avatar} alt="" referrerpolicy="no-referrer"
-               onerror={() => (brokenAvatars = { ...brokenAvatars, [u.id]: true })}
-               class="h-9 w-9 shrink-0 rounded-full object-cover ring-1 ring-edge" />
-        {:else}
-          <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/[0.06] text-muted">
-            <Icon name="accounts" size={16} />
-          </span>
-        {/if}
+        <Avatar src={u.avatar} name={u.name} size={36} />
 
         <div class="min-w-0 flex-1">
           <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -674,14 +656,7 @@
       <div class="mt-1 divide-y divide-edge/50 rounded-xl bg-white/[0.02] p-1">
         {#each archived as c (c.id)}
           <div class="flex items-center gap-3 px-2 py-2">
-            {#if c.avatar}
-              <img src={c.avatar} alt="" referrerpolicy="no-referrer"
-                   class="h-7 w-7 shrink-0 rounded-full object-cover ring-1 ring-edge" />
-            {:else}
-              <span class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white/[0.06] text-faint">
-                <Icon name="accounts" size={13} />
-              </span>
-            {/if}
+            <Avatar src={c.avatar} name={c.name} size={28} />
             <span class="min-w-0 flex-1 truncate">
               <UserChip id={c.id} name={c.name} />
             </span>

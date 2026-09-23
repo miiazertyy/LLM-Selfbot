@@ -17,6 +17,7 @@
   import Icon from "../lib/components/Icon.svelte";
   import UserChip from "../lib/components/UserChip.svelte";
   import ErrorNote from "../lib/components/ErrorNote.svelte";
+  import Avatar from "../lib/components/Avatar.svelte";
 
   type MemUser = {
     user_id: string;
@@ -236,14 +237,7 @@
                   {selected === u.user_id ? 'bg-accent/10' : 'hover:bg-white/[0.04]'}"
               >
                 <!-- A face is how you actually recognise someone in a list. -->
-                {#if u.avatar}
-                  <img src={u.avatar} alt="" loading="lazy" referrerpolicy="no-referrer"
-                       class="h-8 w-8 shrink-0 rounded-full object-cover ring-1 ring-edge" />
-                {:else}
-                  <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/[0.06] text-faint">
-                    <Icon name="accounts" size={14} />
-                  </span>
-                {/if}
+                <Avatar src={u.avatar} size={32} zoom={false} />
                 <span class="min-w-0 flex-1">
                   <span class="block truncate text-[13px] text-ink">
                     {u.display_name || u.username || `#${u.user_id}`}

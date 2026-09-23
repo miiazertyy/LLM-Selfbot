@@ -13,6 +13,7 @@
   import Chart from "../lib/components/Chart.svelte";
   import ErrorNote from "../lib/components/ErrorNote.svelte";
   import UserChip from "../lib/components/UserChip.svelte";
+  import Avatar from "../lib/components/Avatar.svelte";
 
   type Account = {
     id: string;
@@ -381,7 +382,8 @@
                 <div class="flex items-start gap-3">
                   <!-- The real avatar once the account has connected at least once. -->
                   {#if acct?.avatar}
-                    <img src={acct.avatar} alt="" class="h-10 w-10 shrink-0 rounded-full ring-1 ring-edge" />
+                    <Avatar src={acct.avatar}
+                            name={acct?.display_name || acct?.username || c.label} size={40} />
                   {:else}
                     <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/[0.06] text-muted">
                       <Icon name={c.role === "snapchat" ? "snapchat" : c.role === "telegram" ? "chats" : "accounts"} size={17} />

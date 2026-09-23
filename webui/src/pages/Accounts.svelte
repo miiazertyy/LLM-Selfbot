@@ -12,6 +12,7 @@
   import ErrorNote from "../lib/components/ErrorNote.svelte";
   import Profile from "../lib/components/Profile.svelte";
   import StatusDot from "../lib/components/StatusDot.svelte";
+  import Avatar from "../lib/components/Avatar.svelte";
 
   type Runtime = {
     id: string;
@@ -400,7 +401,7 @@
                    avatar is actually cut away under it. -->
               <span class="relative block h-10 w-10 shrink-0" title={presenceLabel(s)}>
                 {#if rt?.avatar}
-                  <img src={rt.avatar} alt="" class="h-10 w-10 rounded-full ring-1 ring-edge" />
+                  <Avatar src={rt.avatar} name={rt?.display_name || rt?.username || ""} size={40} />
                 {:else}
                   <span class="flex h-10 w-10 items-center justify-center rounded-full bg-white/[0.06] text-accent">
                     <Icon name={s.platform === "snapchat" ? "snapchat" : "accounts"} size={18} />

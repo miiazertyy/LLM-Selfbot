@@ -148,7 +148,16 @@ export const api = {
   instructions: () => request("/api/instructions"),
   saveInstructions: (text: string, target?: string) =>
     request("/api/instructions", { method: "POST", body: JSON.stringify({ text, target }) }),
-  chats: (target = "") => request(`/api/chats${target ? `?target=${encodeURIComponent(target)}` : ""}`),
+  chats: (target = "", fresh = false) => {
+    // `fresh` skips the server's warm cache. The background prefetch and the
+    // first paint are happy with a few-seconds-old answer; a refresh the user
+    // asked for is not.
+    const q = new URLSearchParams();
+    if (target) q.set("target", target);
+    if (fresh) q.set("fresh", "1");
+    const s = q.toString();
+    return request(`/api/chats${s ? `?${s}` : ""}`);
+  },
   reply: (user_id: any, target = "") =>
     request("/api/chats/reply", { method: "POST", body: JSON.stringify({ user_id, target }) }),
   replyAll: (target = "") =>

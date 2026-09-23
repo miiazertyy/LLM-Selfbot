@@ -11,7 +11,7 @@
    * renders as plain text with no affordance at all.
    */
   import { api } from "../api";
-  import Icon from "./Icon.svelte";
+  import Avatar from "./Avatar.svelte";
 
   let { id, name, sub = "", size = "sm" } = $props<{
     id?: string | number;
@@ -23,7 +23,6 @@
   let open = $state(false);
   let loading = $state(false);
   let person = $state<any>(null);
-  let avatarBroken = $state(false);
   let copied = $state(false);
   let anchor: HTMLElement | null = $state(null);
   let card: HTMLElement | null = $state(null);
@@ -98,7 +97,6 @@
     }
     open = true;
     loading = true;
-    avatarBroken = false;
     place();
     try {
       person = await api.person(String(id));
@@ -191,19 +189,7 @@
       <!-- The avatar is a Discord CDN link cached when the bot last saw them.
            A link can rot, so a failed load falls back to the placeholder
            rather than leaving a broken image icon in the card. -->
-      {#if person?.avatar && !avatarBroken}
-        <img
-          src={person.avatar}
-          alt=""
-          referrerpolicy="no-referrer"
-          onerror={() => (avatarBroken = true)}
-          class="h-14 w-14 shrink-0 rounded-full object-cover ring-1 ring-edge"
-        />
-      {:else}
-        <span class="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-white/[0.06] text-muted">
-          <Icon name="accounts" size={22} />
-        </span>
-      {/if}
+      <Avatar src={person?.avatar || ""} name={heading} size={56} />
       <div class="min-w-0 flex-1">
         <div class="truncate text-[15px] font-semibold text-ink">{heading}</div>
         {#if handle}
