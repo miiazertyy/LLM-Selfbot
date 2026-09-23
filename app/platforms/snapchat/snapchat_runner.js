@@ -19,9 +19,13 @@ import { patchConsole } from "./log.js";
 // .env location: explicit override (set by the Python bridge) > bundled config
 // (source) > repo config (frozen, where the bridge usually set it already).
 const DOTENV_PATH = process.env.SNAP_DOTENV_PATH || "../../config/.env";
-dotenv.config({ path: DOTENV_PATH });
+// quiet: from dotenv 17 on, every config() call prints a line - 17 with an
+// advert, 18 with "injected env (N) from <file>" - and this process's output
+// is the panel's Logs tab. 16 ignores the option, so it is safe on whichever
+// version an install actually has in node_modules.
+dotenv.config({ path: DOTENV_PATH, quiet: true });
 if (!process.env.SNAP_USERNAME) {
-  dotenv.config({ path: ".env" });
+  dotenv.config({ path: ".env", quiet: true });
 }
 
 // Reformats all console output into one clean style; respects SNAP_DEBUG.
@@ -65,9 +69,13 @@ const STATE_FILE     = path.join(IPC_DIR, `snap_state${SFX}.json`);
  * runner being busy or wedged - which is the case it exists to report.
  */
 let lastState = "";
+let lastDetail = "";
+let lastWrite = 0;
 function setState(state, detail = "") {
   if (state === lastState && !detail) return;
   lastState = state;
+  lastDetail = detail;
+  lastWrite = Date.now();
   try {
     fs.writeFileSync(
       STATE_FILE,
@@ -77,6 +85,21 @@ function setState(state, detail = "") {
   } catch {
     /* the log still carries it */
   }
+}
+
+/**
+ * Rewrite the current state once a minute while running.
+ *
+ * States are only written when they change, so without this a healthy runner
+ * that had been "ready" for ten minutes looked exactly like one that had died
+ * ten minutes ago - and the panel could not tell the two apart. A fresh
+ * timestamp is what "still alive" means.
+ */
+function heartbeatState() {
+  if (!lastState || Date.now() - lastWrite < 60 * 1000) return;
+  const s = lastState;
+  lastState = "";                 // force the write through
+  setState(s, lastDetail);
 }
 
 // ── Wake channel ─────────────────────────────────────────────────────────────
@@ -513,6 +536,26 @@ async function periodicReload(bot, state) {
 
   state.due = Date.now() + nextReloadGap();
   return true;
+}
+
+/**
+ * Check the selectors and put anything broken where the panel can see it.
+ *
+ * The check itself only logs; this is what makes a rotated class name show up
+ * on the Snapchat card as "2 selectors stopped matching" rather than as an
+ * account that is running and inexplicably silent.
+ */
+async function reportSelectorHealth(bot) {
+  let h;
+  try {
+    h = await bot.selectorHealth();
+  } catch {
+    return;
+  }
+  if (h.missing.length) {
+    const names = h.missing.map((m) => m.replace(/\s*\(.*\)$/, "")).join(", ");
+    setState("ready", `Running, but Snapchat changed its page: ${names} no longer found. Replies may fail.`);
+  }
 }
 
 /** Jittered gap to the next reload, +/-25% of the configured interval. */
@@ -974,6 +1017,7 @@ async function main() {
   }
 
   setState("ready");
+  await reportSelectorHealth(bot);
   console.log(`[Snap] Ready. Polling every ~${Math.round(POLL_INTERVAL_MS / 1000)}s for new messages...`);
   console.log(
     `[Snap] 🛡️ Anti-ban: ${Math.round(MIN_SEND_GAP_MS / 1000)}–${Math.round(MAX_SEND_GAP_MS / 1000)}s between sends, ` +
@@ -1011,6 +1055,7 @@ async function main() {
   }
 
   while (true) {
+    heartbeatState();
     try {
       // 0. A long-lived page stops listing some chats. Refresh before reading,
       // never mid-reply - periodicReload() defers itself if one is pending.
@@ -1019,6 +1064,9 @@ async function main() {
           if (await periodicReload(bot, reloadState)) {
             lastDialogCheck = Date.now();
             setState("ready");
+            // A reload is when a new Snapchat build arrives, so it is also
+            // when a selector is most likely to have just stopped matching.
+            await reportSelectorHealth(bot);
           }
         } catch (rlErr) {
           console.warn("[Snap] Refresh error:", rlErr.message);

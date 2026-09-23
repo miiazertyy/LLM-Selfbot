@@ -496,5 +496,16 @@ try:
 finally:
     _sh.rmtree(_tmp, ignore_errors=True)
 
+
+print()
+print("== the Snapchat runner says when it has stopped, and when the page changed ==")
+check("a running runner refreshes its state every minute", "heartbeatState()" in _run)
+check("a stopped runner still shows what it last said",
+      "last said" in (ROOT / "webui" / "src" / "lib" / "components" / "SnapchatSetup.svelte").read_text(encoding="utf-8"))
+check("selector drift is checked when it is ready", "await reportSelectorHealth(bot)" in _run)
+check("and again after every reload, when a new build arrives",
+      _run.count("reportSelectorHealth(bot)") >= 2)
+check("dotenv is kept out of the Logs tab", _run.count("quiet: true") == 2)
+
 print(f"\n  {len(PASS)} passed, {len(FAIL)} failed")
 sys.exit(1 if FAIL else 0)

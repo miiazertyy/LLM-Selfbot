@@ -781,9 +781,11 @@ async def snap_status(request: Request):
     }
 
 
-# A runner that has not written for this long is not telling us anything
-# current - it may have been killed without clearing the file.
-_SNAP_STATE_STALE = 300.0
+# A running runner rewrites its state every minute, so one that has gone
+# quiet for this long is not running any more. Its last state is still worth
+# showing - "logged out" is the most useful thing to see after it stops - but
+# as the last thing it said, not as what is happening now.
+_SNAP_STATE_STALE = 180.0
 
 
 def _snap_runner_states() -> list[dict]:

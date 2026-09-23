@@ -37,9 +37,10 @@
     stale: boolean;
   };
 
-  // Only the ones still writing. A state from an hour ago is not news, and
-  // presenting it as current would be worse than saying nothing.
-  const live = $derived((status?.runners ?? []).filter((r) => !r.stale));
+  // Every runner that has said anything. A stopped one is shown too, as what
+  // it last said: "logged out" matters most right after the runner gives up,
+  // which is exactly when it stops writing. Hiding stale entries hid that.
+  const live = $derived(status?.runners ?? []);
 
   const TONE: Record<string, "good" | "warn" | "bad" | "muted"> = {
     ready: "good",
@@ -99,7 +100,11 @@
       <div class="space-y-1.5">
         {#each live as r (r.account ?? 0)}
           <div class="glass flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl px-3 py-2.5">
-            <Badge tone={TONE[r.state] ?? "muted"}>
+            {#if r.stale}
+              <Badge tone="muted">Not running</Badge>
+              <span class="text-[11px] text-faint">last said:</span>
+            {/if}
+            <Badge tone={r.stale ? "muted" : (TONE[r.state] ?? "muted")}>
               {SAYS[r.state] ?? r.state}
             </Badge>
             {#if r.account}

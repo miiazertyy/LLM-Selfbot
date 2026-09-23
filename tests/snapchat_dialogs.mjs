@@ -21,6 +21,16 @@ const PAGES = {
       <input name="u"><button>Next</button></form>`,
   // Something that says Next but never goes away.
   "/web/stuck": `<div><button onclick="window.clicks=(window.clicks||0)+1">Next</button></div>`,
+  // A chat as the bot knows it, every selector present.
+  "/web/chat-ok": `<div role="listitem">Ana</div>
+      <div id="cv-123"><ul><li class="T1yt2"><div class="KB4Aq"></div>
+      <span class="ogn1z">hey</span></li></ul><div role="textbox"></div></div>`,
+  // The same chat after a Snapchat build renamed the text class.
+  "/web/chat-drift": `<div role="listitem">Ana</div>
+      <div id="cv-123"><ul><li class="T1yt2"><div class="KB4Aq"></div>
+      <span class="zz9Qx">hey</span></li></ul><div role="textbox"></div></div>`,
+  // The app, with no chat open.
+  "/web/sidebar": `<div role="listitem">Ana</div>`,
   // Buttons that must never be pressed.
   "/web/danger": `<div role="dialog"><button onclick="window.bad=1">Log out</button>
       <button onclick="window.bad=1">Allow</button><button onclick="window.bad=1">Delete</button></div>`,
@@ -67,6 +77,21 @@ check("a Next that never goes away is not pressed forever", stuck > 0 && stuck <
 await visit("/web/danger");
 await bot.handlePopup();
 check("Log out / Allow / Delete are never pressed", (await read("bad")) === 0);
+
+// ── selectorHealth() ─────────────────────────────────────────────────────
+await visit("/web/chat-ok");
+let h = await bot.selectorHealth();
+check("a healthy chat reports nothing missing", h.missing.length === 0, JSON.stringify(h.missing));
+
+await visit("/web/chat-drift");
+h = await bot.selectorHealth();
+check("a renamed class is named, not silently ignored",
+      h.missing.length === 1 && h.missing[0].includes("span.ogn1z"), JSON.stringify(h.missing));
+
+await visit("/web/sidebar");
+h = await bot.selectorHealth();
+check("chat selectors are not judged when no chat is open",
+      h.missing.length === 0 && h.skipped.includes("message text"), JSON.stringify(h));
 
 await browser.close();
 srv.close();

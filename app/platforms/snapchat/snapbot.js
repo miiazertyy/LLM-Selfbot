@@ -700,6 +700,54 @@ export default class SnapBot {
   }
 
   /**
+   * Which of the selectors the bot depends on still match this build.
+   *
+   * Snapchat regenerates its class names whenever it ships, and most of what
+   * this file reads by is those class names - "li.T1yt2" for a message group,
+   * "span.ogn1z" for its text, ".KB4Aq" to tell your own messages from theirs.
+   * When one rotates nothing throws: the reader just finds nothing, and the bot
+   * goes quiet with no clue in the log. That is the failure this turns into a
+   * single line naming the selector that stopped matching.
+   *
+   * Only meaningful on a page where the thing should exist, so each probe says
+   * where it applies; "chat" ones are checked only while a chat is open.
+   *
+   * @returns {Promise<{ok: string[], missing: string[], skipped: string[]}>}
+   */
+  async selectorHealth() {
+    const PROBES = [
+      // The sidebar: without these, no chat is ever found.
+      { name: "chat list rows", sel: "div[role='listitem']", where: "app" },
+      // Reading: these are what make the bot able to hear anything at all.
+      { name: "message group", sel: "li.T1yt2", where: "chat" },
+      { name: "message text", sel: "span.ogn1z", where: "chat" },
+      { name: "who-sent-it marker", sel: ".KB4Aq", where: "chat" },
+      // Writing.
+      { name: "message box", sel: "div[role='textbox'], [contenteditable='true']", where: "chat" },
+    ];
+    let result;
+    try {
+      result = await this.page.evaluate((probes) => {
+        const inChat = !!document.querySelector("[id^='cv-']");
+        const out = { ok: [], missing: [], skipped: [] };
+        for (const p of probes) {
+          if (p.where === "chat" && !inChat) { out.skipped.push(p.name); continue; }
+          (document.querySelector(p.sel) ? out.ok : out.missing).push(`${p.name} (${p.sel})`);
+        }
+        return out;
+      }, PROBES);
+    } catch {
+      return { ok: [], missing: [], skipped: PROBES.map((p) => p.name) };
+    }
+    if (result.missing.length) {
+      console.warn(`[Snap] ⚠️  ${result.missing.length} selector(s) no longer match this Snapchat build:`);
+      for (const m of result.missing) console.warn(`[Snap]      - ${m}`);
+      console.warn("[Snap]    Snapchat changed its page. Replies may stop until these are updated.");
+    }
+    return result;
+  }
+
+  /**
    * Dump all visible buttons to console, run this when a selector breaks
    * so you can see what classes Snapchat is using in the current version.
    */
