@@ -120,6 +120,7 @@ DESCRIPTIONS = {
     "bot.client_profile": "Which client the account presents as. web is safer, desktop spoofs the app.",
     "bot.timezone": "Persona timezone, sent in requests and used for the night schedule.",
     "bot.locale": "Persona locale, sent in requests.",
+    "snapchat.verify_wait_ms": "How long to wait for email/code verification. 0 waits indefinitely.",
     "bot.local.vision_model": "Local model that reads pictures. Empty sends them to Groq.",
     "bot.local.stt_model": "Local model that transcribes voice messages. Empty sends them to Groq.",
     "bot.local.tts_model": "Local model that speaks. Empty sends voice notes to Groq.",

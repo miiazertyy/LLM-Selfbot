@@ -121,6 +121,7 @@ async def _chats_payload(tgt, fresh: bool = False) -> dict:
         body = {
             "users": users,
             "target": tgt,
+            "truncated": bool(result.get("truncated")),
             "paused": result.get("paused", False),
             "cooldown_until": result.get("cooldown_until", 0),
             "cooldown_range": result.get("cooldown_range"),

@@ -1336,11 +1336,27 @@ async def _tg_ipc_loop():
                     # 20 DMs the per-channel cost drained an hour of budget in
                     # three refreshes, after which conversations just vanished.
                     _scanned = 0
-                    _SCAN_CAP = 30
+                    # Raised from 30, and - the part that actually mattered -
+                    # the channels are now walked newest-first. The cap always
+                    # truncated the SAME arbitrary 30, because private_channels
+                    # comes back in whatever order Discord sent it, so anyone
+                    # past position 30 in that list was never looked at once.
+                    # An unread message is recent by definition, so sorting by
+                    # last_message_id (a snowflake, so it sorts by time) puts
+                    # the ones worth finding at the front and leaves only a
+                    # long-idle tail to be cut.
+                    _SCAN_CAP = 80
+                    _truncated = False
                     try:
                         _selfbot_id = getattr(bot, "selfbot_id", None) or bot.user.id
                         _sweep_ok = history_scan_allowed()
-                        for _ch in bot.private_channels:
+                        _dms = sorted(
+                            (c for c in bot.private_channels
+                             if isinstance(c, discord.DMChannel)),
+                            key=lambda c: c.last_message_id or 0,
+                            reverse=True,
+                        )
+                        for _ch in _dms:
                             if not isinstance(_ch, discord.DMChannel):
                                 continue
                             _other = _ch.recipient
@@ -1360,7 +1376,8 @@ async def _tg_ipc_loop():
                                 # One budget unit covers the sweep; the cap keeps
                                 # a huge DM list from turning into a REST storm.
                                 if not _sweep_ok or _scanned >= _SCAN_CAP:
-                                    continue
+                                    _truncated = True
+                                    break
                                 _scanned += 1
                                 _last_msgs = [m async for m in _ch.history(limit=10)]
                                 if not _last_msgs:
@@ -1391,6 +1408,33 @@ async def _tg_ipc_loop():
                     except Exception:
                         pass
 
+                    # ── Pass 3: the waiting list on disk ─────────────────────
+                    # unresponded_messages has recorded this all along and
+                    # nothing ever read it back. It is the only source that
+                    # survives a restart and does not need the DM channel to
+                    # still be in Discord's cache, so it catches people the two
+                    # passes above cannot see at all.
+                    try:
+                        from app.utils.db import get_unresponded as _get_unres
+                        for _row in _get_unres():
+                            _ruid = int(_row["user_id"])
+                            if _ruid in seen_ids or _ruid in _blocked_users:
+                                continue
+                            if _ruid == _selfbot_id:
+                                continue
+                            seen_ids.add(_ruid)
+                            _ru = _seen_users.get(_ruid) or bot.get_user(_ruid)
+                            _rtext = _row.get("content") or "[attachment]"
+                            users_out.append({
+                                "id": _ruid,
+                                "name": _ru.name if _ru else str(_ruid),
+                                "snippet": (_rtext[:60] + "…") if len(_rtext) > 60 else _rtext,
+                                "count": 1,
+                                "ts": _row.get("received_at") or 0,
+                            })
+                    except Exception as _dbe:
+                        print(f"[Chats] could not read the stored waiting list: {_dbe}")
+
                     # Why nothing has moved yet, so the page can say "in 40s"
                     # rather than leaving a list of unanswered people with no
                     # explanation. All of it is state the runner already holds.
@@ -1399,6 +1443,9 @@ async def _tg_ipc_loop():
                         _cool_until = getattr(bot, "last_global_send", 0.0) + GLOBAL_COOLDOWN_MIN
                     _write_result(cmd_id, {
                         "users": users_out,
+                        # True when the DM sweep hit its cap, so the panel can
+                        # say the list is the most recent N rather than all.
+                        "truncated": _truncated,
                         "paused": getattr(bot, "paused", False),
                         # Unix time when the next reply may be sent, or 0.
                         "cooldown_until": _cool_until if _cool_until > time.time() else 0,

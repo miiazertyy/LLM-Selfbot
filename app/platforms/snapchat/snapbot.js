@@ -347,79 +347,80 @@ export default class SnapBot {
 
   /**
    * After credentials are submitted Snapchat sometimes shows an email
-   * verification step. This waits (up to `timeoutMs`) for the user to click the
-   * link in their inbox, at which point the browser lands on web.snapchat.com.
+   * verification step. This waits for the person to click the link in their
+   * inbox, at which point the browser lands on web.snapchat.com.
    *
-   * @param {number} timeoutMs  How long to wait (default 5 minutes)
-   * @returns {Promise<boolean>} true if verification completed, false if timed out
+   * It waits forever by default, and that is deliberate. It used to give up
+   * after five minutes and close the browser, which is not long enough to find
+   * an email that went to spam, and is hopeless if you stepped away from the
+   * machine. Worse, closing Chrome threw away the half-finished login, so the
+   * next attempt started from the beginning and asked Snapchat for another
+   * code - which is how an account starts looking suspicious.
+   *
+   * @param {number} timeoutMs  How long to wait. 0 or less waits indefinitely.
+   * @returns {Promise<boolean>} true once verification is through
    */
-  async awaitEmailVerification(timeoutMs = 5 * 60 * 1000) {
-    const url = this.page.url();
-
-    // Check if we're on a verification / "check your email" interstitial.
-    // Snapchat uses several URL patterns for this step.
-    const onVerificationScreen =
-      url.includes("accounts.snapchat.com") &&
-      (url.includes("verify") ||
-        url.includes("email") ||
-        url.includes("check") ||
-        url.includes("confirm") ||
-        url.includes("unlock") ||
-        // Catch-all: still on accounts domain after login attempt
-        true);
-
-    if (!onVerificationScreen) return true; // already past it
-
-    // Also try to detect the screen by page text
+  async awaitEmailVerification(timeoutMs = 0) {
+    // Being on the accounts domain and not on /welcome IS the pending state -
+    // that is the only reason this gets called. The page text is read to say
+    // what kind of screen it is, not to decide whether to wait: the check was
+    // English with two French words bolted on, so a Snapchat in any other
+    // language read as "nothing to wait for" and the login was abandoned.
+    let kind = "Verification needed";
     try {
       const bodyText = await this.page.evaluate(() => document.body.innerText.toLowerCase());
-      const isVerifyPage =
-        bodyText.includes("check your email") ||
-        bodyText.includes("verify your email") ||
-        bodyText.includes("confirmation email") ||
-        bodyText.includes("click the link") ||
-        bodyText.includes("sent you an email") ||
-        bodyText.includes("vérifi") || // French
-        bodyText.includes("courriel");  // French
-
-      if (!isVerifyPage) return true; // not a verification page, nothing to wait for
+      if (/check your email|verify your email|confirmation email|sent you an email|courriel|vérifi/.test(bodyText))
+        kind = "Email verification needed";
+      else if (/code|sms|phone|text message|t.l.phone/.test(bodyText))
+        kind = "A code was sent to you";
     } catch {
-      // page evaluate failed, just wait anyway
+      /* page mid-navigation; the URL already told us enough */
     }
 
-    console.log("[Snap] 📧  Email verification required.");
-    console.log("[Snap]     Open your inbox and click the link Snapchat sent you.");
-    console.log(`[Snap]     Waiting up to ${timeoutMs / 1000}s for you to verify...`);
+    console.log(`[Snap] 📧  ${kind}.`);
+    console.log("[Snap]     Finish it in the Chrome window that is open - check spam too.");
+    console.log(timeoutMs > 0
+      ? `[Snap]     Waiting up to ${Math.round(timeoutMs / 1000)}s.`
+      : "[Snap]     Waiting for as long as it takes. Nothing is closed in the meantime.");
 
     const start = Date.now();
     const pollMs = 3000;
+    let lastBeat = 0;
 
-    while (Date.now() - start < timeoutMs) {
+    for (;;) {
       await delay(pollMs);
       try {
         const currentUrl = this.page.url();
         // /v2/welcome means auth succeeded, not a pending verification
         if (currentUrl.includes("/v2/welcome") || currentUrl.includes("/welcome")) {
-          console.log("[Snap] ✅  Email verification completed (welcome page detected).");
+          console.log("[Snap] ✅  Verification completed (welcome page detected).");
           return true;
         }
         // Redirected away from accounts domain entirely, definitely through
         if (!currentUrl.includes("accounts.snapchat.com")) {
-          console.log("[Snap] ✅  Email verification detected, continuing.");
+          console.log("[Snap] ✅  Verification completed, continuing.");
           return true;
         }
-        // Print a heartbeat every 30 s so the user knows the bot is still alive
-        const elapsed = Math.round((Date.now() - start) / 1000);
-        if (elapsed % 30 === 0) {
-          console.log(`[Snap]     Still waiting for email verification... (${elapsed}s elapsed)`);
-        }
       } catch {
-        // page might be navigating, ignore and retry
+        // The page can also go away because the person closed the window.
+        if (this.page.isClosed?.()) {
+          console.error("[Snap] ❌  The browser window was closed before verification finished.");
+          return false;
+        }
+      }
+
+      const elapsed = Math.round((Date.now() - start) / 1000);
+      // Time-based rather than `elapsed % 30 === 0`: the poll drifts, so the
+      // old check silently skipped beats whenever it landed off the boundary.
+      if (elapsed - lastBeat >= 30) {
+        lastBeat = elapsed;
+        console.log(`[Snap]     Still waiting for verification... (${elapsed}s)`);
+      }
+      if (timeoutMs > 0 && Date.now() - start >= timeoutMs) {
+        console.error(`[Snap] ❌  Gave up waiting for verification after ${elapsed}s.`);
+        return false;
       }
     }
-
-    console.error("[Snap] ❌  Timed out waiting for email verification.");
-    return false;
   }
 
   async isLogged() {
@@ -560,32 +561,106 @@ export default class SnapBot {
     }
   }
 
-  async handlePopup() {
+  /**
+   * Clear whatever Snapchat is showing over the app before it can be used.
+   *
+   * This used to know two selectors: a data-testid, and `button.NRgbw.eKaL7.Bnaur`
+   * - three obfuscated class names from one particular build. Those are
+   * regenerated whenever Snapchat ships, so that selector was only ever going
+   * to work until it did not, and when it stopped the bot simply sat on the
+   * dialog for ever: "Welcome to Snapchat for Web!" with a Next button, and
+   * nothing behind it reachable.
+   *
+   * Buttons are found by the words on them instead. That is what a person
+   * reads, it is the one thing that does not change between builds, and it is
+   * translated rather than obfuscated, so listing the labels covers other
+   * languages too.
+   *
+   * The list is an allowlist, deliberately. Clicking "whatever button is in the
+   * dialog" would eventually click Log out, Delete, or Allow notifications -
+   * and a browser notification permission is exactly the kind of thing this
+   * account should not be granting.
+   */
+  async handlePopup(maxSteps = 6) {
     // The cookie-consent modal can also show on the web app after login.
     await this.acceptCookies();
 
-    const possibleSelectors = [
-      'button[data-testid="notifications-dismiss"]',
-      'button.NRgbw.eKaL7.Bnaur',
+    // Ordered: onboarding first, then the dismissals. Lower case, punctuation
+    // stripped, so "Okay!" and "OK" both land on "ok".
+    const LABELS = [
+      "next", "continue", "got it", "gotit", "ok", "okay", "done", "finish",
+      "not now", "later", "maybe later", "skip", "no thanks", "dismiss", "close",
+      // French, Spanish, German, Portuguese, Italian - the app follows the
+      // account's language, not the machine's.
+      "suivant", "continuer", "compris", "d accord", "plus tard", "non merci", "ignorer",
+      "siguiente", "continuar", "entendido", "ahora no", "mas tarde", "omitir",
+      "weiter", "verstanden", "spater", "nicht jetzt", "uberspringen",
+      "proximo", "avancar", "entendi", "agora nao", "mais tarde",
+      "avanti", "ho capito", "non ora", "piu tardi", "salta",
     ];
 
-    console.log("Checking for popup 'Not now' button...");
-    for (const selector of possibleSelectors) {
-      try {
-        const btn = await this.page.waitForSelector(selector, {
-          visible: true,
-          timeout: 3000,
-        });
-        if (btn) {
-          await btn.click();
-          console.log("Clicked 'Not now' button.");
-          return;
+    const clickOne = async () => {
+      // Done in one page.evaluate rather than a selector per candidate: the
+      // dialog is on screen now, and round-tripping per guess is what made the
+      // old version take three seconds per selector to find nothing.
+      return await this.page.evaluate((labels) => {
+        const norm = (s) =>
+          (s || "")
+            .toLowerCase()
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "")   // accents: "d'accord" -> "d accord"
+            .replace(/[^a-z0-9 ]+/g, " ")
+            .replace(/\s+/g, " ")
+            .trim();
+
+        const visible = (el) => {
+          if (!el.offsetWidth && !el.offsetHeight) return false;
+          const st = getComputedStyle(el);
+          return st.visibility !== "hidden" && st.display !== "none" && st.opacity !== "0";
+        };
+
+        const buttons = [...document.querySelectorAll(
+          'button, [role="button"], a[role="button"]')].filter(visible);
+
+        // Best match by list order, so "next" beats "close" when a dialog has
+        // both and going forward is what actually finishes the onboarding.
+        let best = null;
+        let bestRank = Infinity;
+        for (const el of buttons) {
+          const text = norm(el.innerText || el.textContent || el.getAttribute("aria-label"));
+          if (!text) continue;
+          const rank = labels.indexOf(text);
+          if (rank !== -1 && rank < bestRank) {
+            best = el;
+            bestRank = rank;
+          }
         }
+        if (!best) return null;
+        const label = (best.innerText || best.textContent || "").trim().slice(0, 40);
+        best.click();
+        return label;
+      }, LABELS);
+    };
+
+    let cleared = 0;
+    for (let step = 0; step < maxSteps; step++) {
+      let label = null;
+      try {
+        label = await clickOne();
       } catch {
-        // Try next selector
+        break;                      // page navigating; whatever is left is next time
       }
+      if (!label) break;
+      cleared++;
+      console.log(`[Snap] Dismissed dialog step: "${label}"`);
+      // These are usually multi-step ("Next" then "Next" then gone), and the
+      // next one animates in.
+      await delay(900);
     }
-    console.log("No popup found.");
+
+    if (cleared) console.log(`[Snap] Cleared ${cleared} dialog step(s).`);
+    else console.log("[Snap] No dialog in the way.");
+    return cleared;
   }
 
   /**

@@ -364,3 +364,9 @@ snapchat:
   # Automatically accept pending friend requests.
   # OFF by default, bulk-accepting is a classic automation flag.
   auto_add_friends: false
+
+  # How long to wait when Snapchat asks you to verify by email or code.
+  # 0 waits for as long as it takes, which is the point: the browser window is
+  # the only place that verification can be finished, and closing it throws the
+  # half-finished login away and makes the next try ask for another code.
+  verify_wait_ms: 0

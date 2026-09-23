@@ -1160,6 +1160,7 @@ def _spawn_node_runner():
             "max_sends_per_hour": "SNAP_MAX_SENDS_PER_HOUR",
             "quiet_hours": "SNAP_QUIET_HOURS",
             "auto_add_friends": "SNAP_AUTO_ADD_FRIENDS",
+            "verify_wait_ms": "SNAP_VERIFY_WAIT_MS",
         }
         for yaml_key, env_key in env_map.items():
             val = snap_cfg.get(yaml_key)

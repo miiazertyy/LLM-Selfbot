@@ -746,13 +746,20 @@ async function main() {
     let currentUrl = bot.page.url();
     console.log(`[Snap] Post-login URL: ${currentUrl}`);
 
-    // Email verification interstitial, wait for the user to click the link
+    // Email or code interstitial: wait for it to be finished in the browser.
+    // SNAP_VERIFY_WAIT_MS sets a limit for anyone who wants one; the default
+    // of 0 waits indefinitely, because the browser staying open is the whole
+    // point - closing it throws away a half-finished login and makes the next
+    // attempt ask Snapchat for another code.
     if (currentUrl.includes("accounts.snapchat.com") && !currentUrl.includes("/welcome")) {
-      const verified = await bot.awaitEmailVerification(5 * 60 * 1000);
+      const verifyWait = Number(process.env.SNAP_VERIFY_WAIT_MS || 0) || 0;
+      const verified = await bot.awaitEmailVerification(verifyWait);
       if (!verified) {
-        console.error("[Snap] Email verification timed out. Closing.");
-        await bot.closeBrowser();
-        process.exit(1);
+        console.error("[Snap] Verification was not completed. Leaving the browser open so you can finish it.");
+        console.error("[Snap] Stop the account from the panel when you are done, and start it again.");
+        // Deliberately no closeBrowser() and no exit: the window is the only
+        // place the verification can be completed.
+        return;
       }
       currentUrl = bot.page.url();
     }
@@ -775,6 +782,15 @@ async function main() {
     }
 
     if (!loggedNow) {
+      // Still sitting on the auth domain means a challenge appeared late - a
+      // code screen after the welcome page, say. That is something a person can
+      // finish, so the window stays.
+      const stuckOnAuth = (bot.page.url() || "").includes("accounts.snapchat.com");
+      if (stuckOnAuth) {
+        console.error("[Snap] Snapchat is still asking for verification. Leaving the browser open.");
+        console.error("[Snap] Finish it there, then stop and start the account from the panel.");
+        return;
+      }
       console.error("[Snap] Login failed. Check credentials / 2FA.");
       await bot.closeBrowser();
       process.exit(1);
@@ -825,8 +841,26 @@ async function main() {
   // Reading and replying are deliberately separated across cycles so the bot
   // never sits inside a chat waiting on the model.
   let listFailures = 0; // consecutive "couldn't list recipients", triggers re-login check
+  // Snapchat puts its onboarding and announcement dialogs up whenever it feels
+  // like it, not only at login - and one of those sitting over the app makes
+  // every chat unclickable, so the bot goes quiet with nothing in the log to
+  // say why. Checked on a slow cycle rather than every poll: it is a page
+  // evaluate, cheap, but not free.
+  let lastDialogCheck = Date.now();
+  const DIALOG_CHECK_MS = 5 * 60 * 1000;
+
   while (true) {
     try {
+      // 0. Anything covering the app, before trying to use it.
+      if (Date.now() - lastDialogCheck >= DIALOG_CHECK_MS) {
+        lastDialogCheck = Date.now();
+        try {
+          await bot.handlePopup();
+        } catch (dlgErr) {
+          console.warn("[Snap] Dialog check error:", dlgErr.message);
+        }
+      }
+
       // 0. Decline any incoming call first (time-sensitive).
       if (DECLINE_CALLS) {
         try {

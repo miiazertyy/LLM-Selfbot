@@ -42,6 +42,7 @@
   import { hscroll } from "../lib/hscroll";
   import SnapchatSetup from "../lib/components/SnapchatSetup.svelte";
   import LocalAI from "../lib/components/LocalAI.svelte";
+  import { resource } from "../lib/resource";
 
   type FieldDef = {
     key: string;
@@ -57,10 +58,15 @@
     current: any;
   };
 
-  let fields = $state<FieldDef[]>([]);
+  // Held outside the page like every other tab's data. The schema is the
+  // slowest thing in the panel to build cold, and rebuilding it on every visit
+  // meant a blank Settings each time - including the first, which the startup
+  // warm-up now covers (lib/warm.ts).
+  const schema = resource("settingsSchema", () => api.schema(), { fields: [] as FieldDef[] });
+  const fields = $derived($schema.data?.fields ?? []);
   let dirty = $state<Record<string, any>>({});
   let saving = $state(false);
-  let loading = $state(true);
+  const loading = $derived($schema.loading);
   let loadError = $state("");
   let raw = $state("");
   let rawOpen = $state(false);
@@ -304,15 +310,11 @@
   });
 
   async function load() {
-    try {
-      const data = await api.schema();
-      fields = data.fields || [];
-      dirty = {};
-    } catch (e: any) {
-      loadError = e?.message || "Could not load";
-    } finally {
-      loading = false;
-    }
+    // maxAge 0 on an explicit reload, but the warm-up or a previous visit
+    // usually means this returns something to look at straight away.
+    await schema.refresh({ maxAge: 15000 });
+    loadError = $schema.error;
+    dirty = {};
   }
 
   const value = (f: FieldDef) => (f.key in dirty ? dirty[f.key] : f.current);
@@ -644,7 +646,7 @@
   </div>
 {/snippet}
 
-<ErrorNote text={loadError} onretry={() => { loadError = ""; loading = true; load(); }} />
+<ErrorNote text={loadError} onretry={() => { loadError = ""; schema.refresh({ force: true }); }} />
 
 {#if loading}
   <div class="space-y-2">

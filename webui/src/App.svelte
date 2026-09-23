@@ -12,6 +12,7 @@
   import { applyFont } from "./lib/fonts";
   import logo from "./assets/icon.png";
   import { startChatPrefetch } from "./lib/chats";
+  import { warmPages } from "./lib/warm";
   import { checkDescribeOnce } from "./lib/pictures";
   import { waitForBridge, isDesktop, minimize, closeWindow, startResize, setSize,
            openExternal } from "./lib/window";
@@ -68,6 +69,39 @@
       if (route === key) page = { key, comp: m.default };
     });
   });
+
+  /**
+   * Fetch every other page in the background, once this one is up.
+   *
+   * Splitting the pages into their own chunks stopped the Dashboard paying to
+   * download and compile Settings, System and Chats - but it moved that cost to
+   * the first click on each tab instead, where it is far more noticeable,
+   * because it is a wait you asked for and are watching.
+   *
+   * Doing both is better than either: the first paint still carries one page,
+   * and by the time anyone clicks anything the rest are already in memory.
+   * Idle time only, one at a time, so this never competes with the page that is
+   * actually on screen.
+   */
+  function idle(fn: () => void) {
+    if (typeof requestIdleCallback === "function") requestIdleCallback(() => fn(), { timeout: 3000 });
+    else setTimeout(fn, 300);
+  }
+
+  function prefetchPages() {
+    const pending = Object.keys(routes);
+    const step = () => {
+      const key = pending.shift();
+      if (key === undefined) return;
+      if (pageCache.has(key)) return step();
+      routes[key]
+        .load()
+        .then((m) => pageCache.set(key, m.default))
+        .catch(() => {})            // a chunk that will not load is not fatal
+        .finally(() => idle(step));
+    };
+    idle(step);
+  }
   let paletteOpen = $state(false);
   let desktop = $state(false);
 
@@ -192,6 +226,11 @@
     // leaving the bar hidden until someone opens Pictures.
     checkDescribeOnce();
 
+    // The other eight tabs: their code, then their data. Both were paid for on
+    // the first click, which is exactly when you are watching.
+    prefetchPages();
+    const stopWarm = warmPages();
+
     // Whether a backdrop and a typeface have been uploaded. Needed at startup,
     // not just when the Appearance tab is opened, because both apply app-wide.
     loadAppearance();
@@ -208,6 +247,7 @@
     return () => {
       stopHealthPoll();
       stopChatPrefetch();
+      stopWarm();
       window.removeEventListener("resize", onResize);
       window.removeEventListener("hashchange", parseHash);
       window.removeEventListener("keydown", onKey);

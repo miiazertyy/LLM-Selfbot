@@ -272,6 +272,28 @@ def mark_nudge_sent(user_id: int, channel_id: int):
         )
 
 
+def get_unresponded() -> list[dict]:
+    """Everyone who messaged and has not been answered, newest first.
+
+    The table has held this all along and nothing read it back: the waiting
+    list was built from the runner's in-memory history plus a live scan of the
+    DM channels, both of which miss people. This is the copy that survives a
+    restart and does not depend on a channel still being in Discord's cache.
+    """
+    with _connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT user_id, channel_id, content, received_at
+            FROM unresponded_messages
+            ORDER BY received_at DESC
+            """
+        ).fetchall()
+    return [
+        {"user_id": r[0], "channel_id": r[1], "content": r[2], "received_at": r[3]}
+        for r in rows
+    ]
+
+
 def get_pending_nudges(threshold_seconds: float) -> list[dict]:
     """Return all unresponded messages older than threshold that haven't been nudged yet."""
     with _connect() as conn:
