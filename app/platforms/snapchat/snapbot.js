@@ -78,7 +78,11 @@ export default class SnapBot {
     this.browser = null;
     this._seenVoice = new Set(); // voice-message srcs already grabbed this session
     this._seenImage = new Set(); // inline-image keys already grabbed this session
+    // Bounded: this grew one entry per message seen, for the life of the
+    // process. _rememberSig() trims the oldest, which is safe because a
+    // signature only has to outlive the bubbles still on screen.
     this._savedSigs = new Set(); // message signatures already saved-in-chat this session
+    this._savedSigsMax = 1000;
     this._savedChatsInit = new Set(); // chats whose existing history we've baselined
   }
   async launchSnapchat(obj, cookiefile) {
@@ -1915,6 +1919,18 @@ export default class SnapBot {
    * messages arriving AFTER the first baseline pass are saved, clicking an
    * already-saved message would UNSAVE it.
    */
+  /** Record a handled signature, dropping the oldest once the cap is hit. */
+  _rememberSig(sig) {
+    this._savedSigs.add(sig);
+    const max = this._savedSigsMax || 1000;
+    if (this._savedSigs.size > max) {
+      for (const old of this._savedSigs) {
+        this._savedSigs.delete(old);
+        if (this._savedSigs.size <= max) break;
+      }
+    }
+  }
+
   async saveMessagesInChat(userId) {
     const container = await this.page.$(`#cv-${userId}`);
     if (!container) return 0;
@@ -1937,7 +1953,7 @@ export default class SnapBot {
         if (!txt) continue; // not a text bubble (snap/voice/etc.)
         const sig = `${userId}:${txt.slice(0, 80)}`;
         if (this._savedSigs.has(sig)) continue; // already handled this session
-        if (firstPass) { this._savedSigs.add(sig); continue; } // baseline only, don't click
+        if (firstPass) { this._rememberSig(sig); continue; } // baseline only, don't click
 
         // Re-hover (resetting the pointer each time) and POLL for the hover
         // toolbar to appear, with a synthetic-event nudge.
@@ -1994,11 +2010,11 @@ export default class SnapBot {
           // the save icon has no label, not an anomaly.
           saved++;
           misses = 0;
-          this._savedSigs.add(sig);
+          this._rememberSig(sig);
           await delay(110);
         } else if (result === "already") {
           misses = 0;
-          this._savedSigs.add(sig); // don't keep re-checking it
+          this._rememberSig(sig); // don't keep re-checking it
         } else if (result === "none" && SNAP_DEBUG) {
           // Only dump when a real (labelled) toolbar was present but unmatched.
           const dump = await bubble

@@ -108,6 +108,56 @@ def strip_meta(text: str) -> str:
     return cleaned or text.strip()
 
 
+
+
+# A reply that is nothing but a description of something the model imagines it
+# is doing: "[Image of a wide, annoyed eye-roll emoji]", "*rolls eyes*",
+# "(sends a selfie)". Models produce these when the conversation calls for a
+# reaction rather than words, and the whole bracket went out as the message -
+# which reads as obviously automated to the person on the other end.
+#
+# Only whole-message directions are touched. A reply that happens to contain
+# brackets ("be there in [5] mins") keeps them, because the text around the
+# bracket is the message.
+_STAGE_VERBS = (
+    "image|picture|photo|pic|gif|video|selfie|snap|emoji|sticker|reaction|"
+    "sends?|sending|sent|reacts?|reacting|replies|laughs?|laughing|smiles?|"
+    "smiling|shrugs?|nods?|sighs?|rolls?|winks?|grins?|waves?|stares?|blinks?"
+)
+_STAGE_RE = re.compile(
+    "^(?:"
+    # [Image of ...] / (sends a selfie) - a bracket opening with one of the verbs
+    r"[(\[*]\s*(?:" + _STAGE_VERBS + r")[^)\]*]*[)\]*]"
+    # *rolls eyes* - asterisks with anything short between them
+    r"|\*[^*]{1,80}\*"
+    ")$",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def strip_stage_directions(text: str) -> str:
+    """Drop a reply that is only a stage direction. Returns "" when it was.
+
+    Unlike strip_meta(), an empty result here is meaningful and the caller is
+    expected to act on it: sending the bracket is worse than sending nothing.
+    """
+    if not text:
+        return text
+    cleaned = text.strip()
+    # Repeat, because these arrive stacked: "*sighs* [rolls eyes]".
+    for _ in range(4):
+        before = cleaned
+        cleaned = _STAGE_RE.sub("", cleaned).strip()
+        if cleaned == before:
+            break
+    return cleaned
+
+
+def is_stage_direction_only(text: str) -> bool:
+    """True when the whole reply was a stage direction and nothing else."""
+    return bool(text and text.strip()) and not strip_stage_directions(text)
+
+
 def strip_ai_tells(text: str) -> str:
     """Remove the punctuation tells that mark text as AI-written."""
     if not text:

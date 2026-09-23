@@ -370,3 +370,8 @@ snapchat:
   # the only place that verification can be finished, and closing it throws the
   # half-finished login away and makes the next try ask for another code.
   verify_wait_ms: 0
+
+  # Reload the web app on this interval (jittered +/-25%). Snapchat for Web is
+  # a long-lived page and drifts when left for hours: chats stop appearing in
+  # the sidebar even though messages are arriving. 0 turns it off.
+  reload_interval_ms: 2700000

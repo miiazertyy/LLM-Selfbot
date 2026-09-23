@@ -121,6 +121,7 @@ DESCRIPTIONS = {
     "bot.timezone": "Persona timezone, sent in requests and used for the night schedule.",
     "bot.locale": "Persona locale, sent in requests.",
     "snapchat.verify_wait_ms": "How long to wait for email/code verification. 0 waits indefinitely.",
+    "snapchat.reload_interval_ms": "Reload the Snapchat page this often, so the chat list cannot go stale. 0 is off.",
     "bot.local.vision_model": "Local model that reads pictures. Empty sends them to Groq.",
     "bot.local.stt_model": "Local model that transcribes voice messages. Empty sends them to Groq.",
     "bot.local.tts_model": "Local model that speaks. Empty sends voice notes to Groq.",

@@ -279,7 +279,11 @@ async def generate_ai_response(msg: IncomingMessage) -> Optional[str]:
     enriched += (
         "\n\n[OUTPUT RULES: Reply with ONLY the exact message you are sending, nothing else. "
         "Never add translations, your reasoning, explanations, notes, labels, or alternate "
-        "versions (no '(translation: ...)', no 'changed to', no 'in English:'). Output the raw message only.]"
+        "versions (no '(translation: ...)', no 'changed to', no 'in English:'). "
+        "Never describe an action or an image instead of doing it: no '[Image of a "
+        "shocked emoji]', no '*rolls eyes*', no '(sends a selfie)'. You cannot send "
+        "a reaction here, so if an emoji is the whole response, type the emoji itself. "
+        "Output the raw message only.]"
     )
 
     # ── Pictures / selfies ──────────────────────────────────────────────────
@@ -392,6 +396,22 @@ async def generate_ai_response(msg: IncomingMessage) -> Optional[str]:
 
     if not response or is_refusal(response):
         return None
+
+    # A reply that is only a stage direction - "[Image of a wide, annoyed
+    # eye-roll emoji]", "*rolls eyes*" - went out as that literal text, which
+    # reads as obviously automated. Models produce them when the conversation
+    # calls for a reaction rather than words, and this platform has no
+    # reactions to send, so there is nothing to convert it into. Saying nothing
+    # is the better of the two: the message stays unanswered and is picked up
+    # on the next pass.
+    from app.utils.humanize import is_stage_direction_only, strip_stage_directions
+    if is_stage_direction_only(response):
+        log_system(f"[Engine] Dropped a stage-direction reply to {msg.user_name}: {response[:60]}")
+        return None
+    # One mixed into a real reply is just trimmed off.
+    _trimmed = strip_stage_directions(response)
+    if _trimmed and _trimmed != response:
+        response = _trimmed
 
     # ── Post-response: memory extraction ────────────────────────────────────
     # Two more sequential model calls, neither of which changes the reply that

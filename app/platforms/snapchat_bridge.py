@@ -1161,6 +1161,7 @@ def _spawn_node_runner():
             "quiet_hours": "SNAP_QUIET_HOURS",
             "auto_add_friends": "SNAP_AUTO_ADD_FRIENDS",
             "verify_wait_ms": "SNAP_VERIFY_WAIT_MS",
+            "reload_interval_ms": "SNAP_RELOAD_INTERVAL_MS",
         }
         for yaml_key, env_key in env_map.items():
             val = snap_cfg.get(yaml_key)

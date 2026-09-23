@@ -26,6 +26,32 @@
     deps_installed: boolean;
     installing: boolean;
     dir: string;
+    runners?: Runner[];
+  };
+  /** What a running account is actually doing, straight from the runner. */
+  type Runner = {
+    account: number | null;
+    state: string;
+    detail: string;
+    at: number;
+    stale: boolean;
+  };
+
+  // Only the ones still writing. A state from an hour ago is not news, and
+  // presenting it as current would be worse than saying nothing.
+  const live = $derived((status?.runners ?? []).filter((r) => !r.stale));
+
+  const TONE: Record<string, "good" | "warn" | "bad" | "muted"> = {
+    ready: "good",
+    starting: "muted",
+    "awaiting-verification": "warn",
+    "logged-out": "bad",
+  };
+  const SAYS: Record<string, string> = {
+    ready: "Answering messages",
+    starting: "Starting up",
+    "awaiting-verification": "Waiting for you to verify",
+    "logged-out": "Logged out",
   };
 
   let status = $state<SnapStatus | null>(null);
@@ -67,6 +93,25 @@
   <div class="h-40 animate-pulse rounded-xl bg-white/[0.03]"></div>
 {:else}
   <div class="space-y-5">
+    <!-- Before this, an account stuck on a verification screen and an account
+         answering messages both read as simply "running". -->
+    {#if live.length}
+      <div class="space-y-1.5">
+        {#each live as r (r.account ?? 0)}
+          <div class="glass flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl px-3 py-2.5">
+            <Badge tone={TONE[r.state] ?? "muted"}>
+              {SAYS[r.state] ?? r.state}
+            </Badge>
+            {#if r.account}
+              <span class="text-[11px] text-faint">account #{r.account}</span>
+            {/if}
+            {#if r.detail}
+              <span class="min-w-0 flex-1 text-[12px] leading-relaxed text-muted">{r.detail}</span>
+            {/if}
+          </div>
+        {/each}
+      </div>
+    {/if}
     <div class="divide-y divide-edge/60">
       <div class="flex items-center justify-between gap-3 py-3">
         <div class="min-w-0">

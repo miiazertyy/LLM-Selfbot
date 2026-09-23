@@ -50,6 +50,34 @@ const RESPONSES_FILE = path.join(IPC_DIR, `snap_responses${SFX}.json`);
 const OUTGOING_FILE  = path.join(IPC_DIR, `snap_outgoing${SFX}.json`);
 const PROCESSED_FILE = path.join(IPC_DIR, `snap_processed${SFX}.json`);
 const PORT_FILE      = path.join(IPC_DIR, `snap_port${SFX}`);
+const STATE_FILE     = path.join(IPC_DIR, `snap_state${SFX}.json`);
+
+/**
+ * Say what the runner is actually doing, for the panel.
+ *
+ * "Running" used to mean only that the Node process existed. Waiting on an
+ * email verification, or sitting behind a dialog, looked exactly like working
+ * normally - so the account read as fine while it answered nobody, and the
+ * only way to find out was to read the log.
+ *
+ * A file rather than the wake socket: the panel reads this when someone opens
+ * the page, which may be long after it was written, and it has to survive the
+ * runner being busy or wedged - which is the case it exists to report.
+ */
+let lastState = "";
+function setState(state, detail = "") {
+  if (state === lastState && !detail) return;
+  lastState = state;
+  try {
+    fs.writeFileSync(
+      STATE_FILE,
+      JSON.stringify({ state, detail, at: Date.now() / 1000, account: ACCOUNT_INDEX }, null, 2),
+      "utf-8",
+    );
+  } catch {
+    /* the log still carries it */
+  }
+}
 
 // ── Wake channel ─────────────────────────────────────────────────────────────
 // See the matching note in snapchat_bridge.py. The JSON files above remain the
@@ -155,6 +183,10 @@ const PENDING_TTL_MS = Math.max(RESPONSE_TIMEOUT_MS, 120000);
 const MAX_SEND_ATTEMPTS = 4;
 // Show the live "typing…" indicator while the bot types (more human).
 const SHOW_TYPING = (process.env.SNAP_SHOW_TYPING || "true").toLowerCase() !== "false";
+// How often to reload the web app. 0 turns it off. Default 45 minutes: long
+// enough that it is not a pattern, short enough that a sidebar which has gone
+// stale is not stale for a whole evening.
+const RELOAD_INTERVAL_MS = Math.max(0, Number(process.env.SNAP_RELOAD_INTERVAL_MS || 45 * 60 * 1000) || 0);
 
 // Per-account credentials. Account 1 falls back to unsuffixed SNAP_USERNAME.
 function snapEnv(base) {
@@ -249,8 +281,26 @@ function jitteredPoll() {
 }
 
 // ── Per-chat seen-message tracking (in memory, resets on restart) ─────────────
-// key: chatId -> Set of message texts we've already processed this session
+// key: chatId -> Set of message keys we've already processed this session
+//
+// Bounded, both ways. This grew one entry per message and one Map entry per
+// chat, for as long as the process ran - which for this bot is days. Sets keep
+// insertion order, so trimming from the front drops the oldest, and only the
+// recent end is ever consulted: a message old enough to fall out is far below
+// the last reply and can never be mistaken for unanswered.
 const seenMessages = new Map();
+const SEEN_PER_CHAT = 300;
+const SEEN_CHATS = 200;
+
+function rememberSeen(seen, key) {
+  seen.add(key);
+  if (seen.size > SEEN_PER_CHAT) {
+    for (const old of seen) {
+      seen.delete(old);
+      if (seen.size <= SEEN_PER_CHAT) break;
+    }
+  }
+}
 
 /**
  * Given raw chat history from extractChatData(), extract UNANSWERED user
@@ -261,6 +311,11 @@ const seenMessages = new Map();
  */
 function extractNewMessages(chatId, chatData) {
   if (!seenMessages.has(chatId)) {
+    if (seenMessages.size >= SEEN_CHATS) {
+      // Oldest chat first; Map keeps insertion order too.
+      const oldest = seenMessages.keys().next().value;
+      seenMessages.delete(oldest);
+    }
     seenMessages.set(chatId, new Set());
   }
   const seen = seenMessages.get(chatId);
@@ -287,7 +342,7 @@ function extractNewMessages(chatId, chatData) {
     // time+text dedup key (same text at different times = different messages)
     const key = `${time}|${from}|${text}`;
     if (!seen.has(key)) {
-      seen.add(key);
+      rememberSeen(seen, key);
       newMsgs.push({ from, text, time });
     }
   }
@@ -406,6 +461,64 @@ async function maybeAcceptFriends(bot) {
   } catch (frErr) {
     console.warn("[Snap] Friend-add error:", frErr.message);
   }
+}
+
+/**
+ * Reload the web app periodically.
+ *
+ * Snapchat for Web is a long-lived single page, and left running for hours it
+ * drifts: chats stop appearing in the sidebar even though messages are
+ * arriving, because the client's own list went stale and nothing on the page
+ * ever refetches it. A reload is the only reliable fix, and it is what a person
+ * would do.
+ *
+ * Deliberately not on a fixed timer alone:
+ *   - never while a reply is waiting to be sent, or the reload throws away a
+ *     message the model has already generated;
+ *   - the interval is jittered, because a page that reloads on the exact same
+ *     boundary for days is a pattern nobody's browser has.
+ *
+ * Returns true if the page was reloaded.
+ */
+async function periodicReload(bot, state) {
+  if (Date.now() < state.due) return false;
+  if (pendingReplies.size > 0) {
+    // Not now: come back in a minute rather than pushing the whole cycle out,
+    // or a busy account would never reload at all.
+    state.due = Date.now() + 60 * 1000;
+    return false;
+  }
+
+  console.log("[Snap] Refreshing the page (periodic).");
+  try {
+    await bot.page.goto("https://web.snapchat.com/", {
+      waitUntil: "networkidle2",
+      timeout: 60000,
+    });
+    await delay(4000);
+  } catch (e) {
+    console.warn("[Snap] Refresh navigation problem:", e.message);
+  }
+
+  // A reload lands on a fresh page, so both of these are back.
+  try { await bot.handlePopup(); } catch { /* not fatal */ }
+  if (!SHOW_TYPING) {
+    try { await bot.blockTypingNotifications(true); } catch { /* not fatal */ }
+  }
+
+  if (!(await bot.isLogged())) {
+    console.warn("[Snap] Not logged in after the refresh, recovering...");
+    await attemptRelogin(bot);
+  }
+
+  state.due = Date.now() + nextReloadGap();
+  return true;
+}
+
+/** Jittered gap to the next reload, +/-25% of the configured interval. */
+function nextReloadGap() {
+  const base = RELOAD_INTERVAL_MS;
+  return Math.round(base * (0.75 + Math.random() * 0.5));
 }
 
 /**
@@ -714,6 +827,7 @@ async function main() {
 
   const bot = new SnapBot();
 
+  setState("starting", "launching the browser");
   console.log(`[Snap] Launching Snapchat (account #${ACCOUNT_INDEX}: ${CREDENTIALS.username})...`);
   await bot.launchSnapchat(
     {
@@ -753,8 +867,12 @@ async function main() {
     // attempt ask Snapchat for another code.
     if (currentUrl.includes("accounts.snapchat.com") && !currentUrl.includes("/welcome")) {
       const verifyWait = Number(process.env.SNAP_VERIFY_WAIT_MS || 0) || 0;
+      setState("awaiting-verification",
+               "Snapchat wants an email or code. Finish it in the Chrome window.");
       const verified = await bot.awaitEmailVerification(verifyWait);
       if (!verified) {
+        setState("awaiting-verification",
+                 "Not completed. The browser is still open so you can finish it.");
         console.error("[Snap] Verification was not completed. Leaving the browser open so you can finish it.");
         console.error("[Snap] Stop the account from the panel when you are done, and start it again.");
         // Deliberately no closeBrowser() and no exit: the window is the only
@@ -787,10 +905,13 @@ async function main() {
       // finish, so the window stays.
       const stuckOnAuth = (bot.page.url() || "").includes("accounts.snapchat.com");
       if (stuckOnAuth) {
+        setState("awaiting-verification",
+                 "A late verification step appeared. Finish it in the Chrome window.");
         console.error("[Snap] Snapchat is still asking for verification. Leaving the browser open.");
         console.error("[Snap] Finish it there, then stop and start the account from the panel.");
         return;
       }
+      setState("logged-out", "Login failed. Check the credentials.");
       console.error("[Snap] Login failed. Check credentials / 2FA.");
       await bot.closeBrowser();
       process.exit(1);
@@ -817,6 +938,7 @@ async function main() {
     console.log("[Snap] Typing indicator enabled, recipients will see 'typing…'.");
   }
 
+  setState("ready");
   console.log(`[Snap] Ready. Polling every ~${Math.round(POLL_INTERVAL_MS / 1000)}s for new messages...`);
   console.log(
     `[Snap] 🛡️ Anti-ban: ${Math.round(MIN_SEND_GAP_MS / 1000)}–${Math.round(MAX_SEND_GAP_MS / 1000)}s between sends, ` +
@@ -848,9 +970,26 @@ async function main() {
   // evaluate, cheap, but not free.
   let lastDialogCheck = Date.now();
   const DIALOG_CHECK_MS = 5 * 60 * 1000;
+  const reloadState = { due: Date.now() + nextReloadGap() };
+  if (RELOAD_INTERVAL_MS > 0) {
+    console.log(`[Snap] Refreshing the page roughly every ${Math.round(RELOAD_INTERVAL_MS / 60000)} min.`);
+  }
 
   while (true) {
     try {
+      // 0. A long-lived page stops listing some chats. Refresh before reading,
+      // never mid-reply - periodicReload() defers itself if one is pending.
+      if (RELOAD_INTERVAL_MS > 0) {
+        try {
+          if (await periodicReload(bot, reloadState)) {
+            lastDialogCheck = Date.now();
+            setState("ready");
+          }
+        } catch (rlErr) {
+          console.warn("[Snap] Refresh error:", rlErr.message);
+        }
+      }
+
       // 0. Anything covering the app, before trying to use it.
       if (Date.now() - lastDialogCheck >= DIALOG_CHECK_MS) {
         lastDialogCheck = Date.now();

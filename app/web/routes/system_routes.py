@@ -774,7 +774,44 @@ async def snap_status(request: Request):
         "deps_installed": bool(modules and chrome),
         "installing": _install_lock.locked(),
         "dir": str(SNAP_DIR),
+        # What each runner is actually doing. "Running" used to mean only that
+        # the process existed, so an account sitting on a verification screen
+        # looked identical to one answering messages.
+        "runners": await asyncio.to_thread(_snap_runner_states),
     }
+
+
+# A runner that has not written for this long is not telling us anything
+# current - it may have been killed without clearing the file.
+_SNAP_STATE_STALE = 300.0
+
+
+def _snap_runner_states() -> list[dict]:
+    """Each Snapchat runner's self-reported state, newest write first."""
+    import json
+    from app.utils.paths import DATA_DIR
+    out = []
+    ipc_dir = DATA_DIR / "ipc"
+    try:
+        paths = sorted(ipc_dir.glob("snap_state*.json"))
+    except Exception:
+        return out
+    for path in paths:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue        # half-written, or not ours
+        at = float(data.get("at") or 0)
+        out.append({
+            "account": data.get("account"),
+            "state": str(data.get("state") or ""),
+            "detail": str(data.get("detail") or ""),
+            "at": at,
+            # The panel should not present a state from an hour ago as current.
+            "stale": (time.time() - at) > _SNAP_STATE_STALE if at else True,
+        })
+    out.sort(key=lambda r: r["at"], reverse=True)
+    return out
 
 
 def _snap_probe() -> tuple[bool, str]:

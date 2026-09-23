@@ -240,6 +240,27 @@ finally:
     open(_cfg_path, "w", encoding="utf-8").write(_original)
     helpers.invalidate_config_cache()
 
+print()
+print("== a reply that is only a stage direction is not sent ==")
+# The model answers a snap with "[Image of a wide, annoyed eye-roll emoji]" and
+# that literal text went out as the message. It happens when the conversation
+# calls for a reaction rather than words; Snapchat has no reaction to send, so
+# there is nothing to convert it into and silence is the better of the two.
+from app.utils.humanize import strip_stage_directions, is_stage_direction_only
+for _text in ("[Image of a wide, annoyed eye-roll emoji]", "*rolls eyes*",
+              "(sends a selfie)", "[sends a snap]", "*sighs*", "[Photo of a dog]"):
+    check(f"dropped: {_text}", is_stage_direction_only(_text), _text)
+for _text in ("be there in [5] mins", "yeah lol", "nah im good", "\U0001f644",
+              "lmaooo [that's] crazy", "wait what happened"):
+    check(f"kept: {_text}", not is_stage_direction_only(_text)
+          and strip_stage_directions(_text) == _text, repr(strip_stage_directions(_text)))
+check("one mixed into a real reply is trimmed off",
+      strip_stage_directions("*sighs* ").strip() == "", "leading direction")
+check("the model is told not to produce them",
+      "type the emoji itself" in pathlib.Path(REPO, "app", "core", "engine.py").read_text(encoding="utf-8"))
+check("and the engine drops them before sending",
+      "is_stage_direction_only(response)" in pathlib.Path(REPO, "app", "core", "engine.py").read_text(encoding="utf-8"))
+
 print("\n%d passed, %d failed" % (len(PASS), len(FAIL)))
 shutil.rmtree(SANDBOX, ignore_errors=True)
 sys.exit(1 if FAIL else 0)
