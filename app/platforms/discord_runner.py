@@ -386,6 +386,68 @@ def as_turn(message, content: str) -> str:
     return content
 
 
+# People this account has actually talked to, held by strong reference.
+#
+# discord.py's own user cache (ConnectionState._users) is a WeakValueDictionary:
+# a User survives in it only while something else holds it - a cached Member, a
+# cached Message, a private channel's recipient. Trimming the member cache and
+# the message cache to save memory therefore also emptied this, so get_user()
+# started missing for people the bot was mid-conversation with, and every miss
+# fell through to fetch_user().
+#
+# That matters because this is a user account, not a bot. GET /users/{id} on a
+# user account answers 403 40001 Unauthorized for anyone the account has no
+# current mutual context with, so the miss did not degrade to a slow lookup, it
+# degraded to a hard failure - Reply in the panel, and the nudge loop, both.
+#
+# One dict of the people actually being spoken to is a few hundred entries at
+# worst and costs far less than the caches that were removed, and it puts the
+# hit rate back where it was without asking Discord anything.
+_seen_users: dict = {}
+MAX_SEEN_USERS = 400
+
+
+def remember_user(user) -> None:
+    """Hold a strong reference to someone the bot has dealt with."""
+    if user is None or getattr(user, "id", None) is None:
+        return
+    if len(_seen_users) >= MAX_SEEN_USERS and user.id not in _seen_users:
+        # Oldest first: plain dicts keep insertion order.
+        for stale in list(_seen_users)[:len(_seen_users) - MAX_SEEN_USERS + 1]:
+            _seen_users.pop(stale, None)
+    _seen_users[user.id] = user
+
+
+async def resolve_user(uid: int, channel_id=None):
+    """Find a user without asking Discord unless there is no other way.
+
+    Returns (user, reason). A reason with no user means the lookup failed for
+    good rather than transiently, so the caller should stop retrying.
+    """
+    cached = _seen_users.get(uid) or bot.get_user(uid)
+    if cached is not None:
+        remember_user(cached)
+        return cached, ""
+    # A DM channel carries its recipient, and reading one costs nothing.
+    for ch in ([bot.get_channel(int(channel_id))] if channel_id else []) + list(bot.private_channels):
+        if ch is None:
+            continue
+        for recipient in ([getattr(ch, "recipient", None)] + list(getattr(ch, "recipients", None) or [])):
+            if recipient is not None and recipient.id == uid:
+                remember_user(recipient)
+                return recipient, ""
+    try:
+        fetched = await bot.fetch_user(uid)
+        remember_user(fetched)
+        return fetched, ""
+    except discord.NotFound:
+        return None, f"Discord does not know user {uid}"
+    except discord.Forbidden:
+        # 40001 on a user account means no mutual context any more: not
+        # friends, no shared server, DMs closed. It does not clear by itself.
+        return None, "this account is not allowed to look that user up any more"
+
+
 def create_bot() -> commands.Bot:
     """Instantiate a fully configured bot for this process's account."""
     # ── Caches ───────────────────────────────────────────────────────────────
@@ -574,10 +636,22 @@ async def _cleanup_loop():
         stale_friend = [uid for uid, at in _friend_due.items() if at < now]
         for uid in stale_friend:
             _friend_due.pop(uid, None)
+        # remember_user() already caps this; trimming it here as well keeps a
+        # long-running process from holding 400 User objects it has not needed
+        # in hours.
+        _dropped_users = 0
+        if len(_seen_users) > MAX_SEEN_USERS // 2:
+            for uid in list(_seen_users):
+                if uid not in bot._memory_cache and uid not in bot.active_conversations:
+                    _seen_users.pop(uid, None)
+                    _dropped_users += 1
+                if len(_seen_users) <= MAX_SEEN_USERS // 2:
+                    break
         log_system(
             f"Cleanup: pruned {len(stale_counts)} count(s), {len(expired_cd)} cooldown(s), "
             f"{len(stale_conv)} conversation(s), {len(stale_hist)} history entr(ies), "
-            f"{len(stale_seen)} profile stamp(s), {len(stale_friend)} friend timer(s)"
+            f"{len(stale_seen)} profile stamp(s), {len(stale_friend)} friend timer(s), "
+            f"{_dropped_users} user ref(s)"
         )
 
 
@@ -749,14 +823,13 @@ async def _reply_pending_messages():
             if history and history[-1].get("role") == "assistant":
                 continue
 
-            # Try to get user from cache first, fall back to fetch
-            user = bot.get_user(user_id)
+            # Cache, then the DM channel's own recipient, and only then ask
+            # Discord - see resolve_user().
+            _chan_hint = key.split("-")[-1] if "-" in key else None
+            user, _why = await resolve_user(user_id, _chan_hint)
             if user is None:
-                try:
-                    user = await bot.fetch_user(user_id)
-                except Exception as e:
-                    log_error("Pending Reply", f"Could not fetch user {user_id}: {e}")
-                    continue
+                log_error("Pending Reply", f"Could not reach user {user_id}: {_why}")
+                continue
 
             bot.message_history[key] = history
             last_msg = None
@@ -922,8 +995,15 @@ async def _nudge_loop():
                     original_content = entry["content"]
                     days_elapsed = (time.time() - entry["received_at"]) / 86400
 
-                    user = bot.get_user(user_id) or await bot.fetch_user(user_id)
+                    user, why = await resolve_user(user_id, channel_id)
                     if not user:
+                        # Logged once and taken off the list. Before this the
+                        # lookup raised, the whole entry fell to the generic
+                        # handler, and the same 403 was printed on every sweep
+                        # and after every restart, for ever.
+                        log_system(f"Nudge skipped for {user_id}: "
+                                   f"{why or 'user not found'}")
+                        mark_nudge_sent(user_id, channel_id)
                         continue
 
                     # Build minimal instructions for nudge tone
@@ -958,6 +1038,13 @@ async def _nudge_loop():
                         bot.message_history.setdefault(key, [])
                         bot.message_history[key].append({"role": "assistant", "content": nudge_text})
 
+                    except discord.Forbidden:
+                        # Blocked, DMs closed, or no longer friends. A nudge is
+                        # the one message that can never get through then, so
+                        # stop trying rather than failing again in six hours.
+                        log_system(f"Nudge skipped for {user.name}: "
+                                   "they have blocked the account or closed their DMs")
+                        mark_nudge_sent(user_id, channel_id)
                     except Exception as send_err:
                         log_error("Nudge Send", str(send_err))
 
@@ -1330,21 +1417,16 @@ async def _tg_ipc_loop():
                                                "reason": "that is this account, Discord has no DM with yourself"})
                         continue
                     try:
-                        u = bot.get_user(uid) or await bot.fetch_user(uid)
-                    except discord.NotFound:
-                        # Raised straight out before, so the panel showed the raw
-                        # "404 ... (error code: 10013): Unknown User" instead of
-                        # anything actionable.
-                        _drop(uid)
-                        _write_result(cmd_id, {"success": False, "dropped": True,
-                                               "reason": f"Discord does not know user {uid}"})
-                        continue
+                        u, _why = await resolve_user(uid)
                     except Exception as _fe:
                         _write_result(cmd_id, {"success": False, "reason": str(_fe)}); continue
                     if not u:
+                        # Both "unknown user" and "not allowed to look them up"
+                        # are permanent, so the conversation comes off the
+                        # waiting list rather than failing again on every sweep.
                         _drop(uid)
                         _write_result(cmd_id, {"success": False, "dropped": True,
-                                               "reason": "user not found"}); continue
+                                               "reason": _why or "user not found"}); continue
                     target_msg = None; target_ch = None
                     for hk in bot.message_history:
                         if hk.startswith(f"{uid}-"):
@@ -1448,7 +1530,14 @@ async def _tg_ipc_loop():
                     else:
                         for _ra_uid, _ra_cid, _ra_hk in _ra_filtered:
                             try:
-                                _ra_u = bot.get_user(_ra_uid) or await bot.fetch_user(_ra_uid)
+                                _ra_u, _ra_why = await resolve_user(_ra_uid, _ra_cid)
+                                if _ra_u is None:
+                                    from app.utils.db import drop_unresponded as _ra_drop
+                                    _ra_drop(_ra_uid)
+                                    results_out.append({"id": _ra_uid, "name": str(_ra_uid),
+                                                        "success": False, "dropped": True,
+                                                        "reason": _ra_why or "user not found"})
+                                    continue
                                 _ra_ch2 = bot.get_channel(_ra_cid)
                                 if _ra_ch2 is None:
                                     try:
@@ -1479,7 +1568,7 @@ async def _tg_ipc_loop():
                             except Exception as _ra_e:
                                 _ra_name = str(_ra_uid)
                                 try:
-                                    _ra_name = (bot.get_user(_ra_uid) or await bot.fetch_user(_ra_uid)).name
+                                    _ra_name = (await resolve_user(_ra_uid, _ra_cid))[0].name
                                 except Exception:
                                     pass
                                 results_out.append({"id": _ra_uid, "name": _ra_name, "success": False, "reason": str(_ra_e)})
@@ -1596,10 +1685,10 @@ async def _tg_ipc_loop():
                 # ever appears after they happen to message again.
                 elif cmd == "get_profile":
                     _uid = int(payload["user_id"])
-                    try:
-                        _user = bot.get_user(_uid) or await bot.fetch_user(_uid)
-                    except Exception as _e:
-                        _write_result(cmd_id, {"ok": False, "reason": f"User {_uid} not found."})
+                    _user, _why = await resolve_user(_uid)
+                    if _user is None:
+                        _write_result(cmd_id, {"ok": False,
+                                               "reason": _why or f"User {_uid} not found."})
                         continue
                     _profile_seen.pop(_uid, None)      # force the write through
                     _cache_author(_user)
@@ -1619,10 +1708,10 @@ async def _tg_ipc_loop():
                 # ── analyse_user ──────────────────────────────────────────────
                 elif cmd == "analyse_user":
                     _uid = int(payload["user_id"])
-                    try:
-                        _user = bot.get_user(_uid) or await bot.fetch_user(_uid)
-                    except Exception:
-                        _write_result(cmd_id, {"ok": False, "reason": f"User {_uid} not found."})
+                    _user, _why = await resolve_user(_uid)
+                    if _user is None:
+                        _write_result(cmd_id, {"ok": False,
+                                               "reason": _why or f"User {_uid} not found."})
                         continue
                     _msg_list = []
                     try:
@@ -3261,6 +3350,10 @@ async def on_message(message):
     # rather than on the reply path: the bot sees far more people than it
     # answers, and the ones it ignores are exactly the ones you want to look up.
     _cache_author(message.author)
+    # And hold the User itself, so looking them up later never has to ask
+    # Discord - which this account is not always allowed to do. See
+    # resolve_user().
+    remember_user(message.author)
 
     # They can message again, so whatever closed the channel has been undone.
     if message.author.id in _blocked_users:

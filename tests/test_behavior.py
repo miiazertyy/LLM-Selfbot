@@ -319,5 +319,111 @@ check("memory block hides internal keys", "__persona__" not in block)
 check("memory block tells the model to use it naturally", "never list it" in block)
 check("empty memory yields no block", mem_mod.format_memory_for_prompt({}) == "")
 
+print()
+print("== looking someone up must not need Discord's permission ==")
+# discord.py's user cache is a WeakValueDictionary, kept alive only by cached
+# members and cached messages. Trimming both to save memory emptied it, so
+# get_user() started missing mid-conversation and every miss fell through to
+# fetch_user() - which on a USER account answers 403 40001 for anyone the
+# account has no mutual context with. The panel's Reply button and the nudge
+# loop both failed on exactly that.
+_ru_src = _src[_src.index("_seen_users: dict = {}"):_src.index("def create_bot(")]
+
+
+class _FakeUser:
+    def __init__(self, uid, name="someone"):
+        self.id, self.name = uid, name
+
+
+class _FakeDM:
+    def __init__(self, cid, recipient):
+        self.id, self.recipient = cid, recipient
+
+
+class _Forbidden(Exception):
+    pass
+
+
+class _NotFound(Exception):
+    pass
+
+
+class _FakeBot:
+    """A bot whose weak user cache has been emptied, as the real one now is."""
+
+    def __init__(self, channels=(), raises=None):
+        self.private_channels = list(channels)
+        self._by_id = {c.id: c for c in channels}
+        self.raises = raises
+        self.fetch_calls = 0
+
+    def get_user(self, uid):
+        return None
+
+    def get_channel(self, cid):
+        return self._by_id.get(cid)
+
+    async def fetch_user(self, uid):
+        self.fetch_calls += 1
+        if self.raises:
+            raise self.raises()
+        return _FakeUser(uid)
+
+
+def _load_resolver(bot):
+    ns = {"discord": type("d", (), {"Forbidden": _Forbidden, "NotFound": _NotFound}),
+          "bot": bot}
+    exec(compile(_ru_src, "resolve_user", "exec"), ns)
+    return ns
+
+
+_b = _FakeBot(raises=_Forbidden)
+_ns2 = _load_resolver(_b)
+_ns2["remember_user"](_FakeUser(7, "ana"))
+_u, _why = asyncio.run(_ns2["resolve_user"](7))
+check("a remembered user needs no fetch", _u is not None and _b.fetch_calls == 0)
+check("and it is the right one", getattr(_u, "name", "") == "ana")
+
+_dm = _FakeDM(555, _FakeUser(8, "bo"))
+_b2 = _FakeBot(channels=[_dm], raises=_Forbidden)
+_u2, _ = asyncio.run(_load_resolver(_b2)["resolve_user"](8, 555))
+check("a DM's own recipient is used before asking Discord",
+      _u2 is not None and _b2.fetch_calls == 0)
+
+_b3 = _FakeBot(raises=_Forbidden)
+_u3, _why3 = asyncio.run(_load_resolver(_b3)["resolve_user"](9))
+check("a 403 comes back as a reason, not an exception",
+      _u3 is None and bool(_why3), repr(_why3))
+check("and says it will not clear by itself", "not allowed" in _why3, _why3)
+
+_b4 = _FakeBot(raises=_NotFound)
+_u4, _why4 = asyncio.run(_load_resolver(_b4)["resolve_user"](10))
+check("an unknown user is reported the same way",
+      _u4 is None and "does not know" in _why4, _why4)
+
+_b5 = _FakeBot()
+_ns5 = _load_resolver(_b5)
+_u5, _ = asyncio.run(_ns5["resolve_user"](11))
+check("with nothing local it does still ask Discord",
+      _u5 is not None and _b5.fetch_calls == 1)
+
+_ns6 = _load_resolver(_FakeBot())
+for _i in range(_ns6["MAX_SEEN_USERS"] + 50):
+    _ns6["remember_user"](_FakeUser(_i))
+check("the user cache stays bounded",
+      len(_ns6["_seen_users"]) <= _ns6["MAX_SEEN_USERS"], str(len(_ns6["_seen_users"])))
+check("keeping the most recent",
+      (_ns6["MAX_SEEN_USERS"] + 49) in _ns6["_seen_users"])
+
+# The callers have to actually take the permanent answer as permanent.
+check("the nudge loop stops retrying someone it cannot reach",
+      "Nudge skipped for" in _src and "mark_nudge_sent" in _src)
+check("a 403 on the nudge send is permanent too",
+      "except discord.Forbidden:" in _src)
+check("reply_user drops a user it can never look up",
+      '"reason": _why or "user not found"' in _src)
+check("on_message keeps a strong reference to whoever wrote it",
+      "remember_user(message.author)" in _src)
+
 print(f"\n  {len(PASS)} passed, {len(FAIL)} failed")
 sys.exit(1 if FAIL else 0)
