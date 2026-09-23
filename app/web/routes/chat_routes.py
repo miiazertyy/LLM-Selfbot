@@ -46,14 +46,48 @@ def _stringify_ids(rows, *fields):
     return out
 
 
+def _profiles_for(ids) -> dict:
+    """Avatar and names for these user ids, from the local profile cache.
+
+    Read here rather than asked of the runner: the profiles are already in
+    sqlite, written whenever the bot sees someone, so this costs one local
+    query instead of a round trip to a process that may be mid-reply. Ids are
+    matched as strings because a snowflake does not survive JSON as a number.
+    """
+    wanted = {str(i) for i in ids if i is not None}
+    if not wanted:
+        return {}
+    out = {}
+    conn = connect_raw()
+    try:
+        for uid, display, uname, avatar in conn.execute(
+                "SELECT user_id, display_name, username, avatar FROM user_profiles"):
+            if str(uid) in wanted:
+                out[str(uid)] = {"display_name": display or "",
+                                 "username": uname or "", "avatar": avatar or ""}
+    except sqlite3.OperationalError:
+        pass                      # nobody has been profiled on this install yet
+    finally:
+        conn.close()
+    return out
+
+
 @router.get("/api/chats")
 async def chats(request: Request, target: str = ""):
     tgt = _resolve_target(request, target)
     result = await ipc.send_and_wait(tgt, "reply_check", timeout=10.0)
     if result is None:
         raise HTTPException(status_code=504, detail="runner did not respond")
+    users = _stringify_ids(result.get("users", []), "id")
+    # The waiting list showed a grey placeholder glyph for everyone, though the
+    # avatar has been sitting in user_profiles the whole time.
+    profiles = _profiles_for(u.get("id") for u in users)
+    for u in users:
+        meta = profiles.get(u.get("id")) or {}
+        u["avatar"] = meta.get("avatar") or ""
+        u["username"] = meta.get("username") or ""
     return {
-        "users": _stringify_ids(result.get("users", []), "id"),
+        "users": users,
         "target": tgt,
         # Why the bot has not answered yet: paused, or still inside its cooldown.
         "paused": result.get("paused", False),

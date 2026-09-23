@@ -23,6 +23,9 @@ export type ChatUser = {
   snippet: string;
   count: number;
   ts?: number;
+  /** From the local profile cache, filled in by the server. May be empty. */
+  avatar?: string;
+  username?: string;
 };
 
 export type ChatEntry = {
@@ -73,6 +76,9 @@ export const chatBusy = writable(false);
  */
 export const replying = writable<Record<string, boolean>>({});
 export const replyingAll = writable<Record<string, boolean>>({});
+/** How far a "reply to all" has got, so the button can say so. */
+export const replyAllProgress =
+  writable<Record<string, { done: number; total: number }>>({});
 
 /** One request per target at a time, however many callers ask for it. */
 const inflight = new Map<string, Promise<void>>();
@@ -109,16 +115,59 @@ export async function sendReply(target: string, userId: string) {
   }
 }
 
+/**
+ * Answer everyone waiting, one at a time, clearing each row as it is done.
+ *
+ * This used to be a single /api/chats/reply-all call: one request that took as
+ * long as every reply put together - minutes, with the deliberate human pauses
+ * between sends - showing a spinner the whole time and then emptying the list
+ * in one go at the very end. There was no way to tell it apart from a hang.
+ *
+ * The runner finds who to answer exactly the way reply_check does, so the list
+ * on screen is already the same set. Walking it here costs nothing extra and
+ * means a row disappears the moment that person has been answered.
+ *
+ * Only a reply that actually went out removes a row. A failure that can never
+ * succeed is reported as `dropped` and comes off too, since it will not be back
+ * on the next refresh; anything else stays, so what is left is really what is
+ * left. Calling it again while it runs stops it after the reply in flight.
+ */
 export async function sendReplyAll(target: string) {
-  if (get(replyingAll)[target]) return null;
+  if (get(replyingAll)[target]) {
+    mark(replyingAll, target, false);      // asked to stop
+    return null;
+  }
+  const queue = entry(target).users.map((u) => u.id);
   mark(replyingAll, target, true);
+  replyAllProgress.update((p) => ({ ...p, [target]: { done: 0, total: queue.length } }));
   chatBusy.set(true);
+  const results: any[] = [];
   try {
-    const result = await api.replyAll(target);
-    clearChats(target);
-    return result;
+    for (const id of queue) {
+      if (!get(replyingAll)[target]) break;   // stopped from the button
+      mark(replying, id, true);
+      try {
+        const r = await api.reply(id, target);
+        results.push({ id, ...(r || {}) });
+        if (r?.success || r?.dropped) forget(target, id);
+      } catch (e: any) {
+        results.push({ id, success: false, reason: e?.message || "failed" });
+      } finally {
+        mark(replying, id, false);
+        replyAllProgress.update((p) => ({
+          ...p,
+          [target]: { done: results.length, total: queue.length },
+        }));
+      }
+    }
+    return { total: results.length, results };
   } finally {
     mark(replyingAll, target, false);
+    replyAllProgress.update((p) => {
+      const next = { ...p };
+      delete next[target];
+      return next;
+    });
     if (!Object.keys(get(replying)).length && !Object.keys(get(replyingAll)).length) {
       chatBusy.set(false);
     }
@@ -191,10 +240,6 @@ export function refreshChats(
 export function forget(target: string, userId: string) {
   const current = entry(target);
   patch(target, { users: current.users.filter((u) => u.id !== userId) });
-}
-
-export function clearChats(target: string) {
-  patch(target, { users: [], fetched: Date.now() });
 }
 
 export async function loadChatAccounts(): Promise<ChatAccount[]> {

@@ -125,6 +125,65 @@ else:
     check("not serialised as a bare number",
           f'"user_id": {SNOWFLAKE}' not in raw and f'"user_id":{SNOWFLAKE}' not in raw)
 
+print()
+print("== the waiting list carries the avatar ==")
+# The rows showed a grey placeholder glyph for everyone, though the avatar has
+# been in user_profiles the whole time. It is joined on in the route rather
+# than asked of the runner: the runner may be mid-reply, sqlite is right here.
+# The section above swapped the stub out for one that captures payloads.
+chat_routes.ipc.send_and_wait = fake_send_and_wait
+from app.utils.db import set_profile_details
+set_profile_details(SNOWFLAKE, username="someone", display_name="Someone",
+                    avatar="https://cdn.example/a.png")
+
+_row = client.get("/api/chats").json()["users"][0]
+check("the avatar comes through", _row.get("avatar") == "https://cdn.example/a.png",
+      repr(_row.get("avatar")))
+check("and the username with it", _row.get("username") == "someone", repr(_row.get("username")))
+check("the id is still a string", isinstance(_row["id"], str))
+
+# Someone with no profile row must not break the response.
+async def _fake_two(target, cmd, payload=None, timeout=10.0):
+    if cmd == "reply_check":
+        return {"users": [
+            {"id": SNOWFLAKE, "name": "someone", "snippet": "hi", "count": 1},
+            {"id": 999, "name": "stranger", "snippet": "yo", "count": 1},
+        ]}
+    return {"ok": True}
+
+
+chat_routes.ipc.send_and_wait = _fake_two
+_rows = client.get("/api/chats").json()["users"]
+check("an unprofiled user still appears", len(_rows) == 2, str(len(_rows)))
+check("with an empty avatar rather than a missing key",
+      _rows[1].get("avatar") == "", repr(_rows[1].get("avatar")))
+chat_routes.ipc.send_and_wait = fake_send_and_wait
+
+print()
+print("== reply to all empties the list one person at a time ==")
+# It used to be one request that took as long as every reply put together, then
+# wiped the whole list at the end - indistinguishable from a hang.
+_chats_ts = (ROOT / "webui" / "src" / "lib" / "chats.ts").read_text(encoding="utf-8")
+_page = (ROOT / "webui" / "src" / "pages" / "Chats.svelte").read_text(encoding="utf-8")
+check("it no longer calls the all-at-once endpoint",
+      "api.replyAll(" not in _chats_ts)
+check("and no longer wipes the list in one go", "clearChats" not in _chats_ts)
+check("it replies one at a time", "for (const id of queue)" in _chats_ts)
+check("dropping each row as that person is answered",
+      "forget(target, id)" in _chats_ts)
+check("only when the reply really went out",
+      "if (r?.success || r?.dropped) forget(target, id)" in _chats_ts)
+check("progress is published for the button",
+      "replyAllProgress" in _chats_ts and "replyAllProgress" in _page)
+check("and the run can be stopped",
+      "if (!get(replyingAll)[target]) break" in _chats_ts)
+check("the button says where it has got to",
+      "allProgress.done" in _page and "allProgress.total" in _page)
+check("the row shows a real avatar when there is one",
+      "u.avatar && !brokenAvatars[u.id]" in _page)
+check("falling back to the glyph when the CDN link is dead",
+      "brokenAvatars = { ...brokenAvatars, [u.id]: true }" in _page)
+
 print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
 shutil.rmtree(SANDBOX, ignore_errors=True)
 sys.exit(1 if FAIL else 0)

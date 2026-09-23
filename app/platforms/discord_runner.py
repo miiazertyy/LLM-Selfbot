@@ -1304,7 +1304,9 @@ async def _tg_ipc_loop():
                             if uid in seen_ids or uid in _blocked_users:
                                 continue
                             seen_ids.add(uid)
-                            u = bot.get_user(uid)
+                            # Same weak-cache problem as everywhere else: a miss
+                            # here showed the raw snowflake as the person's name.
+                            u = _seen_users.get(uid) or bot.get_user(uid)
                             pending = [e["content"] for e in reversed(history) if e["role"] == "user"]
                             last = pending[0] if pending else ""
                             snippet = (last[:60] + "…") if len(last) > 60 else last

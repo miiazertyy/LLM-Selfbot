@@ -6,6 +6,7 @@
   import {
     chatAccounts, chatCache, loadChatAccounts, refreshChats,
     replying as replyingStore, replyingAll as replyingAllStore, sendReply, sendReplyAll,
+    replyAllProgress,
   } from "../lib/chats";
   import Card from "../lib/components/Card.svelte";
   import Badge from "../lib/components/Badge.svelte";
@@ -19,6 +20,9 @@
     id: string; name: string; snippet: string; count: number; ts?: number;
     /** Unix seconds when the bot will answer this on its own. */
     reply_at?: number | null;
+    /** Filled in by the server from the local profile cache; may be empty. */
+    avatar?: string;
+    username?: string;
   };
   type Account = {
     id: string;
@@ -49,6 +53,10 @@
     /** Unix seconds when the bot will accept it on its own, if scheduled. */
     accept_at?: number | null;
   };
+  // A Discord CDN link expires, and a dead <img> is worse than the glyph it
+  // replaced, so a failed load falls back rather than showing a broken image.
+  let brokenAvatars = $state<Record<string, boolean>>({});
+
   let requests = $state<FriendRequest[]>([]);
   let friendsSupported = $state(true);
   let friendBusy = $state<Record<string, boolean>>({});
@@ -82,6 +90,7 @@
   // running when you leave the tab and come back.
   const replying = $derived($replyingStore);
   const replyingAll = $derived(!!$replyingAllStore[target]);
+  const allProgress = $derived($replyAllProgress[target]);
 
   // Anything in flight blocks the other send buttons.
   const busy = $derived(replyingAll || Object.keys(replying).length > 0);
@@ -258,6 +267,12 @@
   }
 
   async function replyAll() {
+    // While it is running the same button stops it, so `busy` must not block.
+    if (replyingAll) {
+      void sendReplyAll(target);           // flips the flag, the loop notices
+      toast("Stopping after the reply in flight.", "info");
+      return;
+    }
     if (busy) return;
     try {
       const res = await sendReplyAll(target);
@@ -436,9 +451,18 @@
     {/if}
   </div>
 
-  <Button kind="good" onclick={replyAll} loading={replyingAll}
-          disabled={users.length === 0 || busy}>
-    Reply to all ({users.length})
+  <!-- Says where it has got to, and stops. A run is minutes long - every reply
+       waits out the human pause before it sends - and with one spinner and no
+       numbers there was nothing to tell it apart from a hang. -->
+  <Button kind={replyingAll ? "ghost" : "good"} onclick={replyAll}
+          disabled={!replyingAll && (users.length === 0 || busy)}>
+    {#if replyingAll && allProgress}
+      Stop ({allProgress.done}/{allProgress.total})
+    {:else if replyingAll}
+      Stop
+    {:else}
+      Reply to all ({users.length})
+    {/if}
   </Button>
 </div>
 
@@ -557,9 +581,15 @@
   <div class="space-y-2">
     {#each ordered as u (u.id)}
       <div class="glass flex flex-wrap items-start gap-x-4 gap-y-3 p-4">
-        <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/[0.06] text-muted">
-          <Icon name="accounts" size={16} />
-        </span>
+        {#if u.avatar && !brokenAvatars[u.id]}
+          <img src={u.avatar} alt="" referrerpolicy="no-referrer"
+               onerror={() => (brokenAvatars = { ...brokenAvatars, [u.id]: true })}
+               class="h-9 w-9 shrink-0 rounded-full object-cover ring-1 ring-edge" />
+        {:else}
+          <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/[0.06] text-muted">
+            <Icon name="accounts" size={16} />
+          </span>
+        {/if}
 
         <div class="min-w-0 flex-1">
           <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
