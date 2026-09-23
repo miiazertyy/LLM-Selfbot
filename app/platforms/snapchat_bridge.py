@@ -1083,19 +1083,43 @@ def _sync_node_runner() -> str:
     dst_dir.mkdir(parents=True, exist_ok=True)
     if not (src_dir / "snapchat_runner.js").exists():
         return str(src_dir)
-    # Prefer the data dir when it already has deps; otherwise mirror files over.
-    if (dst_dir / "node_modules").is_dir() and (dst_dir / "snapchat_runner.js").exists():
-        return str(dst_dir)
-    if (src_dir / "node_modules").is_dir():
-        return str(src_dir)  # source install
+    # A source checkout with its own deps runs in place; nothing to mirror.
+    if (src_dir / "node_modules").is_dir() and not (dst_dir / "node_modules").is_dir():
+        return str(src_dir)
+
+    # Everything else runs from the data dir, so its copy of the JS has to
+    # match THIS build - every time, not just the first.
+    #
+    # This used to return early whenever the data dir already had node_modules
+    # and a runner, which is to say on every launch after the first. The sync
+    # below sat after that return and never ran again, so an install kept
+    # running whatever Snapchat code it was first given, and every update after
+    # that shipped fixes that never reached it. It compares bytes and only
+    # writes what changed, so doing it on every launch costs four small reads.
+    _sync_runner_files(src_dir, dst_dir)
+    return str(dst_dir)
+
+
+def _sync_runner_files(src_dir, dst_dir) -> list:
+    """Bring the data dir's runner up to date with this build.
+
+    package.json is included so a dependency change is at least visible; the
+    install itself stays a deliberate action from the panel, because it is a
+    network download of a browser.
+    """
+    changed = []
     for name in ("snapchat_runner.js", "snapbot.js", "log.js", "package.json"):
         src, dst = src_dir / name, dst_dir / name
         try:
-            if not dst.exists() or src.read_bytes() != dst.read_bytes():
-                dst.write_bytes(src.read_bytes())
+            new = src.read_bytes()
+            if not dst.exists() or dst.read_bytes() != new:
+                dst.write_bytes(new)
+                changed.append(name)
         except OSError:
             pass
-    return str(dst_dir)
+    if changed:
+        log_system(f"Snapchat runner updated from this build: {', '.join(changed)}")
+    return changed
 
 
 def _spawn_node_runner():

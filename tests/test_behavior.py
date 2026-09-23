@@ -444,5 +444,57 @@ check("the dialog dismisser stays off the sign-in pages",
 check("and never presses a button inside a form", '!el.closest("form")' in _bot)
 check("and stops when the same button keeps coming back", "repeats >= 2" in _bot)
 
+
+print()
+print("== an installed Snapchat runner is updated by every new build ==")
+# _sync_node_runner() returned early whenever the data dir already had
+# node_modules - every launch after the first - and the copy sat after that
+# return. So an install kept the Snapchat code it was first given, and every
+# fix shipped afterwards never reached it.
+import tempfile as _tf, shutil as _sh
+import app.utils.paths as _paths
+import app.platforms.snapchat_bridge as _br
+
+_tmp = Path(_tf.mkdtemp(prefix="snapsync_"))
+try:
+    _app = _tmp / "app_root"
+    _src = _app / "app" / "platforms" / "snapchat"
+    _src.mkdir(parents=True)
+    for _n in ("snapchat_runner.js", "snapbot.js", "log.js", "package.json"):
+        (_src / _n).write_text(f"// v2 {_n}", encoding="utf-8")
+    _data = _tmp / "data"
+    _dst = _data / "snapchat"
+    _dst.mkdir(parents=True)
+    # Exactly the broken case: an install that already has its deps and an
+    # older runner.
+    (_dst / "node_modules").mkdir()
+    for _n in ("snapchat_runner.js", "snapbot.js", "log.js", "package.json"):
+        (_dst / _n).write_text(f"// v1 {_n}", encoding="utf-8")
+
+    _real_app, _real_data = _paths.APP_DIR, _paths.DATA_DIR
+    _paths.APP_DIR, _paths.DATA_DIR = _app, _data
+    try:
+        _ran_from = _br._sync_node_runner()
+    finally:
+        _paths.APP_DIR, _paths.DATA_DIR = _real_app, _real_data
+
+    check("it still runs from the data dir, where the deps are",
+          Path(_ran_from) == _dst, _ran_from)
+    check("and the old runner is replaced by this build's",
+          (_dst / "snapbot.js").read_text(encoding="utf-8") == "// v2 snapbot.js",
+          (_dst / "snapbot.js").read_text(encoding="utf-8"))
+    check("every file, not just one",
+          all((_dst / _n).read_text(encoding="utf-8").startswith("// v2")
+              for _n in ("snapchat_runner.js", "snapbot.js", "log.js", "package.json")))
+    check("the installed dependencies are left alone", (_dst / "node_modules").is_dir())
+
+    # Nothing changed: nothing is rewritten.
+    _before = (_dst / "snapbot.js").stat().st_mtime_ns
+    check("an up-to-date runner is not rewritten",
+          _br._sync_runner_files(_src, _dst) == [] and
+          (_dst / "snapbot.js").stat().st_mtime_ns == _before)
+finally:
+    _sh.rmtree(_tmp, ignore_errors=True)
+
 print(f"\n  {len(PASS)} passed, {len(FAIL)} failed")
 sys.exit(1 if FAIL else 0)
