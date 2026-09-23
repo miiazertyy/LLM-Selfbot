@@ -425,5 +425,24 @@ check("reply_user drops a user it can never look up",
 check("on_message keeps a strong reference to whoever wrote it",
       "remember_user(message.author)" in _src)
 
+
+print()
+print("== a logged-out Snapchat account is not hammered with logins ==")
+# Three failed chat-list reads triggered a full credential login and reset the
+# counter, so an account that could not log in got a login attempt about every
+# 24 seconds, forever. That turns logged-out into locked.
+_run = (ROOT / "app" / "platforms" / "snapchat" / "snapchat_runner.js").read_text(encoding="utf-8")
+_bot = (ROOT / "app" / "platforms" / "snapchat" / "snapbot.js").read_text(encoding="utf-8")
+check("re-login backs off between attempts", "RELOGIN_BACKOFF_MS" in _run and "relogin.nextAt" in _run)
+check("and gives up after a few", "relogin.gaveUp = true" in _run)
+check("and says so where the panel can see it", 'setState("logged-out"' in _run)
+check("a success resets it", "relogin.attempts = 0" in _run)
+# The dismisser must never act on the sign-in flow: "Next" there submits the
+# login form. The browser test covers behaviour; this pins the guard.
+check("the dialog dismisser stays off the sign-in pages",
+      'where.includes("accounts.snapchat.com")' in _bot)
+check("and never presses a button inside a form", '!el.closest("form")' in _bot)
+check("and stops when the same button keeps coming back", "repeats >= 2" in _bot)
+
 print(f"\n  {len(PASS)} passed, {len(FAIL)} failed")
 sys.exit(1 if FAIL else 0)

@@ -526,7 +526,42 @@ function nextReloadGap() {
  * bounced to the landing page). Tries a reload first, then a full re-login.
  * Returns true if back inside the app.
  */
+// Re-login is rationed. The caller that matters fires after three failed
+// chat-list reads, then resets its counter - so on an account that cannot log
+// in (password changed, locked, flagged) this used to submit the login form
+// about every 24 seconds, indefinitely. That is the fastest way to turn a
+// logged-out account into a locked one. Now: a few spaced attempts, then stop
+// and say so, and a person decides.
+const RELOGIN_BACKOFF_MS = [2 * 60 * 1000, 10 * 60 * 1000, 30 * 60 * 1000];
+const relogin = { attempts: 0, nextAt: 0, gaveUp: false };
+
 async function attemptRelogin(bot) {
+  if (relogin.gaveUp) return false;
+  if (Date.now() < relogin.nextAt) return false;      // still backing off
+  const ok = await _attemptReloginOnce(bot);
+  if (ok) {
+    relogin.attempts = 0;
+    relogin.nextAt = 0;
+    setState("ready");
+    return true;
+  }
+  relogin.attempts++;
+  if (relogin.attempts > RELOGIN_BACKOFF_MS.length) {
+    relogin.gaveUp = true;
+    setState("logged-out",
+             "Could not log back in after several tries, so it stopped trying. " +
+             "Check the account, then stop and start it from the panel.");
+    console.error("[Snap] Giving up on logging back in. Restart the account once it is sorted.");
+    return false;
+  }
+  const wait = RELOGIN_BACKOFF_MS[relogin.attempts - 1];
+  relogin.nextAt = Date.now() + wait;
+  setState("logged-out", `Logged out. Trying again in ${Math.round(wait / 60000)} min.`);
+  console.warn(`[Snap] Log-in attempt ${relogin.attempts} failed; next in ${Math.round(wait / 60000)} min.`);
+  return false;
+}
+
+async function _attemptReloginOnce(bot) {
   console.warn("[Snap] Session looks logged out, attempting recovery...");
   try {
     await bot.page.goto("https://web.snapchat.com/", { waitUntil: "networkidle2", timeout: 60000 });

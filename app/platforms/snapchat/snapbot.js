@@ -586,6 +586,17 @@ export default class SnapBot {
    * account should not be granting.
    */
   async handlePopup(maxSteps = 6) {
+    // Never on the sign-in flow. "Next" there is the login form's own submit
+    // button, and the first version of this clicked it six times in a row on
+    // a signed-out page - an empty login submitted over and over, which is
+    // exactly the kind of thing that gets an account flagged. The dialogs this
+    // exists for only ever appear inside the app, never on the auth domain.
+    const where = (() => { try { return this.page.url() || ""; } catch { return ""; } })();
+    if (where.includes("accounts.snapchat.com") || /\/(login|signin|sign-in)\b/i.test(where)) {
+      console.log("[Snap] On the sign-in page, leaving every button alone.");
+      return 0;
+    }
+
     // The cookie-consent modal can also show on the web app after login.
     await this.acceptCookies();
 
@@ -623,8 +634,18 @@ export default class SnapBot {
           return st.visibility !== "hidden" && st.display !== "none" && st.opacity !== "0";
         };
 
+        // A button inside a form is never a dialog's "Next", even when it says
+        // Next: that is the login form, a search, a message box. Excluding them
+        // is the second line of defence behind the auth-domain check above.
+        //
+        // Deliberately the form and not `type === "submit"`: a <button> with no
+        // type attribute IS type=submit by HTML default, so that check excluded
+        // every ordinary button on the page - including the welcome dialog this
+        // exists for. Outside a form, "submit" submits nothing.
         const buttons = [...document.querySelectorAll(
-          'button, [role="button"], a[role="button"]')].filter(visible);
+          'button, [role="button"], a[role="button"]')]
+          .filter(visible)
+          .filter((el) => !el.closest("form"));
 
         // Best match by list order, so "next" beats "close" when a dialog has
         // both and going forward is what actually finishes the onboarding.
@@ -647,6 +668,8 @@ export default class SnapBot {
     };
 
     let cleared = 0;
+    let lastLabel = "";
+    let repeats = 0;
     for (let step = 0; step < maxSteps; step++) {
       let label = null;
       try {
@@ -655,6 +678,15 @@ export default class SnapBot {
         break;                      // page navigating; whatever is left is next time
       }
       if (!label) break;
+      // A dialog advances when you click through it. The same button three
+      // times running means nothing is advancing - so it is not a dialog, and
+      // the right thing is to stop, not to keep pressing.
+      repeats = label === lastLabel ? repeats + 1 : 0;
+      lastLabel = label;
+      if (repeats >= 2) {
+        console.warn(`[Snap] "${label}" keeps coming back, so it is not a dialog. Stopping.`);
+        break;
+      }
       cleared++;
       console.log(`[Snap] Dismissed dialog step: "${label}"`);
       // These are usually multi-step ("Next" then "Next" then gone), and the
