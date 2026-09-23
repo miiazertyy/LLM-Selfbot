@@ -215,6 +215,8 @@ export const api = {
   leaderboard: (target = "", filter = "") =>
     request(`/api/stats/leaderboard${target || filter ? "?" : ""}${target ? `target=${encodeURIComponent(target)}` : ""}${target && filter ? "&" : ""}${filter ? `filter=${encodeURIComponent(filter)}` : ""}`),
   statsOverview: () => request("/api/stats/overview"),
+  /** Everything behind one dashboard figure, for the last `days` days. */
+  statsDetail: (days = 30) => request(`/api/stats/detail?days=${days}`),
   logs: (n = 200, source = "") => request(`/api/logs?n=${n}${source ? `&source=${encodeURIComponent(source)}` : ""}`),
   doctor: () => request("/api/system/doctor"),
   backupUrl: "/api/system/backup",

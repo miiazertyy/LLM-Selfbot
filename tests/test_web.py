@@ -119,6 +119,64 @@ res = asyncio.run(ipc.wait_for_result(1, cid, timeout=2))
 check("result read back", res == {"paused": True}, str(res))
 check("result consumed from file", cid not in json.loads(rf.read_text()))
 
+print()
+print("== a dashboard figure opens into what it is made of ==")
+# A tile is one number, which answers "how many" and nothing else. /api/stats/detail
+# is the rest: the same figure against the window before it, the shape of a day
+# and a week, the platform split, and the people it is made of.
+import sqlite3 as _sq3, time as _t, math as _m
+from app.utils.db import connect_raw as _craw
+_c = _craw()
+_now = _t.time()
+_c.execute("DELETE FROM message_log WHERE username LIKE 'zz_det%'")
+_rows = []
+for _d in range(10):
+    for _k in range(_d + 1):            # day 0 -> 1 row, day 9 -> 10 rows
+        _rows.append((940000 + _k, f"zz_det{_k}", _now - _d * 86400 - 3600))
+_c.executemany("INSERT INTO message_log (user_id, username, ts) VALUES (?,?,?)", _rows)
+_c.commit(); _c.close()
+from app.web.routes.stats_routes import stats_detail as _detail
+_d14 = _detail(None, days=14)
+check("the window total is right", _d14["total"] == 55, str(_d14["total"]))
+check("a day bucket per day, plus today", len(_d14["series"]) == 15, str(len(_d14["series"])))
+check("24 hour buckets", len(_d14["hourly"]) == 24)
+check("7 weekday buckets", len(_d14["weekday"]) == 7)
+check("the busiest day is the biggest one", _d14["busiest"]["day_count"] == 10,
+      str(_d14["busiest"]["day_count"]))
+check("people counted distinctly", _d14["people"]["window"] == 10,
+      str(_d14["people"]["window"]))
+check("the top person is the most frequent", _d14["top"][0]["count"] == 10,
+      str(_d14["top"][0]["count"]))
+check("ids leave as strings, snowflakes do not survive JSON as numbers",
+      isinstance(_d14["top"][0]["id"], str))
+check("the platform split adds up",
+      _d14["platform"]["discord"] + _d14["platform"]["snapchat"] == _d14["total"])
+# A window with nothing in it must answer, not raise.
+_d1 = _detail(None, days=1)
+check("a quiet window still answers", isinstance(_d1.get("total"), int), str(_d1.get("total")))
+# The cap is there because this is a laptop's sqlite file, not a warehouse.
+check("the window is capped", _detail(None, days=99999)["days"] == 365)
+check("an unset window is the default, not one day", _detail(None, days=0)["days"] == 30,
+      str(_detail(None, days=0)["days"]))
+check("and a nonsense one clamps to the floor", _detail(None, days=-5)["days"] == 1,
+      str(_detail(None, days=-5)["days"]))
+_c = _craw(); _c.execute("DELETE FROM message_log WHERE username LIKE 'zz_det%'"); _c.commit(); _c.close()
+_chart = (REPO / "webui" / "src" / "lib" / "components" / "StatChart.svelte").read_text(encoding="utf-8")
+_panel = (REPO / "webui" / "src" / "lib" / "components" / "StatDetail.svelte").read_text(encoding="utf-8")
+_dash = (REPO / "webui" / "src" / "pages" / "Dashboard.svelte").read_text(encoding="utf-8")
+check("the tiles open it", "stat-tile" in _dash and "StatDetail" in _dash)
+check("charts carry a hover layer", "onpointermove" in _chart and "tipPct" in _chart)
+check("the peak label sits at the peak, not the middle", "peakPct" in _chart)
+check("and hides rather than colliding with an end label", "showPeakLabel" in _chart)
+check("there is a numbers view for the charts", "showTable" in _panel)
+check("the range control is above what it changes", "RANGES" in _panel)
+# One hue per chart: the app's two accents fail a colour-vision separation
+# check in four of its six themes, so platforms are faceted, not coloured.
+# The variable itself, not the comment that explains why it is unused.
+check("platforms are faceted rather than two-coloured",
+      "var(--color-accent-2)" not in _chart and "var(--color-accent-2)" not in _panel
+      and "bothPlatforms" in _panel)
+
 print("\n%d passed, %d failed" % (len(PASS), len(FAIL)))
 shutil.rmtree(SANDBOX, ignore_errors=True)
 sys.exit(1 if FAIL else 0)

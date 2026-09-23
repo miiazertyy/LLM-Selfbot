@@ -1409,3 +1409,32 @@ body,
 :root[data-motion="off"] .slider-value {
   transition: none;
 }
+
+/* A stat tile that opens something. The chevron stays out of the way until
+   the tile is pointed at, so the row still reads as four numbers rather than
+   four buttons. */
+.stat-tile {
+  transition: transform 0.18s var(--spring), border-color 0.18s ease;
+}
+.stat-tile:hover {
+  transform: translateY(-2px);
+}
+.stat-tile .stat-more {
+  opacity: 0;
+  transform: translateX(-3px) rotate(0deg);
+  transition: opacity 0.18s ease, transform 0.18s var(--spring);
+}
+.stat-tile:hover .stat-more,
+.stat-tile:focus-visible .stat-more {
+  opacity: 1;
+  transform: translateX(0);
+}
+@media (prefers-reduced-motion: reduce) {
+  .stat-tile,
+  .stat-tile .stat-more {
+    transition: none;
+  }
+  .stat-tile:hover {
+    transform: none;
+  }
+}

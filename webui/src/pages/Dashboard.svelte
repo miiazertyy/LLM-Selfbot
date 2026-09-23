@@ -14,6 +14,7 @@
   import ErrorNote from "../lib/components/ErrorNote.svelte";
   import UserChip from "../lib/components/UserChip.svelte";
   import Avatar from "../lib/components/Avatar.svelte";
+  import StatDetail from "../lib/components/StatDetail.svelte";
 
   type Account = {
     id: string;
@@ -123,6 +124,10 @@
     return (hourlyPrev = stable(hourlyPrev, next));
   });
   const top = $derived(stats?.top ?? []);
+
+  // Which figure is open in the drill-down, if any. A tile is one number; the
+  // panel is what that number is made of.
+  let detail = $state<"replies" | "people" | null>(null);
 
   const dayLabels = $derived.by(() => {
     const fmt = (d: Date) => d.toLocaleDateString(undefined, { day: "numeric", month: "short" });
@@ -317,8 +322,11 @@
                 <span class="text-[12px] text-muted">of {children.length}</span>
               </div>
             </div>
-            <div class="glass p-4">
-              <div class="text-[11px] uppercase tracking-[0.12em] text-faint">Replies today</div>
+            <button class="glass stat-tile p-4 text-left" onclick={() => (detail = "replies")}>
+              <div class="flex items-center gap-1.5">
+                <span class="text-[11px] uppercase tracking-[0.12em] text-faint">Replies today</span>
+                <span class="stat-more text-faint"><Icon name="chevron" size={11} /></span>
+              </div>
               <div class="mt-1 flex items-baseline gap-2">
                 <span class="text-2xl font-semibold text-ink">{today.toLocaleString()}</span>
                 {#if trend}
@@ -327,18 +335,24 @@
                   </span>
                 {/if}
               </div>
-            </div>
-            <div class="glass p-4">
-              <div class="text-[11px] uppercase tracking-[0.12em] text-faint">This week</div>
+            </button>
+            <button class="glass stat-tile p-4 text-left" onclick={() => (detail = "replies")}>
+              <div class="flex items-center gap-1.5">
+                <span class="text-[11px] uppercase tracking-[0.12em] text-faint">This week</span>
+                <span class="stat-more text-faint"><Icon name="chevron" size={11} /></span>
+              </div>
               <div class="mt-1 text-2xl font-semibold text-ink">{week.toLocaleString()}</div>
-            </div>
-            <div class="glass p-4">
-              <div class="text-[11px] uppercase tracking-[0.12em] text-faint">People talked to</div>
+            </button>
+            <button class="glass stat-tile p-4 text-left" onclick={() => (detail = "people")}>
+              <div class="flex items-center gap-1.5">
+                <span class="text-[11px] uppercase tracking-[0.12em] text-faint">People talked to</span>
+                <span class="stat-more text-faint"><Icon name="chevron" size={11} /></span>
+              </div>
               <div class="mt-1 flex items-baseline gap-1.5">
                 <span class="text-2xl font-semibold text-ink">{(stats?.people ?? 0).toLocaleString()}</span>
                 <span class="text-[12px] text-muted">{stats?.people_7d ?? 0} this week</span>
               </div>
-            </div>
+            </button>
           </div>
 
         <!-- ── Activity ───────────────────────────────────────────────── -->
@@ -478,4 +492,8 @@
       </div>
     {/each}
   </div>
+{/if}
+
+{#if detail}
+  <StatDetail metric={detail} onclose={() => (detail = null)} />
 {/if}

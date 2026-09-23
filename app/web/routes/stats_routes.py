@@ -136,3 +136,152 @@ def _extra_overview(conn) -> dict:
     except sqlite3.OperationalError:
         pass
     return out
+
+
+# ── Drill-down ───────────────────────────────────────────────────────────────
+# The dashboard tiles are a number each, which answers "how many" and nothing
+# else. Clicking one opens this: the same figure broken down by time of day,
+# day of week, platform and person, against the window before it.
+#
+# One connection, one pass per shape, all of it indexed on ts. The window is
+# capped because this is a local sqlite file on someone's laptop, not a
+# warehouse - 365 days of an active account is still a fast scan, more is not
+# a question anyone is asking of a chat bot.
+_MAX_WINDOW_DAYS = 365
+
+
+def _bucket(conn, table, id_col, since, expr, extra_where=""):
+    """COUNT(*) grouped by `expr` since `since`, as {bucket: count}."""
+    try:
+        rows = conn.execute(
+            f"SELECT {expr} AS b, COUNT(*) FROM {table} WHERE ts >= ? {extra_where} GROUP BY b",
+            (since,),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return {}
+    return {int(b): n for b, n in rows if b is not None}
+
+
+@router.get("/api/stats/detail")
+def stats_detail(request: Request, days: int = 30):
+    """Everything behind one dashboard figure, for the last `days` days."""
+    days = max(1, min(int(days or 30), _MAX_WINDOW_DAYS))
+    now = time.time()
+    day = 86400.0
+    since = now - days * day
+    prev_since = since - days * day
+
+    conn = connect_raw()
+    try:
+        out: dict = {"days": days, "generated_at": now}
+
+        # ── Totals, this window against the one before it ────────────────────
+        def _count(table, frm, to=None):
+            try:
+                if to is None:
+                    return conn.execute(
+                        f"SELECT COUNT(*) FROM {table} WHERE ts >= ?", (frm,)).fetchone()[0]
+                return conn.execute(
+                    f"SELECT COUNT(*) FROM {table} WHERE ts >= ? AND ts < ?",
+                    (frm, to)).fetchone()[0]
+            except sqlite3.OperationalError:
+                return 0
+
+        discord_n = _count("message_log", since)
+        snap_n = _count("message_log_snap", since)
+        prev_n = _count("message_log", prev_since, since) + _count("message_log_snap", prev_since, since)
+        out["total"] = discord_n + snap_n
+        out["previous"] = prev_n
+        out["platform"] = {"discord": discord_n, "snapchat": snap_n}
+
+        # ── Per day, per platform. Faceted in the UI rather than drawn as two
+        # coloured series: the app's two accent colours fail a colour-vision
+        # separation check in four of its six themes, so one hue per chart is
+        # the only encoding that holds up whatever theme is picked.
+        d_days = _bucket(conn, "message_log", "user_id", since, "CAST(ts/86400 AS INT)")
+        s_days = _bucket(conn, "message_log_snap", "chat_id", since, "CAST(ts/86400 AS INT)")
+        first_day = int(since // day)
+        out["series"] = [
+            {"day": first_day + i,
+             "discord": d_days.get(first_day + i, 0),
+             "snapchat": s_days.get(first_day + i, 0)}
+            for i in range(days + 1)
+        ]
+
+        # ── Shape of a day, and of a week ────────────────────────────────────
+        # strftime on a unix ts: '%H' is 00-23 local-to-UTC, '%w' is 0=Sunday.
+        d_hour = _bucket(conn, "message_log", "user_id", since,
+                         "CAST(strftime('%H', ts, 'unixepoch', 'localtime') AS INT)")
+        s_hour = _bucket(conn, "message_log_snap", "chat_id", since,
+                         "CAST(strftime('%H', ts, 'unixepoch', 'localtime') AS INT)")
+        out["hourly"] = [{"hour": h, "count": d_hour.get(h, 0) + s_hour.get(h, 0)}
+                         for h in range(24)]
+
+        d_dow = _bucket(conn, "message_log", "user_id", since,
+                        "CAST(strftime('%w', ts, 'unixepoch', 'localtime') AS INT)")
+        s_dow = _bucket(conn, "message_log_snap", "chat_id", since,
+                        "CAST(strftime('%w', ts, 'unixepoch', 'localtime') AS INT)")
+        out["weekday"] = [{"day": w, "count": d_dow.get(w, 0) + s_dow.get(w, 0)}
+                          for w in range(7)]
+
+        # ── Who ──────────────────────────────────────────────────────────────
+        top = []
+        try:
+            for uid, uname, n in conn.execute(
+                    "SELECT user_id, username, COUNT(*) AS n FROM message_log "
+                    "WHERE ts >= ? GROUP BY user_id ORDER BY n DESC LIMIT 12",
+                    (since,)).fetchall():
+                # Ids go out as strings: a snowflake is 19 digits and a JSON
+                # number loses precision past 2**53.
+                top.append({"id": str(uid), "name": uname or str(uid),
+                            "count": n, "platform": "discord"})
+        except sqlite3.OperationalError:
+            pass
+        try:
+            for cid, uname, n in conn.execute(
+                    "SELECT chat_id, username, COUNT(*) AS n FROM message_log_snap "
+                    "WHERE ts >= ? GROUP BY chat_id ORDER BY n DESC LIMIT 12",
+                    (since,)).fetchall():
+                top.append({"id": str(cid), "name": uname or str(cid),
+                            "count": n, "platform": "snapchat"})
+        except sqlite3.OperationalError:
+            pass
+        top.sort(key=lambda r: r["count"], reverse=True)
+        out["top"] = top[:12]
+
+        # ── People ───────────────────────────────────────────────────────────
+        def _scalar(sql, args=()):
+            try:
+                return conn.execute(sql, args).fetchone()[0] or 0
+            except sqlite3.OperationalError:
+                return 0
+
+        out["people"] = {
+            "window": _scalar("SELECT COUNT(DISTINCT user_id) FROM message_log WHERE ts >= ?", (since,))
+            + _scalar("SELECT COUNT(DISTINCT chat_id) FROM message_log_snap WHERE ts >= ?", (since,)),
+            "previous": _scalar(
+                "SELECT COUNT(DISTINCT user_id) FROM message_log WHERE ts >= ? AND ts < ?",
+                (prev_since, since))
+            + _scalar(
+                "SELECT COUNT(DISTINCT chat_id) FROM message_log_snap WHERE ts >= ? AND ts < ?",
+                (prev_since, since)),
+            "all_time": _scalar("SELECT COUNT(DISTINCT user_id) FROM message_log")
+            + _scalar("SELECT COUNT(DISTINCT chat_id) FROM message_log_snap"),
+            # first_seen is when the row was created, so this really is "people
+            # who had never been spoken to before this window".
+            "new": _scalar("SELECT COUNT(*) FROM user_stats WHERE first_seen >= ?", (since,))
+            + _scalar("SELECT COUNT(*) FROM user_stats_snap WHERE first_seen >= ?", (since,)),
+        }
+
+        # ── The single busiest hour and day, for the headline sentence ───────
+        busiest_hour = max(out["hourly"], key=lambda h: h["count"], default=None)
+        busiest_day = max(out["series"], key=lambda d: d["discord"] + d["snapchat"], default=None)
+        out["busiest"] = {
+            "hour": busiest_hour["hour"] if busiest_hour and busiest_hour["count"] else None,
+            "hour_count": busiest_hour["count"] if busiest_hour else 0,
+            "day": busiest_day["day"] if busiest_day else None,
+            "day_count": (busiest_day["discord"] + busiest_day["snapchat"]) if busiest_day else 0,
+        }
+        return out
+    finally:
+        conn.close()
