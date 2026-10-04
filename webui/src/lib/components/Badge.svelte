@@ -1,9 +1,9 @@
 <script lang="ts">
-  let { tone = "muted", dot = false, children } = $props<{
+  let { tone = "muted", dot = false, children }: {
     tone?: "muted" | "good" | "bad" | "warn" | "accent";
     dot?: boolean;
     children?: any;
-  }>();
+  } = $props();
 
   const styles = {
     muted: "bg-white/[0.06] text-muted ring-white/[0.06]",

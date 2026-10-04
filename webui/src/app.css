@@ -7,10 +7,423 @@
    when you want to search for it and out of the way when you do not. */
 .settings-row {
   position: relative;
-  padding-left: 10px;
+  padding: 13px 14px 13px 16px;
   border-radius: 10px;
   transition: background-color 0.18s var(--swift);
 }
+/* A switch sits beside what it switches, not across the row from it: on a
+   wide panel it was a long reach from the words to the far edge. The words
+   take a set width, so every switch down a list still lines up, and the
+   switch comes straight after them. */
+.settings-row.is-switch > .settings-text {
+  flex: 0 1 30rem;
+}
+/* And its undo comes after the switch rather than before it, so changing the
+   switch never shunts it along to make room. */
+.settings-row.is-switch .settings-undo {
+  order: 2;
+}
+/* The example beside a switch (SwitchDemo), in the room a wide row has: the
+   words give up a little width for it, and every switch row keeps the slot,
+   empty or not, so the switches still line up. A narrow row has no room and
+   shows none. */
+.settings-row { container-type: inline-size; }
+.settings-demo { display: none; }
+@container (min-width: 700px) {
+  .settings-row.is-switch > .settings-text { flex: 0 1 25rem; }
+  .settings-row.is-switch > .settings-demo {
+    display: flex;
+    width: 196px;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+  }
+}
+/* A subtab's settings sit together in one card, divided by hairlines: one
+   object to read down, rather than rows floating on the page. */
+/* The ring around someone's picture while something is happening, one for
+   the whole app: an account that is up (Accounts), a reply on its way (Chats).
+   A soft glow that breathes, rather than a turning arc, which read as a glitch
+   around a photo. The box is a grid with no line height, so it is exactly the
+   picture's size and the ring is a circle: an inline wrapper took the text
+   line's height instead and drew an oval. */
+.halo {
+  position: relative;
+  display: inline-grid;
+  flex-shrink: 0;
+  border-radius: 999px;
+  line-height: 0;
+}
+.halo::before {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border-radius: 999px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.4s ease;
+}
+.halo.is-live::before {
+  opacity: 1;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 55%, transparent),
+              0 0 22px color-mix(in srgb, var(--color-accent) 35%, transparent);
+  animation: halo-breathe 3.2s ease-in-out infinite;
+}
+/* Waiting on something outside it (connecting, a login): amber, and faster. */
+.halo.is-busy::before {
+  opacity: 1;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-warn) 65%, transparent),
+              0 0 18px color-mix(in srgb, var(--color-warn) 30%, transparent);
+  animation: halo-breathe 1.6s ease-in-out infinite;
+}
+/* Actively at it (writing, typing): the same ring, breathing faster. */
+.halo.is-live.is-fast::before { animation-duration: 1.6s; }
+@keyframes halo-breathe {
+  0%, 100% { transform: scale(1); opacity: 0.75; }
+  50% { transform: scale(1.04); opacity: 1; }
+}
+:root[data-motion="off"] .halo::before { animation: none; }
+
+/* "Default" beside the look a new install starts with, in the Appearance pickers. */
+.default-tag {
+  flex-shrink: 0;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 14%, transparent);
+}
+.settings-card {
+  padding: 4px;
+  border-radius: 16px;
+  background: rgb(255 255 255 / 0.022);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-edge) 80%, transparent);
+}
+.settings-card > * + * {
+  border-top: 1px solid color-mix(in srgb, var(--color-edge) 60%, transparent);
+}
+/* A number field that looks like one, with its unit inside the box. */
+/* The same well as a text field (.field), for numbers with their unit. */
+.num-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 11px;
+  border: 1px solid color-mix(in srgb, var(--color-edge) 92%, transparent);
+  background: linear-gradient(180deg, rgb(0 0 0 / 0.3), rgb(0 0 0 / 0.17));
+  box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.35), 0 1px 0 rgb(255 255 255 / 0.035);
+  transition: border-color 0.18s var(--swift), box-shadow 0.25s var(--swift), background-color 0.18s var(--swift);
+}
+.num-field input { caret-color: var(--color-accent); }
+.num-field:hover:not(:focus-within) {
+  border-color: color-mix(in srgb, var(--color-accent) 30%, var(--color-edge));
+  box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.3), 0 1px 0 rgb(255 255 255 / 0.05),
+              0 0 0 3px color-mix(in srgb, var(--color-accent) 5%, transparent);
+}
+.num-field:focus-within {
+  background: color-mix(in srgb, var(--color-surface) 90%, var(--color-accent));
+  border-color: color-mix(in srgb, var(--color-accent) 65%, transparent);
+  box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.22),
+              0 0 0 3px color-mix(in srgb, var(--color-accent) 18%, transparent),
+              0 8px 22px -12px color-mix(in srgb, var(--color-accent) 70%, transparent);
+}
+.num-field input::-webkit-outer-spin-button,
+.num-field input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.num-unit {
+  font-size: 11px;
+  color: var(--color-faint);
+}
+/* An amount you can drag: the resize cursor says so, a click still types. */
+.num-field.is-scrubbable,
+.num-field.is-scrubbable input:not(:focus) { cursor: ew-resize; }
+.num-field.is-scrubbing {
+  border-color: color-mix(in srgb, var(--color-accent) 70%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 18%, transparent);
+  user-select: none;
+}
+.num-field.is-scrubbing input { color: var(--color-accent); }
+/* A number just filled in for you ("Latest"): a ring goes out from it once. */
+.num-field.is-fresh { animation: num-fresh 1.4s var(--swift); }
+@keyframes num-fresh {
+  0% {
+    border-color: var(--color-accent);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-accent) 55%, transparent);
+  }
+  100% { box-shadow: 0 0 0 12px transparent; }
+}
+.num-field.is-fresh input { animation: num-fresh-text 1.4s var(--swift); }
+@keyframes num-fresh-text { 0%, 40% { color: var(--color-accent); } }
+
+/* ── Chips: one or a few picked from a handful, as pills ───────────────────
+   Squashed under the finger, a jelly pop as one is picked and its mark (a
+   status dot, an icon) jumping with it (lib/feel.ts). One picked of several
+   (.chips.is-one) has a highlight that springs across to it, down a line
+   too (lib/glide.ts); several picked (the rest) each fill in. */
+.chips {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.chip {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--color-muted);
+  background: rgb(255 255 255 / 0.035);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-edge) 90%, transparent),
+              inset 0 1px 0 rgb(255 255 255 / 0.04);
+  transition: color 0.2s ease, background-color 0.25s var(--swift), box-shadow 0.25s var(--swift),
+              transform 0.45s var(--jelly);
+}
+.chip:hover {
+  color: var(--color-ink);
+  background: rgb(255 255 255 / 0.065);
+  transform: translateY(-1px);
+}
+.chip:active {
+  transform: scale(0.93, 0.88);
+  transition-duration: 0.08s;
+}
+.chip:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-edge) 90%, transparent),
+              0 0 0 3px color-mix(in srgb, var(--color-accent) 30%, transparent);
+}
+.chip-mark {
+  display: inline-grid;
+  place-items: center;
+  transition: transform 0.45s var(--jelly);
+}
+.chip:hover .chip-mark { transform: scale(1.15) rotate(-6deg); }
+.chip[aria-pressed="true"] {
+  color: var(--color-ink);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--color-accent) 28%, transparent),
+              color-mix(in srgb, var(--color-accent) 15%, transparent));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 58%, transparent),
+              inset 0 1px 0 rgb(255 255 255 / 0.1),
+              0 6px 16px -8px color-mix(in srgb, var(--color-accent) 85%, transparent);
+}
+/* One of several: the highlight is the glide mark, so the picked chip itself
+   stays clear and the mark is what moves. */
+.chips.is-one .chip[aria-pressed="true"] {
+  background: transparent;
+  box-shadow: none;
+}
+.chip-glide {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 0;
+  width: var(--gw, 0);
+  height: var(--gh, 0);
+  border-radius: 999px;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(var(--gx, 0), var(--gy, 0));
+  background: linear-gradient(180deg, color-mix(in srgb, var(--color-accent) 30%, transparent),
+              color-mix(in srgb, var(--color-accent) 16%, transparent));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 60%, transparent),
+              inset 0 1px 0 rgb(255 255 255 / 0.12),
+              0 8px 20px -10px color-mix(in srgb, var(--color-accent) 90%, transparent);
+  transition: transform 0.5s var(--jelly), width 0.5s var(--jelly), height 0.3s var(--swift), opacity 0.2s ease;
+}
+.chip-glide.is-snap { transition: none; }
+:root[data-motion="off"] .chip,
+:root[data-motion="off"] .chip-mark,
+:root[data-motion="off"] .chip-glide { transition: none; }
+
+.latest-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 11px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-accent);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 35%, transparent);
+  background: color-mix(in srgb, var(--color-accent) 10%, transparent);
+  white-space: nowrap;
+}
+.latest-btn:hover:not(:disabled) { background: color-mix(in srgb, var(--color-accent) 18%, transparent); }
+.latest-btn:disabled { cursor: progress; opacity: 0.75; }
+:root[data-motion="off"] .num-field.is-fresh,
+:root[data-motion="off"] .num-field.is-fresh input { animation: none; }
+.settings-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  margin-bottom: 16px;
+}
+/* "Logins are on the Accounts page", where people used to find them here. */
+.settings-pointer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding: 9px 12px;
+  border-radius: 12px;
+  font-size: 12.5px;
+  color: var(--color-muted);
+  text-decoration: none;
+  background: rgb(255 255 255 / 0.025);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-edge) 70%, transparent);
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+.settings-pointer:hover { color: var(--color-ink); background: rgb(255 255 255 / 0.045); }
+.settings-pointer:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+.settings-pointer-go {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 3px;
+  font-size: 12px;
+  color: var(--color-accent);
+}
+.settings-head-icon {
+  display: flex;
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 13%, transparent);
+}
+/* The unsaved changes, floating over the bottom of the page. */
+.save-bar {
+  position: fixed;
+  left: 50%;
+  bottom: 20px;
+  z-index: 45;
+  display: flex;
+  width: min(600px, calc(100vw - 32px));
+  align-items: center;
+  gap: 12px;
+  padding: 8px 8px 8px 9px;
+  border-radius: 18px;
+  box-shadow: 0 22px 50px -20px rgb(0 0 0 / 0.85), inset 0 0 0 1px rgb(255 255 255 / 0.07);
+  transform: translateX(-50%);
+  animation: save-bar-in 0.45s var(--spring) both;
+}
+/* A thin line of the accent along its top edge. */
+.save-bar::before {
+  content: "";
+  position: absolute;
+  inset: 0 22px auto;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--color-accent) 70%, transparent), transparent);
+  transition: background 0.3s var(--swift);
+}
+.save-bar.is-saved::before { background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--color-good) 70%, transparent), transparent); }
+@keyframes save-bar-in {
+  from { opacity: 0; transform: translate(-50%, 18px) scale(0.96); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+.save-bar.is-leaving { animation: save-bar-out 0.28s var(--swift) forwards; }
+@keyframes save-bar-out { to { opacity: 0; transform: translate(-50%, 16px) scale(0.97); } }
+.save-count {
+  display: grid;
+  min-width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  padding: 0 9px;
+  place-items: center;
+  border-radius: 999px;
+  font-size: 13.5px;
+  font-weight: 750;
+  color: var(--color-bg);
+  background: var(--color-accent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-accent) 16%, transparent), 0 6px 18px -6px var(--color-accent);
+  animation: save-bump 0.4s var(--spring);
+}
+@keyframes save-bump { from { transform: scale(0.82); } }
+.save-ok {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  place-items: center;
+  border-radius: 999px;
+  color: var(--color-bg);
+  background: var(--color-good);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-good) 18%, transparent);
+  animation: save-ok 0.5s var(--spring) both;
+}
+@keyframes save-ok { from { transform: scale(0.4) rotate(-40deg); opacity: 0; } }
+.save-text { display: flex; min-width: 0; flex: 1; flex-direction: column; line-height: 1.3; }
+.save-text b { font-size: 13px; font-weight: 650; color: var(--color-ink); }
+.save-text small { overflow: hidden; font-size: 11.5px; color: var(--color-muted); text-overflow: ellipsis; white-space: nowrap; }
+.save-actions { display: flex; flex-shrink: 0; align-items: center; gap: 4px; }
+.save-undo, .save-go {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-radius: 12px;
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: background-color 0.15s var(--swift), color 0.15s var(--swift), transform 0.3s var(--jelly), filter 0.15s var(--swift);
+}
+.save-undo { color: var(--color-muted); }
+.save-undo:hover:not(:disabled) { color: var(--color-ink); background: rgb(255 255 255 / 0.07); }
+.save-go {
+  padding-right: 8px;
+  font-weight: 700;
+  color: var(--color-bg);
+  background: var(--color-accent);
+  box-shadow: 0 8px 22px -10px var(--color-accent);
+}
+.save-go:hover:not(:disabled) { filter: brightness(1.07); }
+.save-undo:active:not(:disabled), .save-go:active:not(:disabled) { transform: scale(0.95); }
+.save-undo:disabled, .save-go:disabled { cursor: progress; opacity: 0.75; }
+.save-go kbd {
+  margin-left: 2px;
+  padding: 2px 6px;
+  border-radius: 7px;
+  font-family: inherit;
+  font-size: 10.5px;
+  font-weight: 650;
+  background: rgb(0 0 0 / 0.16);
+}
+.save-spin {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  border: 2px solid color-mix(in srgb, var(--color-bg) 30%, transparent);
+  border-top-color: var(--color-bg);
+  animation: save-spin 0.7s linear infinite;
+}
+@keyframes save-spin { to { transform: rotate(360deg); } }
+@media (max-width: 520px) {
+  .save-go kbd, .save-text small { display: none; }
+}
+/* A part of a settings page after a panel: "Alerts on Telegram". */
+.settings-part {
+  margin: 22px 0 8px 4px;
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-faint);
+}
+:root[data-motion="off"] .save-bar,
+:root[data-motion="off"] .save-count,
+:root[data-motion="off"] .save-ok { animation: none; }
 .settings-row::before {
   content: "";
   position: absolute;
@@ -26,7 +439,125 @@
   transition: opacity 0.18s var(--swift), transform 0.3s var(--spring);
 }
 .settings-row:hover { background: rgb(255 255 255 / 0.022); }
+
+/* A setting that was just used (a command run with its prefix, a trigger
+   word): the row lights twice like a model's row in Models when it answers,
+   and a tag beside its name says what was used. */
+.settings-used {
+  position: absolute;
+  inset: 0;
+  border-radius: 10px;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--color-accent) 9%, transparent);
+  box-shadow:
+    inset 0 0 0 1.5px color-mix(in srgb, var(--color-accent) 75%, transparent),
+    0 0 26px -8px color-mix(in srgb, var(--color-accent) 70%, transparent);
+  animation: settings-used 1.8s ease-out forwards;
+}
+@keyframes settings-used {
+  0% { opacity: 0; }
+  10% { opacity: 1; }
+  32% { opacity: 0.25; }
+  52% { opacity: 1; }
+  100% { opacity: 0; }
+}
+.settings-used-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 14%, transparent);
+  animation: settings-used-tag 4.2s var(--swift) forwards;
+}
+@keyframes settings-used-tag {
+  0% { opacity: 0; transform: translateX(-4px) scale(0.9); }
+  8% { opacity: 1; transform: none; }
+  82% { opacity: 1; }
+  100% { opacity: 0; }
+}
+:root[data-motion="off"] .settings-used { animation: settings-used-once 0.9s ease-out forwards; }
+:root[data-motion="off"] .settings-used-tag { animation: none; }
+@keyframes settings-used-once { 0%, 60% { opacity: 1; } 100% { opacity: 0; } }
 .settings-row:hover::before { opacity: 0.75; transform: scaleY(1); }
+
+/* A setting the account only reads when it starts: a small warm badge with a
+   turning arrow, clear at a glance without shouting over the row it is on. */
+.settings-restart {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px 2px 6px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  line-height: 1.35;
+  white-space: nowrap;
+  color: color-mix(in srgb, var(--color-warn) 88%, var(--color-ink));
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--color-warn) 17%, transparent),
+    color-mix(in srgb, var(--color-warn) 9%, transparent));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-warn) 28%, transparent),
+              0 1px 8px -4px color-mix(in srgb, var(--color-warn) 45%, transparent);
+}
+.settings-restart svg { transition: transform 0.7s var(--spring); }
+.settings-row:hover .settings-restart svg { transform: rotate(-180deg); }
+.settings-restart.is-inline { padding: 1px 7px 1px 5px; font-size: 10px; vertical-align: 1px; }
+:root[data-motion="off"] .settings-restart svg { transition: none; }
+
+/* Settings set to one persona: its own values tagged in its colour, the app's own ("Same for everyone") quietly,
+   a way back to everyone's beside the control, and a dot in its colour on the tabs that hold any of its own. */
+.settings-scope-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  animation: settings-tag-in 0.35s var(--jelly);
+}
+.settings-scope-tag.is-own {
+  color: color-mix(in srgb, var(--pc) 75%, var(--color-ink));
+  background: color-mix(in srgb, var(--pc) 15%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--pc) 32%, transparent);
+}
+.settings-scope-tag.is-global { color: var(--color-faint); background: rgb(255 255 255 / 0.05); }
+@keyframes settings-tag-in { from { opacity: 0; transform: scale(0.85); } }
+.settings-use-everyones {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 9px;
+  border-radius: 9px;
+  font-size: 11.5px;
+  white-space: nowrap;
+  color: var(--color-muted);
+  transition: color 0.15s ease, background-color 0.15s ease;
+}
+.settings-use-everyones:hover { color: var(--color-ink); background: rgb(255 255 255 / 0.07); }
+.settings-own-dot {
+  width: 6px;
+  height: 6px;
+  flex-shrink: 0;
+  border-radius: 999px;
+  background: var(--pc);
+  box-shadow: 0 0 6px var(--pc);
+}
+.settings-scope-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: -4px 0 14px;
+  font-size: 12px;
+  color: var(--color-faint);
+}
+:root[data-motion="off"] .settings-scope-tag { animation: none; }
 
 /* The config key, dimmed until you go looking for it. */
 .settings-row .settings-key {
@@ -91,85 +622,7 @@
 .markdown em { font-style: italic; }
 .markdown del { opacity: 0.6; }
 
-/* ── Command palette ───────────────────────────────────────────────────────
-   Results are grouped into folders that dock open and shut, and one highlight
-   travels between rows rather than a background flicking on and off. All of it
-   is transform and opacity, so it costs the compositor and nothing else, and
-   data-motion="off" already flattens every animation here to nothing. */
-
-.palette {
-  animation: palette-in 0.38s var(--spring) both;
-  transform-origin: top center;
-}
-@keyframes palette-in {
-  from { opacity: 0; transform: translate3d(0, -14px, 0) scale(0.965); filter: blur(6px); }
-  60%  { filter: blur(0); }
-  to   { opacity: 1; transform: translate3d(0, 0, 0) scale(1); filter: blur(0); }
-}
-
-.palette-scrim { animation: scrim-in 0.28s var(--swift) both; }
-@keyframes scrim-in { from { opacity: 0; } to { opacity: 1; } }
-
-/* The folder body animates its own height without anyone measuring it:
-   grid-template-rows between 0fr and 1fr is animatable, so the row simply has
-   no height until it does. */
-.folder-body {
-  display: grid;
-  grid-template-rows: 0fr;
-  transition: grid-template-rows 0.34s var(--spring);
-}
-.folder-body[data-open="true"] { grid-template-rows: 1fr; }
-.folder-inner { overflow: hidden; min-height: 0; }
-
-.folder-head .folder-chevron {
-  transition: transform 0.34s var(--spring);
-}
-.folder-head[aria-expanded="true"] .folder-chevron { transform: rotate(90deg); }
-
-/* The travelling highlight. One element, moved, so the selection slides from
-   row to row and overshoots slightly on the way instead of blinking across. */
-.palette-pill {
-  position: absolute;
-  left: 8px;
-  right: 8px;
-  top: 0;
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--color-accent) 16%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 35%, transparent);
-  pointer-events: none;
-  opacity: 0;
-  transition:
-    transform 0.34s var(--spring),
-    height 0.34s var(--spring),
-    opacity 0.18s var(--swift);
-  will-change: transform;
-}
-.palette-pill[data-shown="true"] { opacity: 1; }
-
-/* Rows rise in on a stagger driven by their own index, so a folder opening
-   reads as it filling rather than appearing. Capped in the markup, because a
-   hundredth row arriving two seconds late is not charm, it is a bug. */
-.palette-row {
-  animation: pal-row 0.34s var(--spring) both;
-  animation-delay: calc(var(--i, 0) * 16ms);
-}
-@keyframes pal-row {
-  from { opacity: 0; transform: translate3d(-6px, 4px, 0); }
-  to   { opacity: 1; transform: translate3d(0, 0, 0); }
-}
-
-/* The count tag pops when its folder opens. */
-.folder-count {
-  transition: background-color 0.24s var(--swift), color 0.24s var(--swift),
-              transform 0.34s var(--jelly);
-}
-.folder-head[aria-expanded="true"] .folder-count { transform: scale(1.08); }
-
-:root[data-motion="off"] .palette,
-:root[data-motion="off"] .palette-scrim,
-:root[data-motion="off"] .palette-row { animation: none; }
-:root[data-motion="off"] .folder-body { transition: none; }
-:root[data-motion="off"] .palette-pill { transition: opacity 0.12s linear; }
+/* The command palette (Ctrl+K) keeps its styles with it: CommandPalette.svelte. */
 
 /* ── Living backgrounds ────────────────────────────────────────────────────
    A fixed layer under the whole app, painted from the theme's own variables so
@@ -181,6 +634,27 @@
 
    Everything here animates transform and opacity only. Those are compositor
    properties, so an idle window does no layout and no paint. */
+/* Big Picture opening over the app (see bigPictureCovering in stores.ts): the
+   app fades out under it, and once it is covered, the app is not drawn and its
+   background stops moving. content-visibility keeps what was laid out, so
+   showing it again on the way out is quick. */
+.app-shell { transition: opacity 0.16s ease; }
+.app-shell.is-under { opacity: 0; pointer-events: none; }
+.app-shell.is-covered { content-visibility: hidden; }
+/* :root for the weight to beat each background's own animation rule below. */
+:root .app-backdrop.is-covered,
+:root .app-backdrop.is-covered::before,
+:root .app-backdrop.is-covered::after,
+:root .app-backdrop.is-covered * { visibility: hidden; animation-play-state: paused; }
+
+/* The window not in front (App.svelte sets data-away): the slow ambient loops hold still until it is, so an app left
+   open behind a game draws nothing. Big Picture, made to be watched from across the room, keeps moving. */
+:root[data-away] .app-backdrop::before,
+:root[data-away] .app-backdrop::after,
+:root[data-away] .app-backdrop *,
+:root[data-away] .pool-blob,
+:root[data-away] .halo::before { animation-play-state: paused !important; }
+
 .app-backdrop {
   position: fixed;
   inset: 0;
@@ -403,6 +877,60 @@
   font-style: normal;
   font-display: swap;
 }
+/* An emoji picked, popping up from where it was pressed and floating off, a ring going out under it (lib/burst.ts). */
+.emoji-burst {
+  position: fixed;
+  z-index: 2000;
+  font-size: 26px;
+  line-height: 1;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+}
+.emoji-burst-ring {
+  position: fixed;
+  z-index: 1999;
+  width: 44px;
+  height: 44px;
+  border-radius: 999px;
+  border: 2px solid color-mix(in srgb, var(--color-accent) 70%, transparent);
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+}
+
+/* Text typing itself in (lib/typewrite.ts): what is not typed yet keeps its place, unseen, so nothing moves while it
+   types; a caret of the accent runs ahead of the letters, and blinks twice at the end before going. */
+.tw-rest { visibility: hidden; }
+.tw-caret {
+  display: inline-block;
+  width: 2px;
+  height: 1.05em;
+  margin: 0 -2px -0.18em 0;
+  border-radius: 1px;
+  vertical-align: baseline;
+  background: var(--color-accent);
+  box-shadow: 0 0 8px var(--color-accent);
+}
+.is-typed .tw-caret { animation: tw-blink 0.3s steps(1) 2; }
+@keyframes tw-blink { 50% { opacity: 0; } }
+
+/* Country flags. Windows has no flag emoji and draws one as two letters
+   ("FR"), so the flags in the timezone and language pickers come from a font
+   of their own: Twemoji's flags (see TwemojiCountryFlags.LICENSE.md). The
+   unicode-range keeps it to the letters flags are made of, so it is only
+   fetched once a flag is on screen. */
+@font-face {
+  font-family: "Twemoji Country Flags";
+  unicode-range: U+1F1E6-1F1FF, U+1F3F4, U+E0062-E0063, U+E0065, U+E0067,
+    U+E006C, U+E006E, U+E0073-E0074, U+E0077, U+E007F;
+  src: url("./assets/fonts/TwemojiCountryFlags.woff2") format("woff2");
+  font-display: swap;
+}
+.flag {
+  display: inline-block;
+  font-family: "Twemoji Country Flags", "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif;
+  font-style: normal;
+  line-height: 1;
+}
 
 @theme {
   /* Depth ramp, every surface sits on exactly one of these. */
@@ -518,6 +1046,39 @@ textarea {
   transform: translateY(-1px);
 }
 
+/* A list or grid arriving one item after another, each popping in with a
+   little jelly (lib/domino.ts sets each one's turn and says when). Held back
+   until its moment; an item that arrives later pops in on its own. Fill
+   "backwards" only: after its pop an item's own hover and press transforms
+   are its own again. */
+.domino:not(.is-in) > * {
+  opacity: 0;
+}
+.domino.is-in > :not([data-there]) {
+  animation: domino-in var(--domino-dur, 0.55s) var(--jelly) backwards;
+  animation-delay: calc(var(--i, 0) * var(--domino-step, 40ms));
+}
+/* A page opened to be read at once (cascade.ts, data-cascade="quick"): each item lands in two thirds the time. */
+[data-cascade="quick"] { --domino-dur: 0.36s; }
+@keyframes domino-in {
+  from { opacity: 0; transform: translateY(12px) scale(0.92); }
+  60% { opacity: 1; }
+}
+/* Plugged in: across from the left, a touch past its place and back, rather than up and popping. */
+.domino.is-plug.is-in > :not([data-there]) {
+  animation-name: domino-plug;
+  animation-duration: var(--domino-dur, 0.5s);
+  animation-timing-function: cubic-bezier(0.3, 1.35, 0.5, 1);
+}
+@keyframes domino-plug {
+  from { opacity: 0; transform: translateX(-18px); }
+  50% { opacity: 1; }
+}
+:root[data-motion="off"] .domino > * {
+  opacity: 1;
+  animation: none;
+}
+
 /* Squash-and-stretch pop, for things that appear in place. */
 @keyframes jelly-pop {
   0% { transform: scale(0.82) translateY(6px); opacity: 0; }
@@ -550,9 +1111,23 @@ textarea {
    No scale(): scaling a whole page re-rasterises every glyph on every frame,
    which is what made tab switches stutter. Opacity + a small Y translate are
    both GPU-composited, so this stays smooth. */
+/* The page only fades: what is in it drops into place one block after another
+   (lib/cascade.ts), and the page sliding as well moved everything twice. */
 @keyframes page-in {
-  from { opacity: 0; transform: translate3d(0, 8px, 0); }
-  to { opacity: 1; transform: translate3d(0, 0, 0); }
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+/* While a block is still dropping into place, what is inside it waits, held on
+   its first frame: it starts once the block has landed (lib/cascade.ts takes
+   the mark off). Opening a tab, then the tab's own motion, one after the other
+   rather than both at once. */
+[data-arriving],
+[data-arriving]::before,
+[data-arriving]::after,
+[data-arriving] *,
+[data-arriving] *::before,
+[data-arriving] *::after {
+  animation-play-state: paused !important;
 }
 .page-enter {
   animation: page-in 0.3s var(--swift) both;
@@ -709,6 +1284,15 @@ textarea {
 }
 ::-webkit-scrollbar-thumb:hover { background: #3a3a52; background-clip: padding-box; }
 ::-webkit-scrollbar-track { background: transparent; }
+/* Never scrollbar-width or scrollbar-color on anything: in Chromium, setting
+   either one switches the styling above off for that element and brings back
+   the system's own bar, white track and arrow buttons and all. The search list
+   and five others had "scrollbar-width: thin" and showed exactly that. Firefox
+   has no ::-webkit-scrollbar, so it gets the standard properties instead, and
+   only it: the test below is false in Chromium. */
+@supports not selector(::-webkit-scrollbar) {
+  * { scrollbar-width: thin; scrollbar-color: #2a2a3c transparent; }
+}
 
 /* ── Form controls ────────────────────────────────────────────────────────── */
 /* Must live in @layer components: Tailwind v4 puts utilities in a layer, and
@@ -753,23 +1337,37 @@ textarea {
   /* Real form field. `.bare` is deliberately invisible until you touch it,
      which suits a settings row showing a value but makes a form look like a
      list of labels, you cannot tell there is anything to type into. */
+  /* A well you type into: set a little into the panel (a soft shadow at its
+     top), warming towards the accent as the pointer comes, and lit when it
+     has the cursor, a soft ring and glow round it and the caret in the accent. */
   .field {
     width: 100%;
-    border-radius: 9px;
-    border: 1px solid var(--color-edge);
-    background: rgb(0 0 0 / 0.22);
-    padding: 0.45rem 0.65rem;
+    border-radius: 11px;
+    border: 1px solid color-mix(in srgb, var(--color-edge) 92%, transparent);
+    background: linear-gradient(180deg, rgb(0 0 0 / 0.3), rgb(0 0 0 / 0.17));
+    box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.35), 0 1px 0 rgb(255 255 255 / 0.035);
+    padding: 0.5rem 0.75rem;
     font-size: 0.8125rem;
     color: var(--color-ink);
-    transition: background-color 0.16s var(--swift), border-color 0.16s var(--swift);
+    caret-color: var(--color-accent);
+    transition: background-color 0.18s var(--swift), border-color 0.18s var(--swift), box-shadow 0.25s var(--swift);
   }
-  .field::placeholder { color: var(--color-faint); }
-  .field:hover { border-color: color-mix(in srgb, var(--color-edge) 60%, white); }
+  .field::placeholder { color: var(--color-faint); transition: opacity 0.18s var(--swift); }
+  .field::selection { background: color-mix(in srgb, var(--color-accent) 38%, transparent); }
+  .field:hover:not(:focus) {
+    border-color: color-mix(in srgb, var(--color-accent) 30%, var(--color-edge));
+    box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.3), 0 1px 0 rgb(255 255 255 / 0.05),
+                0 0 0 3px color-mix(in srgb, var(--color-accent) 5%, transparent);
+  }
   .field:focus {
     outline: none;
-    background: var(--color-surface);
-    border-color: color-mix(in srgb, var(--color-accent) 60%, transparent);
+    background: color-mix(in srgb, var(--color-surface) 90%, var(--color-accent));
+    border-color: color-mix(in srgb, var(--color-accent) 65%, transparent);
+    box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.22),
+                0 0 0 3px color-mix(in srgb, var(--color-accent) 18%, transparent),
+                0 8px 22px -12px color-mix(in srgb, var(--color-accent) 70%, transparent);
   }
+  .field:focus::placeholder { opacity: 0.45; }
 
   .glass {
     background:
@@ -848,6 +1446,52 @@ textarea {
      and the page title, which have to stay readable over anything. */
   background: color-mix(in srgb, var(--color-surface) var(--surface-chrome, 36%), transparent);
 }
+
+/* Menus, lists and popovers - the right-click menu, every dropdown, the pickers -
+   in the panels' material too: liquid glass under Glass, heavier frost under
+   Frosted, solid under Solid. More blur and more fill than a card, a sheen
+   across the top and a light edge, so whatever is behind turns to soft colour
+   and what they say stays easy to read. Dialogs (.glow) stay solid: they are
+   for reading, at length. */
+/* Filled enough that what they say reads first: at 46% the glass let the page
+   underneath show through too much to read a list over it. */
+:root[data-surface="glass"] {
+  --float-fill: 74%;
+  --float-blur: 32px;
+  --float-sat: 1.8;
+}
+:root[data-surface="frost"] {
+  --float-fill: 88%;
+  --float-blur: 36px;
+  --float-sat: 1.5;
+}
+:root[data-surface="glass"] .glass.floating:not(.glow),
+:root[data-surface="frost"] .glass.floating:not(.glow),
+:root[data-surface="glass"] .float-surface,
+:root[data-surface="frost"] .float-surface {
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 0.09), rgb(255 255 255 / 0.02) 34%, transparent 62%),
+    color-mix(in srgb, var(--color-card) var(--float-fill), transparent);
+  border-color: rgb(255 255 255 / 0.1);
+  -webkit-backdrop-filter: blur(var(--float-blur)) saturate(var(--float-sat));
+  backdrop-filter: blur(var(--float-blur)) saturate(var(--float-sat));
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.14),
+    inset 0 0 0 1px rgb(255 255 255 / 0.03),
+    0 0 0 1px color-mix(in srgb, var(--color-edge) 60%, transparent),
+    0 18px 44px -14px rgb(0 0 0 / 0.65);
+}
+
+/* A field as wide as its words (lib/autowidth.ts): it grows with a letter in the same frame, and eases back as they
+   go. No spring on the way back: one that overshot would cut the last letter off for a moment. */
+input.is-auto { transition: width 0.22s var(--swift); }
+.field.is-auto {
+  transition: width 0.22s var(--swift), background-color 0.18s var(--swift), border-color 0.18s var(--swift),
+              box-shadow 0.25s var(--swift);
+}
+input.is-auto.is-growing,
+.field.is-auto.is-growing { transition-property: background-color, border-color, box-shadow; }
+:root[data-motion="off"] input.is-auto { transition: none; }
 
 /* The field inputs would otherwise stay opaque blocks on a glass card. */
 :root[data-surface="glass"] .field {
@@ -1032,71 +1676,120 @@ mark {
   margin-bottom: 18px;
 }
 .settings-subs-wrap .hscroll-bar {
-  /* Clear of the divider, and of the active tab's underline, which lives in
-     the same few pixels. */
-  bottom: -5px;
+  /* On top of the subtabs, not under them: the tab rail's bar is under the
+     tabs, so the two sit together in the gap between the rows rather than one
+     at the bottom of each, where the lower one read as belonging to the page. */
+  top: -6px;
+  bottom: auto;
 }
 
+/* One strip, in a soft well of its own, with a highlight that glides to the
+   one you are on (lib/glide.ts) rather than each pill lighting up by itself. */
 .settings-subs {
+  position: relative;
   display: flex;
-  gap: 2px;
+  gap: 3px;
   overflow-x: auto;
-  border-bottom: 1px solid var(--color-edge);
+  padding: 4px;
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgb(255 255 255 / 0.035), rgb(255 255 255 / 0.015));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-edge) 75%, transparent), inset 0 1px 0 rgb(255 255 255 / 0.03);
   scrollbar-width: none;
+}
+.settings-sub-glide {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 0;
+  width: var(--gw, 0);
+  height: var(--gh, 0);
+  border-radius: 12px;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(var(--gx, 0), var(--gy, 0));
+  background: linear-gradient(180deg, color-mix(in srgb, var(--color-accent) 30%, transparent),
+              color-mix(in srgb, var(--color-accent) 17%, transparent));
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 50%, transparent),
+    inset 0 1px 0 rgb(255 255 255 / 0.12),
+    0 8px 22px -10px color-mix(in srgb, var(--color-accent) 75%, transparent);
+  transition: transform 0.46s var(--spring), width 0.46s var(--spring), height 0.3s var(--swift), opacity 0.2s ease;
+}
+.settings-sub-glide.is-snap { transition: none; }
+/* With room to spare, every subtab is on screen: they wrap onto a second line
+   instead of scrolling, which hid the last few behind the right edge. On a
+   phone they still scroll sideways, where a second line would cost too much. */
+@media (min-width: 640px) {
+  .settings-subs {
+    flex-wrap: wrap;
+    overflow-x: visible;
+    /* The well as wide as its pills, not the whole row. */
+    width: fit-content;
+    max-width: 100%;
+  }
+  .settings-subs-wrap .hscroll-bar {
+    display: none;
+  }
 }
 .settings-subs::-webkit-scrollbar {
   display: none;
 }
 
+/* Pills rather than a faint underlined strip: each one reads as a button,
+   carries an icon to scan by and how many settings are behind it, and the
+   one you are on is filled rather than marked by two pixels of underline. */
 .settings-sub {
   position: relative;
+  z-index: 1;
+  display: inline-flex;
   flex: 0 0 auto;
-  padding: 7px 11px 9px;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 13px;
+  border-radius: 12px;
   font-size: 12.5px;
+  font-weight: 500;
   white-space: nowrap;
-  color: var(--color-faint);
-  transition: color 0.18s var(--swift);
+  color: var(--color-muted);
+  transition: color 0.2s var(--swift), background-color 0.18s var(--swift), transform 0.3s var(--spring);
 }
-.settings-sub:hover {
+.settings-sub :is(svg) { transition: color 0.2s var(--swift), transform 0.35s var(--spring); }
+.settings-sub:hover:not(.is-active) {
   color: var(--color-ink);
+  background: rgb(255 255 255 / 0.045);
 }
+.settings-sub:hover:not(.is-active) :is(svg) { transform: translateY(-1px) rotate(-6deg); }
+.settings-sub:active { transform: scale(0.95); }
+.settings-sub:focus-visible { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 50%, transparent); }
+/* The one you are on: the glide is its fill; the words go bright and the icon
+   pops in the accent as it arrives. */
 .settings-sub.is-active {
   color: var(--color-ink);
+  font-weight: 600;
 }
-.settings-sub::after {
-  content: "";
-  position: absolute;
-  left: 9px;
-  right: 9px;
-  bottom: -1px;
-  height: 2px;
-  border-radius: 2px 2px 0 0;
-  background: var(--color-accent);
-  transform: scaleX(0);
-  opacity: 0;
-  transition:
-    transform 0.26s var(--swift),
-    opacity 0.18s var(--swift);
+.settings-sub.is-active :is(svg) {
+  color: var(--color-accent);
+  animation: icon-pop 0.5s var(--jelly);
 }
-.settings-sub.is-active::after {
-  transform: none;
-  opacity: 1;
+.settings-sub-n {
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  line-height: 16px;
+  text-align: center;
+  color: var(--color-faint);
+  background: rgb(255 255 255 / 0.06);
+}
+.settings-sub.is-active .settings-sub-n {
+  color: var(--color-ink);
+  background: color-mix(in srgb, var(--color-accent) 25%, transparent);
 }
 
-/* The panel changes with the subtab, so it should look like it changed. */
-.settings-panel,
-.settings-head {
-  animation: settings-in 0.32s var(--swift) both;
-}
-@keyframes settings-in {
-  from {
-    opacity: 0;
-    transform: translateY(-4px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
+/* The panel changes with the subtab, so it should look like it changed: it
+   fades, and its heading and rows drop in from the top (lib/cascade.ts). */
+.settings-panel {
+  animation: page-in 0.24s var(--swift) both;
 }
 
 :root[data-motion="off"] .settings-panel,
@@ -1104,8 +1797,10 @@ mark {
   animation: none;
 }
 :root[data-motion="off"] .settings-sub,
-:root[data-motion="off"] .settings-sub::after {
+:root[data-motion="off"] .settings-sub :is(svg),
+:root[data-motion="off"] .settings-sub-glide {
   transition: none;
+  animation: none;
 }
 :root[data-motion="off"] .settings-tab,
 :root[data-motion="off"] .settings-tab-bar,
@@ -1145,6 +1840,24 @@ mark {
   overflow: hidden;
 }
 
+/* The theme reveal (lib/themesweep.ts) is the browser's own view transition:
+   its own crossfade is not wanted, the script draws the blob, the thump and
+   the old theme sinking back. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+/* While the colours change, nothing fades them: inside the blob the new theme
+   is simply there. Every panel and button easing to its new colour was a
+   repaint of the whole page each frame, on top of the change itself. */
+html.theme-switching,
+html.theme-switching *,
+html.theme-switching *::before,
+html.theme-switching *::after {
+  transition: none !important;
+}
+
 .theme-sweep-bar {
   position: absolute;
   top: -10%;
@@ -1161,7 +1874,6 @@ mark {
     #fff 84%,
     transparent 100%
   );
-  filter: blur(0.4px);
 }
 
 /* Four-point stars scattered over the whole screen, not just off the bar.
@@ -1175,6 +1887,8 @@ mark {
   height: var(--size, 10px);
   margin: calc(var(--size, 10px) / -2) 0 0 calc(var(--size, 10px) / -2);
   opacity: 0;
+  /* The glow is a gradient of its own: a drop shadow on each star was a filter
+     to work out every frame of the change. */
   background:
     linear-gradient(to bottom,
       transparent 0%,
@@ -1183,8 +1897,8 @@ mark {
     linear-gradient(to right,
       transparent 0%,
       color-mix(in srgb, var(--color-accent-2, var(--color-accent)) 55%, #fff) 50%,
-      transparent 100%) center / 100% 18% no-repeat;
-  filter: drop-shadow(0 0 3px color-mix(in srgb, var(--color-accent) 75%, transparent));
+      transparent 100%) center / 100% 18% no-repeat,
+    radial-gradient(circle, color-mix(in srgb, var(--color-accent) 45%, transparent) 0%, transparent 60%);
   animation: theme-star var(--life, 560ms) linear both;
   animation-delay: var(--delay, 0ms);
   will-change: transform, opacity;
@@ -1200,34 +1914,6 @@ mark {
   58%  { opacity: 0.2;  transform: scale(0.8) rotate(45deg); }
   72%  { opacity: 0.95; transform: scale(1.05) rotate(55deg); }
   100% { opacity: 0;    transform: scale(0.3) rotate(70deg); }
-}
-
-.theme-sweep-spark {
-  position: absolute;
-  right: 12%;
-  width: var(--size, 3px);
-  height: var(--size, 3px);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--color-accent-2, var(--color-accent)) 70%, #fff);
-  box-shadow: 0 0 6px 1px color-mix(in srgb, var(--color-accent) 60%, transparent);
-  opacity: 0;
-  animation: theme-spark 520ms var(--swift) both;
-  animation-delay: var(--delay, 0ms);
-}
-
-@keyframes theme-spark {
-  0% {
-    opacity: 0;
-    transform: translate(0, 0) scale(0.4);
-  }
-  25% {
-    opacity: 1;
-  }
-  100% {
-    opacity: 0;
-    /* Trailing off backwards, the direction the bar came from. */
-    transform: translate(-120px, var(--drift, 0)) scale(0.2);
-  }
 }
 
 /* Colour changes ride the sweep instead of snapping. */
@@ -1329,83 +2015,244 @@ body,
 }
 
 /* ── Sliders ────────────────────────────────────────────────────────────────
-   The default range input is a thin grey line with an OS thumb that ignores
-   the theme entirely. This is the same control drawn in the app's own colours,
-   with the filled part showing how far along the value is. */
+   Drawn like the dials beside them. A thick groove, filled up to the value with
+   the dials' own gradient, with faint quarter marks the way a gauge has ticks.
+   The knob is a dial's hand: a dark disc in a coloured ring with a dot in the
+   middle, glowing like the dials' arcs, growing a halo when pointed at and
+   swelling when held. Still a real range input underneath, so the keyboard and
+   screen readers work as they always did.
+
+   --from and --fill are set per slider from its value, so the groove fills up
+   to the knob. A range either side of zero fills from zero (--from), not from
+   its left end. */
 .slider {
+  --track: 10px;
+  --knob: 22px;
   -webkit-appearance: none;
   appearance: none;
-  height: 18px;
+  height: 26px;
   background: transparent;
   cursor: pointer;
 }
 .slider::-webkit-slider-runnable-track {
-  height: 4px;
+  height: var(--track);
   border-radius: 999px;
-  /* --fill is set per element from the current value, so the track is filled
-     up to the thumb rather than being one flat colour. */
-  background: linear-gradient(
-    to right,
-    var(--color-accent) 0%,
-    var(--color-accent) var(--fill, 50%),
-    rgb(255 255 255 / 0.10) var(--fill, 50%),
-    rgb(255 255 255 / 0.10) 100%
-  );
+  background:
+    /* the quarter marks, over everything */
+    linear-gradient(
+      90deg,
+      transparent calc(25% - 1px),
+      rgb(255 255 255 / 0.13) calc(25% - 1px) calc(25% + 1px),
+      transparent calc(25% + 1px) calc(50% - 1px),
+      rgb(255 255 255 / 0.13) calc(50% - 1px) calc(50% + 1px),
+      transparent calc(50% + 1px) calc(75% - 1px),
+      rgb(255 255 255 / 0.13) calc(75% - 1px) calc(75% + 1px),
+      transparent calc(75% + 1px)
+    ),
+    /* the value: the dials' gradient, from where it starts to where it is */
+    linear-gradient(
+      90deg,
+      transparent var(--from, 0%),
+      var(--color-accent-2) var(--from, 0%),
+      var(--color-accent) var(--fill, 50%),
+      transparent var(--fill, 50%)
+    ),
+    /* the groove */
+    rgb(255 255 255 / 0.07);
+  box-shadow: inset 0 1px 3px rgb(0 0 0 / 0.45), inset 0 0 0 1px rgb(255 255 255 / 0.04);
+  transition: background-color 0.2s var(--swift);
+}
+/* A range either side of zero fills out from zero, and a fill that just
+   started there used to end in a hard square edge with the middle mark
+   through it: it looked cut off. Here the fill is a pill: its end at zero is
+   round (a circle at each end of it, one of them always under the knob), so
+   at zero itself the two meet as a dot that marks the middle, and the middle
+   line goes. */
+.slider.is-centered:not(.is-blank)::-webkit-slider-runnable-track {
+  background:
+    linear-gradient(
+      90deg,
+      transparent calc(25% - 1px),
+      rgb(255 255 255 / 0.13) calc(25% - 1px) calc(25% + 1px),
+      transparent calc(25% + 1px) calc(75% - 1px),
+      rgb(255 255 255 / 0.13) calc(75% - 1px) calc(75% + 1px),
+      transparent calc(75% + 1px)
+    ),
+    radial-gradient(circle calc(var(--track) / 2) at var(--from, 50%) 50%,
+      var(--color-accent-2) calc(100% - 1px), transparent 100%),
+    radial-gradient(circle calc(var(--track) / 2) at var(--fill, 50%) 50%,
+      var(--color-accent) calc(100% - 1px), transparent 100%),
+    linear-gradient(
+      90deg,
+      transparent var(--from, 0%),
+      var(--color-accent-2) var(--from, 0%),
+      var(--color-accent) var(--fill, 50%),
+      transparent var(--fill, 50%)
+    ),
+    rgb(255 255 255 / 0.07);
 }
 .slider::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  margin-top: -6px;
-  width: 16px;
-  height: 16px;
+  box-sizing: border-box;
+  width: var(--knob);
+  height: var(--knob);
+  margin-top: calc((var(--track) - var(--knob)) / 2);
   border-radius: 999px;
-  background: #fff;
   border: 3px solid var(--color-accent);
-  box-shadow: 0 1px 4px rgb(0 0 0 / 0.45);
-  transition: transform 0.34s var(--jelly), border-color 0.18s var(--swift);
+  background: radial-gradient(circle, var(--color-accent) 0 2.6px, rgb(20 22 34) 3.2px);
+  box-shadow:
+    0 0 0 0 color-mix(in srgb, var(--color-accent) 20%, transparent),
+    0 3px 8px rgb(0 0 0 / 0.5),
+    0 0 14px color-mix(in srgb, var(--color-accent) 42%, transparent);
+  transition:
+    transform 0.34s var(--jelly),
+    box-shadow 0.25s var(--swift),
+    border-color 0.2s var(--swift);
 }
 .slider:hover::-webkit-slider-thumb {
-  transform: scale(1.12);
+  transform: scale(1.1);
+  box-shadow:
+    0 0 0 6px color-mix(in srgb, var(--color-accent) 15%, transparent),
+    0 3px 8px rgb(0 0 0 / 0.5),
+    0 0 18px color-mix(in srgb, var(--color-accent) 58%, transparent);
 }
 .slider:active::-webkit-slider-thumb {
-  transform: scale(0.94);
+  transform: scale(1.22);
+}
+.slider:focus-visible {
+  outline: none;
 }
 .slider:focus-visible::-webkit-slider-thumb {
-  outline: 2px solid color-mix(in srgb, var(--color-accent) 70%, transparent);
-  outline-offset: 2px;
+  box-shadow:
+    0 0 0 5px color-mix(in srgb, var(--color-accent) 35%, transparent),
+    0 3px 8px rgb(0 0 0 / 0.5),
+    0 0 18px color-mix(in srgb, var(--color-accent) 58%, transparent);
 }
-.slider::-moz-range-track {
-  height: 4px;
+/* Left blank: the provider's own default is used and nothing is sent. No
+   knob at all: resting on that default put one knob in the middle and another
+   at the far end, which looked like knobs left in random places. An empty
+   track, "Default" beside it; a click or a drag on it sets a value. */
+.slider.is-blank {
+  cursor: pointer;
+}
+.slider.is-blank::-webkit-slider-thumb {
+  opacity: 0;
+}
+.slider.is-blank::-moz-range-thumb {
+  opacity: 0;
+}
+.slider:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+.slider:disabled::-webkit-slider-thumb {
+  transform: none;
+  box-shadow: 0 3px 8px rgb(0 0 0 / 0.5);
+}
+.slider-value.is-blank {
+  color: var(--color-muted);
+}
+/* The way back to blank, there only once there is something to go back from:
+   a button that says "Default", where a faint cross was easy to miss. */
+.slider-clear {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 9px 0 7px;
   border-radius: 999px;
-  background: rgb(255 255 255 / 0.10);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--color-muted);
+  background: rgb(255 255 255 / 0.05);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-edge) 85%, transparent);
+  transition: color 0.15s ease, background-color 0.15s ease, box-shadow 0.18s ease, opacity 0.2s ease,
+              transform 0.25s var(--spring);
+}
+.slider-clear:hover:not(:disabled) {
+  color: var(--color-ink);
+  background: rgb(255 255 255 / 0.09);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 50%, transparent);
+}
+.slider-clear:hover:not(:disabled) svg {
+  color: var(--color-accent);
+}
+.slider-clear:disabled {
+  opacity: 0;
+  transform: scale(0.6);
+  pointer-events: none;
+}
+/* Firefox has its own pieces: a filled part of its own, so the gradient goes there. */
+.slider::-moz-range-track {
+  height: var(--track);
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.07);
+  box-shadow: inset 0 1px 3px rgb(0 0 0 / 0.45);
 }
 .slider::-moz-range-progress {
-  height: 4px;
+  height: var(--track);
   border-radius: 999px;
-  background: var(--color-accent);
+  background: linear-gradient(90deg, var(--color-accent-2), var(--color-accent));
+}
+/* Firefox's own filled part always starts at the left end, which is wrong for
+   a range around zero: there the pill is drawn on the track instead. */
+.slider.is-centered::-moz-range-progress {
+  background: transparent;
+}
+.slider.is-centered:not(.is-blank)::-moz-range-track {
+  background:
+    radial-gradient(circle calc(var(--track) / 2) at var(--from, 50%) 50%,
+      var(--color-accent-2) calc(100% - 1px), transparent 100%),
+    radial-gradient(circle calc(var(--track) / 2) at var(--fill, 50%) 50%,
+      var(--color-accent) calc(100% - 1px), transparent 100%),
+    linear-gradient(
+      90deg,
+      transparent var(--from, 0%),
+      var(--color-accent-2) var(--from, 0%),
+      var(--color-accent) var(--fill, 50%),
+      transparent var(--fill, 50%)
+    ),
+    rgb(255 255 255 / 0.07);
 }
 .slider::-moz-range-thumb {
-  width: 16px;
-  height: 16px;
+  box-sizing: border-box;
+  width: var(--knob);
+  height: var(--knob);
   border-radius: 999px;
-  background: #fff;
   border: 3px solid var(--color-accent);
+  background: radial-gradient(circle, var(--color-accent) 0 2.6px, rgb(20 22 34) 3.2px);
+  box-shadow: 0 3px 8px rgb(0 0 0 / 0.5), 0 0 14px color-mix(in srgb, var(--color-accent) 42%, transparent);
 }
 
-/* The number beside it, which springs when the value changes so the two read
-   as one control rather than a slider and an unrelated readout. */
+/* The number beside it: a small pill that lights and springs when the value
+   changes, so the two read as one control rather than a slider and an
+   unrelated readout. */
 .slider-value {
   display: inline-block;
   min-width: 3.2rem;
-  text-align: right;
+  padding: 3px 8px;
+  border-radius: 8px;
+  text-align: center;
   font-variant-numeric: tabular-nums;
-  transition: transform 0.34s var(--jelly), color 0.18s var(--swift);
+  background: rgb(255 255 255 / 0.04);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.05);
+  transition:
+    transform 0.34s var(--jelly),
+    color 0.18s var(--swift),
+    background-color 0.18s var(--swift),
+    box-shadow 0.18s var(--swift);
 }
 .slider-value.is-bumped {
-  transform: scale(1.16);
+  transform: scale(1.1);
   color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 35%, transparent);
 }
 :root[data-motion="off"] .slider::-webkit-slider-thumb,
+:root[data-motion="off"] .slider::-webkit-slider-runnable-track,
 :root[data-motion="off"] .slider-value {
   transition: none;
 }
@@ -1429,12 +2276,409 @@ body,
   opacity: 1;
   transform: translateX(0);
 }
-@media (prefers-reduced-motion: reduce) {
-  .stat-tile,
-  .stat-tile .stat-more {
-    transition: none;
-  }
-  .stat-tile:hover {
-    transform: none;
-  }
+/* The app's Motion switch, not the OS: Windows reports "reduce" whenever its
+   animation effects are off, which is common, and that froze these for anyone
+   who had not asked for it here (see stores.ts). */
+:root[data-motion="off"] .stat-tile,
+:root[data-motion="off"] .stat-tile .stat-more {
+  transition: none;
+}
+:root[data-motion="off"] .stat-tile:hover {
+  transform: none;
+}
+
+
+/* Background work on a page you have left (lib/busy.ts). Accent, small, and
+   eased in: it should be noticeable without pulling the eye every time it
+   appears. */
+.nav-spin {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--color-accent);
+  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--color-accent) 55%, transparent));
+  animation: nav-spin-in 0.28s var(--spring) both;
+}
+/* The count beside a ring that knows its progress: "3/8", "27%". */
+.nav-pct {
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-muted);
+  filter: none;
+}
+@keyframes nav-spin-turn {
+  to { transform: rotate(360deg); }
+}
+@keyframes nav-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes nav-spin-in {
+  from { opacity: 0; transform: scale(0.4); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+/* Finished while you were away: a tick that pops, then fades. */
+.nav-done {
+  display: inline-flex;
+  color: var(--color-good);
+  animation: nav-done-pop 1.6s var(--spring) both;
+}
+@keyframes nav-done-pop {
+  0% { opacity: 0; transform: scale(0.3) rotate(-20deg); }
+  18% { opacity: 1; transform: scale(1.15) rotate(0deg); }
+  30% { transform: scale(1); }
+  75% { opacity: 1; }
+  100% { opacity: 0; transform: scale(0.9); }
+}
+
+/* The collapsed rail: the ring sits around the icon. It turns or fills on its
+   own (ProgressRing); this only places it. Opacity for the entrance, not scale,
+   so nothing here competes with the ring's own rotation. */
+.nav-ring {
+  position: absolute;
+  inset: -5px;
+  display: grid;
+  place-items: center;
+  color: var(--color-accent);
+  animation: nav-fade-in 0.28s ease-out both;
+  pointer-events: none;
+}
+.nav-done-dot {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  width: 7px;
+  height: 7px;
+  border-radius: 9999px;
+  background: var(--color-good);
+  box-shadow: 0 0 0 2px var(--color-surface);
+  animation: nav-done-pop 1.6s var(--spring) both;
+  pointer-events: none;
+}
+
+/* Motion off in the app, not in Windows: a spinner that stands still reads as
+   the page being stuck, which is what it looked like on a PC with animation
+   effects off. */
+:root[data-motion="off"] .nav-spin,
+:root[data-motion="off"] .nav-ring {
+  animation: none;
+}
+:root[data-motion="off"] .nav-done,
+:root[data-motion="off"] .nav-done-dot {
+  animation: nav-done-fade 1.6s linear both;
+}
+@keyframes nav-done-fade {
+  0%, 70% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* ── Dashboard widgets ───────────────────────────────────────────────────── */
+.dash-cell {
+  border-radius: 20px;
+  transition: opacity 0.2s ease, box-shadow 0.2s ease;
+}
+/* A widget with its settings open sits above the cells after it; see
+   WidgetFrame.svelte. */
+.dash-cell:has(.widget.is-raised) {
+  position: relative;
+  z-index: 25;
+}
+.dash-cell.is-dragging {
+  opacity: 0.4;
+}
+.dash-cell.is-drop-target {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 55%, transparent);
+}
+/* Just added: a soft glow that fades as it settles in. */
+.dash-cell.is-new > :last-child {
+  animation: widget-land 1.4s ease-out both;
+}
+@keyframes widget-land {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-accent) 0%, transparent); }
+  25% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 45%, transparent),
+                    0 12px 40px -12px color-mix(in srgb, var(--color-accent) 60%, transparent); }
+  100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-accent) 0%, transparent); }
+}
+
+:root[data-motion="off"] .dash-cell.is-new > :last-child {
+  animation: none;
+}
+
+/* The speaker at the top right (App.svelte): the icon pops as it changes, and
+   sits back, dimmer, while the app is quiet. Backwards only: held after it
+   ends, the pop would keep the hover's lift from showing. */
+/* The speaker's volume: a thin bar tucked away to its left that opens out under the pointer (or from the keyboard),
+   filled up to how loud, a line across its middle at the level the sounds were made at. No knob: the end of the
+   fill says where it is, and a press anywhere on it goes straight there. */
+/* How far the bar shows itself filled: a registered length, so it can glide. It runs from empty to the level as the
+   bar opens (the level pours in behind the opening), and follows a press on the bar with a short ease; a drag sets
+   it directly, so the bar is never behind the pointer. */
+@property --vol-shown {
+  syntax: "<percentage>";
+  inherits: true;
+  initial-value: 0%;
+}
+.vol { --vol-w: 78px; position: relative; display: flex; align-items: center; }
+.vol-track {
+  display: flex;
+  align-items: center;
+  width: 0;
+  height: 28px;
+  overflow: hidden;
+  opacity: 0;
+  /* Pulled out on a soft spring: quick off the mark, a hair past, and settling. */
+  transition: width 0.46s cubic-bezier(0.22, 1.25, 0.36, 1), opacity 0.22s ease,
+              padding 0.46s cubic-bezier(0.22, 1.25, 0.36, 1);
+}
+.vol.is-open .vol-track { width: var(--vol-w); padding: 0 10px 0 6px; opacity: 1; }
+.vol.is-off .vol-track { opacity: 0.5; }
+.vol-bar { position: relative; flex: 1; min-width: 0; display: flex; align-items: center; }
+.vol-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  min-width: 0;
+  height: 20px;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+  --vol-shown: 0%;
+  transition: --vol-shown 0.22s cubic-bezier(0.2, 0.9, 0.25, 1);
+}
+.vol.is-open .vol-slider {
+  --vol-shown: var(--fill, 50%);
+  transition: --vol-shown 0.55s cubic-bezier(0.2, 0.9, 0.25, 1) 0.08s;
+}
+.vol.is-dragging .vol-slider { transition: none; }
+.vol-slider:focus-visible { outline: none; }
+.vol-slider::-webkit-slider-runnable-track {
+  height: 2.5px;
+  border-radius: 999px;
+  background:
+    linear-gradient(90deg, var(--color-accent-2), var(--color-accent) var(--vol-shown), transparent var(--vol-shown)),
+    color-mix(in srgb, var(--color-ink) 16%, transparent);
+  transition: height 0.2s var(--swift), box-shadow 0.2s var(--swift);
+}
+.vol-slider:hover::-webkit-slider-runnable-track,
+.vol-slider:active::-webkit-slider-runnable-track { height: 3.5px; }
+.vol-slider:focus-visible::-webkit-slider-runnable-track {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 35%, transparent);
+}
+.vol-slider::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 0; height: 0; }
+.vol-slider::-moz-range-thumb { width: 0; height: 0; border: 0; }
+/* The middle line: drawn in once the bar is out, a little after it. */
+.vol-mid {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 1.5px;
+  height: 9px;
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--color-ink) 70%, transparent);
+  transform: translate(-50%, -50%) scaleY(0);
+  opacity: 0;
+  pointer-events: none;
+  transition: transform 0.18s ease, opacity 0.15s ease;
+}
+.vol.is-open .vol-mid {
+  transform: translate(-50%, -50%) scaleY(1);
+  opacity: 1;
+  transition: transform 0.4s cubic-bezier(0.3, 1.5, 0.5, 1) 0.2s, opacity 0.2s ease 0.2s;
+}
+/* The window's buttons sit over the header's corner: as the bar opens the header makes room for it, so the loading
+   mark beside them moves along with it instead of ending up under it. */
+.app-header.has-chrome { transition: padding-right 0.46s cubic-bezier(0.22, 1.25, 0.36, 1); }
+.app-header.has-chrome.vol-open { padding-right: calc(176px + 78px); }
+:root[data-motion="off"] .vol-track,
+:root[data-motion="off"] .vol-slider,
+:root[data-motion="off"] .vol-mid,
+:root[data-motion="off"] .app-header.has-chrome { transition: none; }
+.speaker-icon { display: grid; animation: speaker-pop 0.42s var(--jelly) backwards; }
+@keyframes speaker-pop { from { transform: scale(0.55) rotate(-14deg); opacity: 0.25; } }
+.speaker.is-off { color: var(--color-faint); }
+:root[data-motion="off"] .speaker-icon { animation: none; }
+
+/* ── The top of the window (App.svelte) ─────────────────────────────────────
+   The mark and the name, the page you are on, and the buttons: each answers
+   the pointer. The mark lifts and turns towards you, the name catches the
+   light, the page's name comes in with the page, and every button has a
+   little motion of its own and says what it is under it. */
+
+/* The mark: a tile that lights up in the accent as you point at it. */
+.brand-mark {
+  position: relative;
+  display: grid;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  border-radius: 9px;
+  transition: transform 0.38s var(--spring), background-color 0.2s ease, box-shadow 0.25s ease;
+}
+.brand-mark:hover {
+  background: color-mix(in srgb, var(--color-accent) 15%, transparent);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 35%, transparent),
+    0 0 18px -4px color-mix(in srgb, var(--color-accent) 65%, transparent);
+  transform: rotate(-8deg) scale(1.08);
+}
+.brand-mark:active { transform: scale(0.88); transition-duration: 0.12s; }
+.brand-mark:focus-visible { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 50%, transparent); }
+/* With the link off it is only the mark: a quieter hover, no lift. */
+.brand-mark.is-off:hover { background: rgb(255 255 255 / 0.06); box-shadow: none; transform: none; }
+.brand-logo { width: 18px; height: 18px; opacity: 0.92; user-select: none; pointer-events: none; transition: opacity 0.2s ease; }
+.brand-mark:hover .brand-logo { opacity: 1; }
+/* Pressed: a bounce as it opens the page, a shake of the head when that is off. */
+.brand-mark.is-boing { animation: brand-boing 0.5s var(--jelly); }
+.brand-mark.is-nope { animation: brand-nope 0.45s ease; }
+@keyframes brand-boing {
+  0% { transform: scale(0.8) rotate(-14deg); }
+  60% { transform: scale(1.16) rotate(5deg); }
+  100% { transform: none; }
+}
+@keyframes brand-nope {
+  20% { transform: translateX(-2.5px) rotate(-7deg); }
+  40% { transform: translateX(2.5px) rotate(6deg); }
+  60% { transform: translateX(-1.5px) rotate(-3deg); }
+  80% { transform: translateX(1px) rotate(1deg); }
+}
+/* The name: bright where the light passes over it, as you point at the strip. */
+.brand-name {
+  overflow: hidden;
+  font-size: 12.5px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  pointer-events: none;      /* a press on it is a press on the strip: it drags the window */
+  color: transparent;
+  background: linear-gradient(100deg, var(--color-ink) 0%, var(--color-ink) 38%,
+              color-mix(in srgb, var(--color-accent) 80%, white) 50%, var(--color-ink) 62%, var(--color-ink) 100%);
+  background-size: 260% 100%;
+  background-position: 100% 0;
+  -webkit-background-clip: text;
+  background-clip: text;
+  transition: background-position 1.1s cubic-bezier(0.3, 0.7, 0.2, 1);
+}
+.brand:hover .brand-name { background-position: 0 0; }
+
+/* A thread of the accent along the bottom of the header, brightest under the
+   page's name, as if lit from it. */
+.app-header { position: relative; }
+.app-header::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 1px;
+  pointer-events: none;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--color-accent) 55%, transparent),
+              color-mix(in srgb, var(--color-accent) 18%, transparent) 30%, transparent 60%);
+}
+
+/* The page you are on: its icon in a tile, its name, both coming in with it. */
+.page-title { display: inline-flex; min-width: 0; align-items: center; gap: 8px; animation: page-title-in 0.36s var(--spring) both; }
+.page-title > * { pointer-events: none; }
+.page-title h1 { overflow: hidden; font-size: 13.5px; font-weight: 650; letter-spacing: -0.01em; white-space: nowrap; color: var(--color-ink); }
+.page-title-icon {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  place-items: center;
+  border-radius: 7px;
+  color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 14%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 24%, transparent);
+  animation: icon-pop 0.5s var(--jelly) both;
+}
+@keyframes page-title-in { from { opacity: 0; transform: translateY(5px); } }
+/* In Settings, where in it: the tab a click away, the section where you are. */
+.crumbs { display: inline-flex; min-width: 0; align-items: center; gap: 2px; font-size: 12px; color: var(--color-muted); }
+.crumb-sep { display: grid; flex-shrink: 0; place-items: center; color: var(--color-faint); }
+.crumb { overflow: hidden; padding: 2px 7px; border-radius: 7px; white-space: nowrap; text-overflow: ellipsis; }
+button.crumb { transition: background-color 0.15s ease, color 0.15s ease; }
+button.crumb:hover { color: var(--color-ink); background: rgb(255 255 255 / 0.06); }
+.crumb.is-here { font-weight: 600; color: var(--color-ink); animation: page-title-in 0.3s var(--spring) both; }
+/* No room for the way there in a pocket-sized window: the page's name says enough. */
+@media (max-width: 760px) { .crumbs { display: none; } }
+
+/* The buttons, in groups: a soft well each, the app's own apart from the window's. */
+.tb-group {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  padding: 2px;
+  border-radius: 11px;
+  background: rgb(255 255 255 / 0.035);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-edge) 70%, transparent);
+}
+.tb-btn {
+  position: relative;
+  color: var(--color-muted);
+  transition: background-color 0.15s ease, color 0.15s ease, transform 0.3s var(--spring);
+}
+.tb-btn:hover { color: var(--color-ink); background: rgb(255 255 255 / 0.09); }
+.tb-btn:active { transform: scale(0.88); transition-duration: 0.1s; }
+.tb-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 45%, transparent); }
+.tb-ico { display: grid; transition: transform 0.32s var(--spring), filter 0.2s ease; }
+.tb-btn:hover .tb-ico { transform: translateY(-1px) scale(1.08); }
+/* Each its own little motion: the TV lights up, the size squeezes or stretches,
+   the line drops, the cross turns and goes red, the speaker's waves pulse. */
+.tb-btn.is-bp:hover { color: var(--color-accent); }
+.tb-btn.is-bp:hover .tb-ico { filter: drop-shadow(0 0 6px color-mix(in srgb, var(--color-accent) 70%, transparent)); }
+.tb-btn.is-size:hover .tb-ico { transform: scale(0.84); }
+.tb-btn.is-size.is-pocket:hover .tb-ico { transform: scale(1.16); }
+.tb-btn.is-min:hover .tb-ico { transform: translateY(2px); }
+.tb-btn.is-close:hover { color: #fff; background: color-mix(in srgb, var(--color-bad) 78%, transparent); }
+.tb-btn.is-close:hover .tb-ico { transform: rotate(90deg); }
+.speaker:not(.is-off):hover .tb-ico { animation: speaker-waves 0.9s ease-in-out infinite; }
+@keyframes speaker-waves { 50% { transform: translateY(-1px) scale(1.12); } }
+/* What it is, under it, a moment after the pointer arrives. The last one's sits
+   inside the window's edge rather than half off it. */
+.tb-btn[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  top: calc(100% + 9px);
+  left: 50%;
+  z-index: 70;
+  padding: 4px 8px;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--color-ink);
+  background: color-mix(in srgb, var(--color-surface) 94%, transparent);
+  box-shadow: inset 0 0 0 1px var(--color-edge), 0 10px 24px -10px rgb(0 0 0 / 0.7);
+  opacity: 0;
+  translate: -50% -4px;
+  pointer-events: none;
+  transition: opacity 0.14s ease, translate 0.26s var(--spring);
+}
+.tb-btn[data-tip]:hover::after { opacity: 1; translate: -50% 0; transition-delay: 0.35s; }
+.tb-btn.is-edge[data-tip]::after { left: auto; right: -2px; translate: 0 -4px; }
+.tb-btn.is-edge[data-tip]:hover::after { translate: 0 0; }
+.tb-btn:active::after { opacity: 0 !important; }
+
+:root[data-motion="off"] .brand-mark,
+:root[data-motion="off"] .tb-btn,
+:root[data-motion="off"] .tb-ico,
+:root[data-motion="off"] .brand-name { transition: none; }
+:root[data-motion="off"] .brand-mark.is-boing,
+:root[data-motion="off"] .brand-mark.is-nope,
+:root[data-motion="off"] .page-title,
+:root[data-motion="off"] .page-title-icon,
+:root[data-motion="off"] .crumb.is-here,
+:root[data-motion="off"] .speaker:not(.is-off):hover .tb-ico { animation: none; }
+
+/* ── Personas ──────────────────────────────────────────────────────────────
+   A page about one persona wears its colour (Personas, and Pictures, Memory and
+   Settings scoped to one). Registered as a colour so it can glide: picking
+   another turns every glow, ring and tint on the page to it at once, rather
+   than each snapping over on its own. */
+@property --persona-color {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #a78bfa;
 }

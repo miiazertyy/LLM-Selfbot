@@ -14,9 +14,7 @@ else:
     APP_DIR = Path(__file__).resolve().parent.parent.parent
 
 
-# Making a folder called "portable" next to the app is the whole opt in: no
-# marker file to write, no setting to find. Everything then lives in it, so the
-# app can be carried on a stick or kept entirely inside its own folder.
+# Making a folder called "portable" next to the app is the whole opt in: no marker file to write, no setting to find. Everything then lives in it, so the app can be carried on a stick or kept entirely inside its own folder.
 PORTABLE_DIR_NAME = "portable"
 
 
@@ -28,6 +26,12 @@ def portable_root() -> Path | None:
 
 
 def _resolve_data_dir() -> Path:
+    # The phone apps say where: their own private storage. Laid out like a
+    # source checkout, the app would otherwise keep everything inside itself,
+    # which iOS does not allow writing to and Android replaces on every update.
+    given = os.environ.get("LLMSELFBOT_DATA_DIR", "").strip()
+    if given:
+        return Path(given)
     portable = portable_root()
     if portable is not None:
         return portable
@@ -57,9 +61,7 @@ REQUIRED_SUBDIRS = [
 ]
 
 
-# Shipped templates. config/ is pure runtime state (gitignored) and is seeded
-# from here on first run, identical in a source checkout and a frozen build, so
-# the seeding path is actually exercised during development.
+# Shipped templates. config/ is pure runtime state (gitignored) and is seeded from here on first run, identical in a source checkout and a frozen build, so the seeding path is actually exercised during development.
 DEFAULTS_DIR = APP_DIR / "resources"
 
 _SEED_FILES = (
@@ -67,6 +69,48 @@ _SEED_FILES = (
     ("instructions.txt", "instructions.txt"),
     ("example.env", ".env"),
 )
+
+
+# A restore is written here first and moved into place the next time the app
+# starts, before any account opens a file. Writing it straight over the live
+# folder meant replacing a database the running accounts had open, which on
+# Windows fails ("access denied") or, worse, half-succeeds.
+PENDING_RESTORE = "restore-pending"
+
+
+def apply_pending_restore() -> int:
+    """Move a staged restore into the data folder. Returns how many files moved.
+
+    Called by the one process that owns the folder, after it holds the single
+    instance lock and before it starts anything that opens these files.
+    """
+    pending = DATA_DIR / PENDING_RESTORE
+    if not pending.is_dir():
+        return 0
+    moved = 0
+    for src in sorted(pending.rglob("*")):
+        if not src.is_file():
+            continue
+        rel = src.relative_to(pending)
+        dest = DATA_DIR / rel
+        try:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            if dest.suffix == ".db":
+                # The old database's write-ahead log would be replayed onto the
+                # restored one and corrupt it. It belongs to the file being replaced.
+                for side in (dest.with_name(dest.name + "-wal"), dest.with_name(dest.name + "-shm")):
+                    try:
+                        side.unlink()
+                    except FileNotFoundError:
+                        pass
+            os.replace(src, dest)
+            moved += 1
+        except OSError as e:
+            print(f"[LLMSelfbot] could not restore {rel}: {e}", flush=True)
+    shutil.rmtree(pending, ignore_errors=True)
+    if moved:
+        print(f"[LLMSelfbot] Restored {moved} files from the backup.", flush=True)
+    return moved
 
 
 def seed_data_dir() -> None:
@@ -79,17 +123,14 @@ def seed_data_dir() -> None:
         if src.exists() and not dst.exists():
             shutil.copyfile(src, dst)
         elif src_name == "instructions.txt" and src.exists() and dst.exists():
-            # Upgrade pre-style-guide installs: an empty/blank file gets the
-            # shipped template; anything the user actually wrote is kept.
+            # Upgrade pre-style-guide installs: an empty/blank file gets the shipped template; anything the user actually wrote is kept.
             try:
                 if not dst.read_text(encoding="utf-8", errors="replace").strip():
                     shutil.copyfile(src, dst)
             except OSError:
                 pass
 
-    # Keep the annotated template beside the live .env as a reference, and
-    # refresh it every start so it never drifts behind the shipped version.
-    # It is only documentation, nothing reads it as configuration.
+    # Keep the annotated template beside the live .env as a reference, and refresh it every start so it never drifts behind the shipped version. It is only documentation, nothing reads it as configuration.
     reference = DEFAULTS_DIR / "example.env"
     if reference.exists():
         try:
@@ -100,14 +141,14 @@ def seed_data_dir() -> None:
     prune_dead_settings()
 
 
-# Settings for features that no longer exist. config/ is seeded once and then
-# never touched again, so removing a feature from the code leaves its settings
-# sitting in everyone's file forever, showing up in the editor as options that
-# do nothing.
+# Settings for features that no longer exist. config/ is seeded once and then never touched again, so removing a feature from the code leaves its settings sitting in everyone's file forever, showing up in the editor as options that do nothing.
 _DEAD_CONFIG_KEYS = (
     ("bot", "captcha"),          # the captcha solver, and its Gemini model
 )
-_DEAD_ENV_KEYS = ("GEMINI_API_KEY",)
+# GEMINI_API_KEY used to be here, from the captcha solver. It is the Gemini
+# provider's key on the Models tab now, and pruning it deleted a working key on
+# every launch.
+_DEAD_ENV_KEYS: tuple = ()
 
 
 def prune_dead_settings() -> None:
@@ -162,8 +203,7 @@ def _prune_env(path) -> bool:
         name = line.split("=", 1)[0].strip().lstrip("#").strip()
         if "=" in line and name in _DEAD_ENV_KEYS:
             changed = True
-            # The "# --- Gemini API ---" banner above it is now a heading over
-            # nothing, so it goes too.
+            # The "# --- Gemini API ---" banner above it is now a heading over nothing, so it goes too.
             while kept and (kept[-1].lstrip().startswith("#") or not kept[-1].strip()):
                 dropped = kept.pop()
                 if dropped.strip() and not dropped.lstrip().startswith("#"):

@@ -234,8 +234,8 @@ check("only when the reply really went out",
       "if (r?.success || r?.dropped) forget(target, id)" in _chats_ts)
 check("progress is published for the button",
       "replyAllProgress" in _chats_ts and "replyAllProgress" in _page)
-check("and the run can be stopped",
-      "if (!get(replyingAll)[target]) break" in _chats_ts)
+check("and the run can be stopped, the reply in flight and any waiting to be sent taken back",
+      "if (run.stop) break;" in _chats_ts and "export function stopReplyAll(" in _chats_ts)
 check("the button says where it has got to",
       "allProgress.done" in _page and "allProgress.total" in _page)
 check("the row draws a real avatar", "<Avatar src={u.avatar}" in _page)
@@ -264,7 +264,8 @@ check("a new person in the same slot retries their picture",
 _uses = {
     "Chats": ROOT / "webui" / "src" / "pages" / "Chats.svelte",
     "Memory": ROOT / "webui" / "src" / "pages" / "Memory.svelte",
-    "Dashboard": ROOT / "webui" / "src" / "pages" / "Dashboard.svelte",
+    # The Dashboard draws its accounts inside a widget since it became widgets.
+    "Dashboard": ROOT / "webui" / "src" / "lib" / "dashboard" / "WidgetBody.svelte",
     "Accounts": ROOT / "webui" / "src" / "pages" / "Accounts.svelte",
     "UserChip": ROOT / "webui" / "src" / "lib" / "components" / "UserChip.svelte",
 }

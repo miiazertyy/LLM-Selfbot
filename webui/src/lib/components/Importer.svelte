@@ -7,6 +7,9 @@
    * end up drifting apart.
    */
   import Icon from "./Icon.svelte";
+  import NotHere from "./NotHere.svelte";
+  import { notHere } from "../device";
+  import { play } from "../uisound";
 
   let {
     title,
@@ -41,12 +44,15 @@
     {dragOver ? 'border-accent bg-accent/[0.06]' : 'border-edge'}"
   ondragover={(e) => {
     e.preventDefault();
+    // Something held over it: an airy lift as it lights up, and a soft thunk where it is let go.
+    if (!dragOver) play("hover");
     dragOver = true;
   }}
   ondragleave={() => (dragOver = false)}
   ondrop={(e) => {
     e.preventDefault();
     dragOver = false;
+    play("drop");
     take(e.dataTransfer?.files ?? null);
   }}
 >
@@ -56,8 +62,11 @@
   <div>
     <p class="text-[13px] text-ink">{busy ? busyLabel : title}</p>
     <p class="mt-0.5 text-[11px] leading-relaxed text-faint">{hint}</p>
+    <!-- The Android app's web view has no file picker: say so instead of a button that does nothing. -->
+    <div class="flex justify-center"><NotHere feature="files_pick" variant="line" /></div>
   </div>
-  <label class="cursor-pointer rounded-lg bg-accent px-3.5 py-1.5 text-[13px] font-medium text-bg transition-colors hover:bg-accent/90">
+  <label class="cursor-pointer rounded-lg bg-accent px-3.5 py-1.5 text-[13px] font-medium text-bg transition-colors hover:bg-accent/90"
+         class:hidden={!!$notHere("files_pick")}>
     Browse files
     <input
       type="file"

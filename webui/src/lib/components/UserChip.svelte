@@ -11,7 +11,9 @@
    * renders as plain text with no affordance at all.
    */
   import { api } from "../api";
+  import { fmtDate } from "../fmt";
   import Avatar from "./Avatar.svelte";
+  import Icon from "./Icon.svelte";
 
   let { id, name, sub = "", size = "sm" } = $props<{
     id?: string | number;
@@ -110,7 +112,7 @@
   function when(ts?: number): string {
     if (!ts) return "";
     const d = new Date(ts * 1000);
-    return d.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+    return fmtDate(d, { day: "numeric", month: "short", year: "numeric" });
   }
 
   /**
@@ -172,6 +174,7 @@
       aria-label="About {heading}"
       tabindex="-1"
       onclick={(e) => e.stopPropagation()}
+      onkeydown={(e) => e.key === "Escape" && (open = false)}
       class="user-card glass floating absolute w-[320px] max-w-[calc(100vw-16px)] overflow-y-auto rounded-xl p-4 shadow-2xl"
       style="top: {pos.top}px; left: {pos.left}px; max-height: min(70vh, 520px);"
     >
@@ -189,7 +192,7 @@
       <!-- The avatar is a Discord CDN link cached when the bot last saw them.
            A link can rot, so a failed load falls back to the placeholder
            rather than leaving a broken image icon in the card. -->
-      <Avatar src={person?.avatar || ""} name={heading} size={56} />
+      <Avatar src={person?.avatar || ""} name={heading} size={56} silhouette={person?.platform === "snapchat"} />
       <div class="min-w-0 flex-1">
         <div class="truncate text-[15px] font-semibold text-ink">{heading}</div>
         {#if handle}
@@ -204,7 +207,12 @@
           </button>
         {/if}
         {#if sub}<div class="truncate text-[11px] text-faint">{sub}</div>{/if}
-        <div class="mt-1 font-mono text-[10px] text-faint">{id}</div>
+        {#if person?.platform === "snapchat"}
+          <!-- A Snapchat chat id says nothing to anyone: where they are from does. -->
+          <div class="mt-1 flex items-center gap-1 text-[10.5px] text-faint"><Icon name="snapchat" size={10} /> Snapchat</div>
+        {:else}
+          <div class="mt-1 font-mono text-[10px] text-faint">{id}</div>
+        {/if}
       </div>
     </div>
 

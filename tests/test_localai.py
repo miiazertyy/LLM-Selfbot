@@ -142,8 +142,10 @@ try:
     check("it points at the right server",
           str(ai._local_client.base_url).rstrip("/").endswith(f":{port}/v1"),
           str(ai._local_client.base_url))
-    check("the chat model is the local one", ai._chat_model() == "qwen2.5:7b")
-    check("the chat client is the local one", ai._chat_client() is ai._local_client)
+    from app.utils import providers
+    check("replies go to the local model, and only there",
+          providers.reply_chain(with_local()) == [{"provider": "local", "model": "qwen2.5:7b"}])
+    check("through the same client", ai._openai_client("local", with_local()) is ai._local_client)
 finally:
     helpers.load_config = real_load
     ai.load_config = real_load
@@ -255,7 +257,7 @@ try:
     tts._local_client = tts._local_key = None
     src = (ROOT / "app" / "utils" / "tts.py").read_text(encoding="utf-8")
     check("tone tags are dropped for a local engine",
-          'tone_prefix = "" if local else' in src)
+          '_speak(client, target["model"], target["voice"] or voice, "", cleaned)' in src)
     backend = tts._get_local()
     check("tts.py finds the local backend",
           bool(backend) and backend["model"] == "kokoro")
@@ -273,7 +275,7 @@ print("\n== the panel knows about it ==")
 page = (ROOT / "webui" / "src" / "lib" / "components" / "LocalAI.svelte").read_text(encoding="utf-8")
 check("there is a panel", "localDetect" in page and "localPull" in page)
 tree = (ROOT / "webui" / "src" / "lib" / "settingsmap.ts").read_text(encoding="utf-8")
-check("it has a home in Settings", '"local"' in tree and "Local AI" in tree)
+check("it has a home in Settings", '"local"' in tree and "This computer" in tree)
 check("and a pointer name", '"local ai"' in tree)
 api = (ROOT / "webui" / "src" / "lib" / "api.ts").read_text(encoding="utf-8")
 for name in ("localStatus", "localDetect", "localProbe", "localPull", "localPullStatus"):
@@ -286,8 +288,12 @@ cfg_text = (ROOT / "resources" / "config.yaml").read_text(encoding="utf-8")
 check("the shipped config documents it", "local:" in cfg_text)
 for key in ("vision_model", "stt_model", "tts_model", "tts_voice"):
     check(f"and ships {key}", f"{key}:" in cfg_text)
-for key in ("visionModel", "sttModel", "ttsModel", "ttsVoice"):
-    check(f"the panel edits {key}", key in page)
+# Which job runs where moved to the Models tab, next to every other provider.
+models = (ROOT / "webui" / "src" / "lib" / "components" / "ModelsPanel.svelte").read_text(encoding="utf-8")
+chooser = (ROOT / "webui" / "src" / "lib" / "components" / "ModelChooser.svelte").read_text(encoding="utf-8")
+check("the Models tab sets every job", "JOB_KEYS" in models and "openChooser(k, e)" in models)
+check("and a voice for speaking", 'need === "tts"' in chooser and "voice" in chooser)
+check("this computer's panel points there", 'settingsSection.set("groq/models")' in page)
 
 server.shutdown()
 print(f"\n{len(PASS)} passed, {len(FAIL)} failed")

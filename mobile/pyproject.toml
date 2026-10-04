@@ -1,0 +1,89 @@
+# The phone apps: LLMSelfbot for Android (an APK) and iPhone (an IPA), built
+# with BeeWare's Briefcase around the same app/ the desktop runs.
+#
+# Not used from here. mobile/stage.py lays out a project under build/mobile/
+# with this file in it: the app, its panel and templates copied in, the
+# version stamped from the tag, icons made from the app's own, and the few
+# packages the phones need that nobody publishes for them built into wheels/.
+# The android and ios jobs in .github/workflows/build-exe.yml run it.
+[tool.briefcase]
+project_name = "LLMSelfbot"
+bundle = "io.github.miiazertyy"
+version = "0.0.0"                     # stage.py writes the release's
+url = "https://github.com/miiazertyy/LLM-Selfbot"
+license = "GPL-3.0-only"
+license-files = ["LICENSE"]
+author = "miiazertyy"
+author_email = "miiazertyy@users.noreply.github.com"
+
+[tool.briefcase.app.llmselfbot]
+formal_name = "LLMSelfbot"
+description = "Replies to your messages as you, with the panel to run it."
+long_description = """LLMSelfbot runs your accounts and replies as you. The phone app
+runs the bot and its panel on the phone itself."""
+icon = "icons/llmselfbot"
+sources = [
+    "src/llmselfbot",                 # the shell: a window with the panel in it
+    "src/app",                        # the bot and its server, as on the desktop
+    "src/resources",                  # the templates a first start copies out
+    "src/webui",                      # the panel
+]
+requires = [
+    # The panel's server. FastAPI 0.125 is the last to work with pydantic 1,
+    # which is plain Python; pydantic 2's core is compiled, with no phone builds.
+    "fastapi==0.125.0",
+    "starlette>=0.40,<0.51",
+    "pydantic>=1.10.24,<2",
+    "uvicorn>=0.30",
+    "h11",
+    "python-multipart",
+    # The AI providers.
+    "httpx",
+    "groq",
+    "openai",
+    "jiter==0.99.0",                  # stand-in, mobile/shims/jiter
+    # Telegram, settings, the QR code, pictures.
+    "python-telegram-bot",
+    "python-dotenv",
+    "pyyaml",
+    "requests",
+    "colorama",
+    "segno",
+    "pillow",
+]
+# The stand-ins, and PyYAML as plain Python for iOS, built by stage.py.
+requirement_installer_args = ["--find-links", "./wheels"]
+
+[tool.briefcase.app.llmselfbot.android]
+requires = [
+    "toga-android~=0.5.0",
+    # Discord. Every request of discord.py-self goes through curl_cffi, which
+    # publishes Android builds (64-bit ARM, Python 3.13).
+    "discord.py-self",
+    "curl_cffi",
+    "audioop-lts==0.99.0",            # stand-in, mobile/shims/audioop-lts
+]
+# curl_cffi's Android build is 64-bit ARM only, as are nearly all phones now.
+android_abis = ["arm64-v8a"]
+base_theme = "Theme.MaterialComponents.DayNight.DarkActionBar"
+build_gradle_dependencies = [
+    "com.google.android.material:material:1.13.0",
+    # The web view's link handling, and pages over 2 MB.
+    "androidx.webkit:webkit:1.15.0",
+]
+build_gradle_extra_content = """
+chaquopy.defaultConfig.staticProxy("toga_android.widgets.internal.webview")
+"""
+
+[tool.briefcase.app.llmselfbot.iOS]
+# No Discord here: discord.py-self needs curl_cffi, which nobody builds for iOS
+# yet. The panel says so (app/utils/compat.py) rather than failing to start.
+requires = [
+    "toga-iOS~=0.5.0",
+]
+
+[tool.briefcase.app.llmselfbot.iOS.info]
+# The panel is served on this phone, over plain http to 127.0.0.1; this lets
+# the app's web view reach it without turning off the rest of App Transport
+# Security.
+NSAppTransportSecurity = { NSAllowsLocalNetworking = true }

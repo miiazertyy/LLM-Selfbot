@@ -8,9 +8,11 @@
    * had already been staring at a still page wondering whether it had hung, and
    * then the fix for that was a paragraph that moved the content.
    *
-   * So it shows up quickly and takes no room. The app's own mark turns while a
-   * request is out, and clicking it opens the log, which is the one place that
-   * says what the bot is actually doing right now.
+   * So it shows up quickly and takes no room. A small arc turns while a request
+   * is out - the same one the sidebar uses for a page still loading, so the two
+   * read as one thing - and clicking it opens the log, which is the one place
+   * that says what the bot is actually doing right now. (It used to turn around
+   * the app's logo; the logo inside the ring was clutter, so it went.)
    *
    * It waits a beat before appearing. Most reads come back in well under a
    * quarter of a second, and a mark that blinks on and off with every one of
@@ -19,7 +21,17 @@
   import { onMount } from "svelte";
   import { inflight } from "../api";
   import { health } from "../stores";
-  import logo from "../../assets/icon.png";
+  import { busyRoutes, progressText } from "../busy";
+  import ProgressRing from "./ProgressRing.svelte";
+
+  /** The page on screen, so its own progress can be shown here. */
+  let { route = "" }: { route?: string } = $props();
+
+  // Work on this page that knows how far along it is - reply to all, a folder
+  // of pictures. While that runs the badge shows it exactly, instead of a
+  // spinner and "Asking the account" for minutes.
+  const own = $derived($busyRoutes[route]);
+  const ownPct = $derived(progressText(own));
 
   /** Long enough that a quick read never flashes it. */
   const AFTER_MS = 450;
@@ -93,14 +105,19 @@
     onclick={() => (window.location.hash = "/logs")}
   >
     <span class="load-badge-mark">
-      <img src={logo} alt="" width="16" height="16" />
-      <svg class="load-badge-ring" viewBox="0 0 32 32" aria-hidden="true">
-        <circle cx="16" cy="16" r="14" />
-      </svg>
+      {#if ownPct}
+        <ProgressRing done={own?.done} total={own?.total} size={14} />
+      {:else}
+        <ProgressRing size={14} />
+      {/if}
     </span>
-    <!-- Only once it is slow enough to be worth explaining, and only where
-         there is width for it. The mark alone carries the rest of the time. -->
-    {#if slow}
+    <!-- Real progress is worth saying at once. Otherwise only once it is slow
+         enough to be worth explaining; the mark alone carries the rest. -->
+    {#if ownPct}
+      <span class="load-badge-text">
+        {own?.labels?.[0] || doing} · {ownPct}
+      </span>
+    {:else if slow}
       <span class="load-badge-text">
         {blocker ? blocker.title : doing} · {seconds}s
       </span>
@@ -115,7 +132,7 @@
     gap: 6px;
     flex: 0 0 auto;
     max-width: 46%;
-    padding: 2px 6px 2px 2px;
+    padding: 3px 8px 3px 6px;
     border-radius: 999px;
     color: var(--color-faint);
     animation: load-badge-in 0.25s var(--swift) both;
@@ -130,36 +147,16 @@
   }
 
   .load-badge-mark {
-    position: relative;
     display: grid;
     place-items: center;
-    width: 22px;
-    height: 22px;
+    width: 14px;
+    height: 14px;
     flex: 0 0 auto;
-  }
-  .load-badge-mark img {
-    /* Breathing rather than spinning: the mark is a face, and a face turning
-       end over end reads as broken rather than busy. The ring does the turning. */
-    animation: load-badge-breathe 1.6s ease-in-out infinite;
-    opacity: 0.9;
+    color: var(--color-accent);
+    filter: drop-shadow(0 0 4px color-mix(in srgb, currentColor 50%, transparent));
   }
 
-  .load-badge-ring {
-    position: absolute;
-    inset: 0;
-    width: 22px;
-    height: 22px;
-    animation: load-badge-spin 0.9s linear infinite;
-  }
-  .load-badge-ring circle {
-    fill: none;
-    stroke: var(--color-accent);
-    stroke-width: 2.5;
-    stroke-linecap: round;
-    /* A quarter of the circumference, so it reads as one travelling arc. */
-    stroke-dasharray: 22 66;
-    opacity: 0.85;
-  }
+
 
   .load-badge-text {
     overflow: hidden;
@@ -172,26 +169,10 @@
   .load-badge.is-slow {
     color: var(--color-muted);
   }
-  .load-badge.is-slow .load-badge-ring circle {
-    stroke: var(--color-warn);
+  .load-badge.is-slow .load-badge-mark {
+    color: var(--color-warn);
   }
 
-  @keyframes load-badge-spin {
-    to {
-      transform: rotate(360deg);
-    }
-  }
-  @keyframes load-badge-breathe {
-    0%,
-    100% {
-      transform: scale(1);
-      opacity: 0.9;
-    }
-    50% {
-      transform: scale(0.86);
-      opacity: 0.6;
-    }
-  }
   @keyframes load-badge-in {
     from {
       opacity: 0;
@@ -208,11 +189,5 @@
   :global(:root[data-motion="off"]) .load-badge-text {
     animation: none;
   }
-  :global(:root[data-motion="off"]) .load-badge-ring {
-    animation: none;
-  }
-  :global(:root[data-motion="off"]) .load-badge-mark img {
-    animation: none;
-    opacity: 0.75;
-  }
+
 </style>

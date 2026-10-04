@@ -1,13 +1,4 @@
-"""
-app/web/routes/health_routes.py - what is stopping the bot from working.
-
-Returns a flat list of issues, each tagged with the page that can fix it. The
-sidebar puts a dot on that page's icon and the Dashboard lists them in full, so
-"it isn't working" turns into a specific thing to go and do.
-
-Every check is cheap enough to poll: the only expensive one (asking Puppeteer
-where Chrome is, which spawns node) is cached.
-"""
+"""app/web/routes/health_routes.py - what is stopping the bot from working. Returns a flat list of issues, each tagged with the page that can fix it: the sidebar puts a dot on that page's icon and the Dashboard lists them in full, so "it isn't working" turns into a specific thing to go and do. Every check is cheap enough to poll: the only expensive one (asking Puppeteer where Chrome is, which spawns node) is cached."""
 
 import os
 import threading
@@ -21,12 +12,7 @@ router = APIRouter(tags=["health"])
 
 # level: "error" stops the bot working, "warn" degrades it.
 def _chrome_path_cached() -> str:
-    """Chrome's path, or "" if it cannot be found.
-
-    The TTL cache that used to live here now sits on chrome_path() itself, so
-    /api/snapchat/status shares it rather than paying the ~4.5s node probe on
-    its own 3-second poll.
-    """
+    """Chrome's path, or "" if it cannot be found. The TTL cache that used to live here now sits on chrome_path() itself, so /api/snapchat/status shares it rather than paying the ~4.5s node probe on its own 3-second poll."""
     try:
         from app.web.routes.system_routes import chrome_path
         return chrome_path()
@@ -39,11 +25,7 @@ _RATE_MARKERS = ("rate_limit_exceeded", "RateLimitError", "rate limited",
 
 
 def _rate_limited_in_log(within: float = 300.0) -> bool:
-    """Whether an account has complained about rate limits recently.
-
-    Accounts are child processes, so the in-memory record cannot see them. Their
-    output is captured though, so the log buffer is the shared channel.
-    """
+    """Whether an account has complained about rate limits recently. Accounts are child processes, so the in-memory record cannot see them; their output is captured though, so the log buffer is the shared channel."""
     try:
         from app.web.logbus import bus
         cutoff = time.time() - within
@@ -58,8 +40,7 @@ def _rate_limited_in_log(within: float = 300.0) -> bool:
     return False
 
 
-# Checking GitHub on every health poll would be a request every 15 seconds, so
-# the answer is kept for an hour. An update is not urgent enough to need finer.
+# Checking GitHub on every health poll would be a request every 15 seconds, so the answer is kept for an hour. An update is not urgent enough to need finer.
 _update_cache = {"at": 0.0, "value": None}
 _UPDATE_TTL = 3600.0
 
@@ -93,12 +74,12 @@ def _issues(supervisor) -> list:
 
     out = []
 
-    def add(route, level, title, detail, where="", section=""):
-        # `where` names the exact spot on that page and `section` is the
-        # Settings category holding it, so the banner can be a link that opens
-        # the right place instead of a label you then have to go and find.
+    def add(route, level, title, detail, where="", section="", fix=None):
+        # `where` names the exact spot on that page and `section` is the Settings category holding it, so the banner can be a link that opens the right place instead of a label you then have to go and find.
         out.append({"route": route, "level": level, "title": title,
-                    "detail": detail, "where": where, "section": section})
+                    "detail": detail, "where": where, "section": section,
+                    # A button that fixes it on the spot, when there is one: {"label", "call"}.
+                    **({"fix": fix} if fix else {})})
 
     try:
         config = load_config()
@@ -108,10 +89,7 @@ def _issues(supervisor) -> list:
 
     services = config.get("services", {}) or {}
 
-    # ── What the AI provider has been saying ─────────────────────────────────
-    # A rate limit is the most likely reason the bot goes quiet, and it used to
-    # fail completely silently: the call was refused, the reason was swallowed,
-    # and nothing anywhere said so.
+    # ── What the AI provider has been saying ── a rate limit is the most likely reason the bot goes quiet, and it used to fail completely silently: the call was refused, the reason was swallowed, and nothing anywhere said so.
     try:
         from app.utils import apihealth
         recent = apihealth.summary()
@@ -126,9 +104,7 @@ def _issues(supervisor) -> list:
                 add("logs", "error", "The AI provider returned an error",
                     recent["message"], "the ai source in the log")
         elif _rate_limited_in_log():
-            # The accounts are separate processes, so their refusals never
-            # reach the record above. What they print does reach the log bus,
-            # which is the only channel that crosses the process boundary.
+            # The accounts are separate processes, so their refusals never reach the record above. What they print does reach the log bus, which is the only channel that crosses the process boundary.
             add("logs", "warn", "Groq is rate limiting an account",
                 "An account reported a rate limit in the last few minutes. "
                 "The free tier caps tokens per minute, so replies are being "
@@ -137,23 +113,16 @@ def _issues(supervisor) -> list:
     except Exception:
         pass
 
-    # ── A newer release ──────────────────────────────────────────────────────
-    # Informational, so it is a "warn" rather than an error: nothing is broken,
-    # there is just something newer. The dot on System is the point.
+    # ── A newer release ── informational, so it is a "warn" rather than an error: nothing is broken, there is just something newer. The dot on System is the point.
     update = _update_available()
     if update:
-        # Quiet on purpose: nothing is broken, so this is a dot on System and a
-        # line in the Updates card, not a banner across the top of every page.
+        # Quiet on purpose: nothing is broken, so this is a dot on System and a line in the Updates card, not a banner across the top of every page.
         add("system", "info", f"Version {update['latest']} is available",
             f"You are running {update['current']}. Update from the System page, "
             f"or ignore this release and you will not be told about it again.",
             "the Updates card")
 
-    # ── Models that Groq has retired ─────────────────────────────────────────
-    # A decommissioned model answers every request with a 404, which looks
-    # exactly like the bot being broken. Groq publishes what it actually has,
-    # so this is checkable rather than guessable. The list is cached, and a
-    # failure to fetch it says nothing at all rather than crying wolf.
+    # ── Models that Groq has retired ── a decommissioned model answers every request with a 404, which looks exactly like the bot being broken. Groq publishes what it actually has, so this is checkable rather than guessable; the list is cached, and a failure to fetch it says nothing at all rather than crying wolf.
     try:
         from app.utils.groqmodels import check_configured
         JOB = {"chat": "write replies", "vision": "read images",
@@ -178,48 +147,111 @@ def _issues(supervisor) -> list:
     except Exception:
         pass
 
-    # ── The brain ────────────────────────────────────────────────────────────
-    # Running locally is a complete answer to where replies come from, so a
-    # missing Groq key is only an error when nothing else can write them. What
-    # matters then is whether that server is actually up.
-    from app.utils import localai
-    has_key = bool(real("GROQ_API_KEY_1") or real("GROQ_API_KEY"))
-    if localai.active(config):
-        local = localai.settings(config)
-        probe = localai.probe(local["base_url"], timeout=2.0)
-        if not probe["ok"]:
-            add("settings", "error", "The local AI server is not answering",
-                f"Replies are set to run on {local['model']} at "
-                f"{local['base_url']}, and nothing is there. {probe['error']}. "
-                "Start it, or turn local replies off to go back to Groq.",
-                "AI provider, Local AI", section="local ai")
-        elif local["model"] and local["model"] not in probe["models"]:
-            add("settings", "error", f"{local['model']} is not on that server",
-                "Every reply will fail with a 404. Pick one it actually has, or "
-                "download it.",
-                "AI provider, Local AI", section="local ai")
-        elif not has_key:
-            # Each job follows the local server only once a model is named for
-            # it, so what is actually off is whatever was left blank - not
-            # everything, the way it was before those fields existed.
-            off = [n for n, k in (("reading pictures", "vision_model"),
-                                  ("hearing voice messages", "stt_model"),
-                                  ("speaking", "tts_model"))
-                   if not (local.get(k) or (k == "vision_model" and local["vision"]))]
+    # ── The brain ── any provider in the reply chain is a complete answer to where replies come from, so a missing Groq key is only an error when nothing in it can write them. What matters then is whether the ones that are there actually work.
+    from app.utils import localai, providers
+    plan = providers.plan(config)
+    chain = plan["replies"]
+    usable = [e for e in chain if providers.usable(e["provider"], config)]
+    has_key = bool(providers.keys_for("groq"))
+    if not usable:
+        add("settings", "error", "Nothing can write replies",
+            "None of the models set to write replies has a key or a server behind it. "
+            "Connect a provider, or pick a model you do have, under Models.",
+            "Models", section="models")
+    else:
+        for e in chain:
+            if e not in usable:
+                name = providers.BY_ID[e["provider"]]["name"]
+                add("settings", "warn", f"{name} is in the reply list but not connected",
+                    f"It has no key, so {e['model']} is skipped and the next model writes instead. "
+                    "Add the key under Providers, or take it out of the list.",
+                    "Models, Providers", section="providers")
+
+        # This computer, when any job runs there.
+        local_models = [e["model"] for e in chain if e["provider"] == "local"] + \
+            [plan[j]["model"] for j in providers.JOBS if plan[j]["provider"] == "local"]
+        if local_models:
+            local = localai.settings(config)
+            probe = localai.probe(local["base_url"], timeout=2.0, api_key=local["api_key"])
+            only_local = all(e["provider"] == "local" for e in usable)
+            entry = localai.known_at(local["base_url"])
+            if not probe["ok"] and localai.starting():
+                pass          # the app is starting it right now; saying it is down would be a lie in a second
+            elif probe["locked"]:
+                # Running, and turning every request away: that reads as "down" everywhere else, so say what it is.
+                add("settings", "error" if only_local else "warn",
+                    f"{entry['name'] if entry else 'The local AI server'} wants an API key",
+                    "It is running, but the key set under This computer is not the one it wants, so it "
+                    "turns every request away. Put its key in there.",
+                    "Models, This computer", section="local ai")
+            elif not probe["ok"]:
+                # Say which server and which jobs, in words: the address and the socket error were accurate and told nobody what to do.
+                root = localai.server_root(local["base_url"])
+                server = entry["name"] if entry else ""
+                jobs = (["replies"] if any(e["provider"] == "local" for e in chain) else []) + \
+                    [n for j, n in (("small", "background work"), ("vision", "pictures"),
+                                    ("stt", "voice messages"), ("tts", "speaking"))
+                     if plan[j]["provider"] == "local"]
+                what = jobs[0] if len(jobs) == 1 else ", ".join(jobs[:-1]) + " and " + jobs[-1]
+                where = root.split("://", 1)[-1]
+                sid = localai.server_for(local["base_url"])
+                startable = localai.can_start(sid)
+                add("settings", "error" if only_local else "warn",
+                    f"{server} is not running" if server else "The local AI server is not answering",
+                    f"{what[0].upper() + what[1:]} {'is' if len(jobs) == 1 else 'are'} set to run on it, at {where}. "
+                    + (f"Start {server or 'it'} and this clears by itself, or move "
+                       f"{'it' if len(jobs) == 1 else 'them'} to another model under Models." if only_local else
+                       "Until it is back, the next model in line does the work."),
+                    "Models, This computer", section="local ai",
+                    fix={"label": f"{localai.start_word(sid)} {server}", "call": "local_start"} if startable else None)
+            else:
+                missing = sorted({m for m in local_models if m not in probe["models"]})
+                if missing:
+                    # Which jobs, in words, and a button that stops them using it: a model removed from the computer
+                    # stayed in Reading pictures, the warning did not say where, and could only be dug out by hand.
+                    names = {"small": "background work", "vision": "reading pictures",
+                             "stt": "hearing voice messages", "tts": "speaking"}
+                    uses = (["replies"] if any(e["provider"] == "local" and e["model"] in missing for e in chain)
+                            else []) + [n for j, n in names.items()
+                                        if plan[j]["provider"] == "local" and plan[j]["model"] in missing]
+                    what = (uses[0] if len(uses) == 1 else ", ".join(uses[:-1]) + " and " + uses[-1]) if uses \
+                        else "a job"
+                    one = len(missing) == 1
+                    add("settings", "error" if only_local else "warn",
+                        f"{missing[0]} is not on that server" if one else "Some local models are not on that server",
+                        f"{what[0].upper() + what[1:]} {'uses' if len(uses) <= 1 else 'use'} "
+                        f"{'it' if one else 'them'}, but this computer does not have "
+                        f"{'it' if one else 'them'}, so every request using {'it' if one else 'them'} fails. "
+                        f"Download {'it' if one else 'them'} again, or stop using {'it' if one else 'them'}.",
+                        "Models, This computer", section="local ai",
+                        fix={"label": "Stop using it" if one else "Stop using them", "call": "local_forget",
+                             "models": missing})
+                # One that is there but too big for this computer's memory: it runs, paged to the disk as it answers,
+                # so a reply takes minutes and Chats' Reply and Try give up first ("the runner did not respond").
+                from app.utils import localfix
+                for m in sorted(set(local_models) - set(missing)):
+                    try:
+                        big = localfix.too_big(m, local["base_url"])
+                    except Exception:
+                        big = None
+                    if big:
+                        add("settings", "error" if only_local else "warn",
+                            f"{m} is too big for this computer",
+                            f"It needs about {big['need'] / localfix.GB:.1f} GB of memory and this computer can "
+                            f"give a model about {big['budget'] / localfix.GB:.1f} GB, so it runs from the disk and "
+                            "a reply takes minutes. A smaller one answers in seconds: This computer offers one "
+                            "when it can find it.",
+                            "Models, This computer", section="local ai")
+
+        if not has_key:
+            off = [n for j, n in (("vision", "reading pictures"), ("stt", "hearing voice messages"),
+                                  ("tts", "speaking")) if plan[j]["provider"] == "groq"]
             if off:
-                title = (f"{off[0].capitalize()} is off" if len(off) == 1
-                         else "Some things need a Groq key")
-                add("settings", "info", title,
-                    "Replies run locally, which is fine, but with no Groq key "
-                    f"and no local model for it, {' and '.join(off)} cannot "
-                    "happen. Name a model for each under Local AI, if your "
-                    "server has one.",
-                    "AI provider, Local AI", section="local ai")
-    elif not has_key:
-        add("settings", "error", "No Groq API key",
-            "The bot cannot generate any replies without one, unless you run a "
-            "model on this machine instead.",
-            "AI provider, API keys", section="Groq keys")
+                add("settings", "info",
+                    f"{off[0].capitalize()} is off" if len(off) == 1 else "Some things need a Groq key",
+                    f"With no Groq key, {' and '.join(off)} cannot happen until another provider "
+                    "is picked for it under Models.",
+                    "Models", section="models")
 
     # ── Accounts ─────────────────────────────────────────────────────────────
     discord_n = ipc._count_accounts()
@@ -304,17 +336,7 @@ def _issues(supervisor) -> list:
     return out
 
 
-# The last computed answer, and when it was taken.
-#
-# Working this out means probing the filesystem, starting node to find Chrome,
-# and two network calls. All of that is synchronous, and it used to run inside
-# the request: on an async endpoint that blocks the whole event loop, so for
-# several seconds at a time the server could not answer anything at all. The
-# page polls this every fifteen seconds, so the entire panel stalled on a
-# timer, which felt like every tab taking seconds to open.
-#
-# Now the work happens on a worker thread and the endpoint serves the most
-# recent answer straight away.
+# The last computed answer, and when it was taken. Working this out means probing the filesystem, starting node to find Chrome, and two network calls. All of that is synchronous, and it used to run inside the request: on an async endpoint that blocks the whole event loop, so for several seconds at a time the server could not answer anything at all. The page polls this every fifteen seconds, so the entire panel stalled on a timer, which felt like every tab taking seconds to open. Now the work happens on a worker thread and the endpoint serves the most recent answer straight away.
 _snapshot = {"at": 0.0, "value": None}
 _SNAPSHOT_TTL = 12.0
 _refreshing = threading.Lock()
@@ -349,13 +371,11 @@ async def health(request: Request):
     fresh = time.time() - _snapshot["at"] < _SNAPSHOT_TTL
 
     if _snapshot["value"] is None:
-        # Nothing to serve yet, so this one call waits, but on a thread so the
-        # rest of the panel keeps being answered while it does.
+        # Nothing to serve yet, so this one call waits, but on a thread so the rest of the panel keeps being answered while it does.
         return await asyncio.to_thread(_refresh_snapshot, supervisor)
 
     if not fresh and not _refreshing.locked():
-        # Stale: hand back what we have and refresh behind it. A health warning
-        # arriving a few seconds late costs nothing; a stalled panel does not.
+        # Stale: hand back what we have and refresh behind it. A health warning arriving a few seconds late costs nothing; a stalled panel does not.
         def _bg():
             with _refreshing:
                 _refresh_snapshot(supervisor)

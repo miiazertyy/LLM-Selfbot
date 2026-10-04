@@ -1,8 +1,4 @@
-"""
-app/utils/ratelimit.py - tiny sliding-window budgets for API calls we don't want
-to burst (profile fetches, message-history scans). Caps are generous - they only
-smooth bulk sweeps, never block normal chat.
-"""
+"""Tiny sliding-window budgets for API calls we don't want to burst (profile fetches, message-history scans). Caps are generous, they only smooth bulk sweeps, never block normal chat."""
 
 import time
 from collections import deque

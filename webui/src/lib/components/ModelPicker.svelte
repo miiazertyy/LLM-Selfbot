@@ -12,7 +12,9 @@
    */
   import { onMount } from "svelte";
   import { api } from "../api";
+  import { play } from "../uisound";
   import Icon from "./Icon.svelte";
+  import RankBadge from "./RankBadge.svelte";
 
   let { value, multiple = false, need = "chat", onchange } = $props<{
     value: string | string[];
@@ -114,10 +116,18 @@
   let dragging = $state<string | null>(null);
   let over = $state<string | null>(null);
 
+  // Heard as it is moved: lifted, a click over each place it could go, and put down.
+  const placeP = (id: string) => (chosen.length > 1 ? chosen.indexOf(id) / (chosen.length - 1) : 0.5);
+  function overRow(id: string) {
+    if (over !== id && id !== dragging) play("slot", { p: placeP(id) });
+    over = id;
+  }
+
   function drop(target: string) {
     const from = dragging;
     dragging = null;
     over = null;
+    if (from) play("drop");
     if (!from || from === target) return;
     const list = chosen.filter((m) => m !== from);
     list.splice(list.indexOf(target), 0, from);
@@ -131,6 +141,7 @@
     const j = i + delta;
     if (i < 0 || j < 0 || j >= list.length) return;
     [list[i], list[j]] = [list[j], list[i]];
+    play("slot", { p: list.length > 1 ? j / (list.length - 1) : 0.5 });
     onchange(list);
   }
 
@@ -169,9 +180,9 @@
         <div
           draggable="true"
           role="listitem"
-          ondragstart={() => (dragging = id)}
-          ondragend={() => { dragging = null; over = null; }}
-          ondragover={(e) => { if (dragging) { e.preventDefault(); over = id; } }}
+          ondragstart={() => { dragging = id; play("lift"); }}
+          ondragend={() => { if (dragging) play("release"); dragging = null; over = null; }}
+          ondragover={(e) => { if (dragging) { e.preventDefault(); overRow(id); } }}
           ondrop={(e) => { e.preventDefault(); drop(id); }}
           class="group flex items-center gap-1.5 rounded-lg border px-1.5 py-1 transition-colors
             {dragging === id ? 'opacity-40' : ''}
@@ -182,7 +193,7 @@
             title="Drag to reorder"
             aria-hidden="true"
           ><Icon name="grip" size={13} /></span>
-          <span class="w-3 shrink-0 text-[10px] text-faint">{i + 1}</span>
+          <RankBadge n={i + 1} kind="step" size={17} />
           <span class="min-w-0 flex-1 truncate font-mono text-[11px] text-ink" title={id}>{id}</span>
           {#if unknown.includes(id)}
             <span class="shrink-0 text-[10px] text-warn" title="Groq no longer lists this">gone</span>

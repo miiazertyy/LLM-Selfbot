@@ -1,17 +1,4 @@
-"""
-app/utils/backdrop.py - Windows window appearance for the desktop shell.
-
-The app used to offer Windows 11 Mica/Acrylic backdrops behind a transparent
-window. DWM tints those toward the desktop wallpaper, so the window came back
-bright and inconsistent no matter how the tint was pinned, they were removed,
-and the UI now paints its own opaque background.
-
-What remains is the part that is still needed: mark the window dark, so Windows
-doesn't draw light-mode chrome around it, and positively clear any backdrop or
-blur a previous build left applied to the window.
-
-Everything degrades to a no-op off Windows, and callers just get False back.
-"""
+"""Windows window appearance for the desktop shell. The app used to offer Windows 11 Mica/Acrylic backdrops behind a transparent window. DWM tints those toward the desktop wallpaper, so the window came back bright and inconsistent no matter how the tint was pinned, they were removed, and the UI now paints its own opaque background. What remains is the part that is still needed: mark the window dark, so Windows doesn't draw light-mode chrome around it, and positively clear any backdrop or blur a previous build left applied to the window. Everything degrades to a no-op off Windows, and callers just get False back."""
 
 import ctypes
 import sys
@@ -23,8 +10,7 @@ DWMWA_SYSTEMBACKDROP_TYPE = 38
 
 DWMSBT_NONE = 1            # solid, the only one we ask for now
 
-# SetWindowCompositionAttribute (undocumented), used solely to switch OFF a
-# blur/acrylic effect that an older version of this app may have enabled.
+# SetWindowCompositionAttribute (undocumented), used solely to switch OFF a blur/acrylic effect that an older version of this app may have enabled.
 WCA_ACCENT_POLICY = 19
 ACCENT_DISABLED = 0
 
@@ -91,11 +77,7 @@ def clear_composition(hwnd: int) -> bool:
 
 
 def apply(hwnd: int, kind: str = "none", dark: bool = True) -> bool:
-    """Put the window in dark mode with no system backdrop.
-
-    `kind` is accepted for call compatibility; every value is treated as
-    "none" now that the translucent themes are gone.
-    """
+    """Put the window in dark mode with no system backdrop. `kind` is accepted for call compatibility; every value is treated as "none" now that the translucent themes are gone."""
     if not hwnd:
         return False
     # Without this Windows renders light-mode chrome around the window.

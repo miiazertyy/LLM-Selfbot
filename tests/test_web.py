@@ -164,7 +164,11 @@ _c = _craw(); _c.execute("DELETE FROM message_log WHERE username LIKE 'zz_det%'"
 _chart = (REPO / "webui" / "src" / "lib" / "components" / "StatChart.svelte").read_text(encoding="utf-8")
 _panel = (REPO / "webui" / "src" / "lib" / "components" / "StatDetail.svelte").read_text(encoding="utf-8")
 _dash = (REPO / "webui" / "src" / "pages" / "Dashboard.svelte").read_text(encoding="utf-8")
-check("the tiles open it", "stat-tile" in _dash and "StatDetail" in _dash)
+# The tiles live in the figures widget since the Dashboard became widgets;
+# the page owns the panel they open.
+_body = (REPO / "webui" / "src" / "lib" / "dashboard" / "WidgetBody.svelte").read_text(encoding="utf-8")
+check("the tiles open it", 'ctx.openDetail("replies")' in _body and 'ctx.openDetail("people")' in _body
+      and "StatDetail" in _dash and "openDetail:" in _dash)
 check("charts carry a hover layer", "onpointermove" in _chart and "tipPct" in _chart)
 check("the peak label sits at the peak, not the middle", "peakPct" in _chart)
 check("and hides rather than colliding with an end label", "showPeakLabel" in _chart)

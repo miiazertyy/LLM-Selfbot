@@ -182,8 +182,6 @@ def build_parts(root, gui=True):
         (str(root / "resources"), "resources"),
         # Node runner source; _sync_node_runner() mirrors it into DATA_DIR.
         (str(root / "app" / "platforms" / "snapchat"), "app/platforms/snapchat"),
-        # The updater role imports this by path.
-        (str(root / "scripts" / "updater.py"), "scripts"),
     ]
 
     return datas, binaries, hiddenimports, excludes

@@ -5,6 +5,7 @@ puppeteer.use(Stealth());
 
 import fs from "fs";
 import fsPromise from "fs/promises";
+import { spawnSync } from "child_process";
 import path from "path";
 import { fileURLToPath } from "url";
 
@@ -40,8 +41,9 @@ const SNAP_DEBUG = ["1", "true", "yes", "on"].includes(
 const SCROLL_CHAT_LIST = String(process.env.SNAP_SCROLL_CHAT_LIST || "true").toLowerCase() !== "false";
 const MAX_SCROLL_STEPS = parseInt(process.env.SNAP_MAX_SCROLL_STEPS || "40") || 40;
 
-// Random 40–120ms per-keystroke delay, fixed delays look mechanical to Snapchat.
-const typeDelay = () => 40 + Math.random() * 80;
+// 80-220ms per keystroke: a real typist. 40ms was 25 chars/sec, visible in the
+// other person's typing bubble and machine-like.
+const typeDelay = () => 80 + Math.random() * 140;
 
 // Console palette, matches the Python logger's Snapchat gold accent so the
 // whole shared window looks cohesive and premium.
@@ -51,6 +53,70 @@ const C = {
   gold: "\x1b[38;2;255;196;37m",
   red: "\x1b[38;2;235;87;87m",
 };
+
+// The persona's locale and clock, passed down from the Python side so the
+// browser agrees with what the Discord half of the same persona claims. These
+// have to move together: a page whose timezone says Europe/Paris while
+// navigator.languages says en-US and Accept-Language says something else again
+// is three different people in one request.
+const SNAP_LOCALE = (process.env.SNAP_LOCALE || "en-US").trim() || "en-US";
+const SNAP_TZ = (process.env.SNAP_TIMEZONE || "Europe/Paris").trim() || "Europe/Paris";
+
+/** The Accept-Language a browser set to `locale` would send. */
+function acceptLanguage(locale) {
+  const base = String(locale).split("-")[0];
+  return base === locale ? locale : `${locale},${base};q=0.9`;
+}
+
+// Window sizes to pick from when running headless, where there is no real
+// window to take one from. A fixed 1920x1080 is the single most common value in
+// every bot dataset there is; these are ordinary laptop and desktop sizes, and
+// the choice is stable per profile (below) so one account does not change
+// monitor between restarts.
+const HEADLESS_SIZES = [
+  [1920, 1080], [1536, 864], [1600, 900], [1440, 900],
+  [1366, 768], [1680, 1050], [1280, 800], [2560, 1440],
+];
+
+/** A stable window size for this profile: same account, same "monitor". */
+function windowSizeFor(seed) {
+  let h = 0;
+  for (const ch of String(seed || "default")) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return HEADLESS_SIZES[h % HEADLESS_SIZES.length];
+}
+
+/**
+ * Chrome left holding a profile, closed: only Chrome started on that profile,
+ * never anyone's own. After Chrome updates itself, its first start hands over
+ * to a fresh copy and exits; Puppeteer takes that for a failed start, and the
+ * fresh copy goes on holding the profile, so every later start fails the same
+ * way (2026-10-02, after Chrome 154 installed itself at night).
+ */
+function closeChromeOn(profileDir) {
+  if (process.platform !== "win32" || !profileDir) return;
+  const needle = String(profileDir).replace(/'/g, "''");
+  const ps = "Get-CimInstance Win32_Process -Filter \"Name = 'chrome.exe'\" | " +
+    `Where-Object { $_.CommandLine -and $_.CommandLine.Contains('${needle}') } | ` +
+    "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }";
+  try {
+    spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", ps], { windowsHide: true, timeout: 30000 });
+  } catch { /* nothing to close, or no PowerShell */ }
+}
+
+/** Puppeteer's launch, tried again (up to three times) when Chrome did not start, with the profile cleared first. */
+async function launchChrome(options) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await puppeteer.launch(options);
+    } catch (err) {
+      const msg = String((err && err.message) || err);
+      if (attempt >= 3 || !/Failed to launch the browser process/i.test(msg)) throw err;
+      console.warn(`[SnapBot] Chrome did not start (try ${attempt}); closing any Chrome left on this profile and trying again.`);
+      closeChromeOn(options.userDataDir);
+      await delay(3000 * attempt);
+    }
+  }
+}
 
 function delay(time) {
   return new Promise(function (resolve) {
@@ -87,14 +153,32 @@ export default class SnapBot {
   }
   async launchSnapchat(obj, cookiefile) {
     try {
+      const [winW, winH] = windowSizeFor(cookiefile);
       const options = {
         ...obj,
+        // Headless has no window to maximise, so the size it reports has to be
+        // stated. The runner leaves this to here because the per-profile pick
+        // lives here.
+        args: obj.headless
+          ? [...(obj.args || []), `--window-size=${winW},${winH}`]
+          : obj.args,
         // Persistent profile per account = stable fingerprint + fewer logins.
         // Lives in the writable data dir (cookies/profile are state, not code).
         userDataDir: path.join(DATA_DIR, "config", `${cookiefile}-profile`),
+        // Drops the "Chrome is being controlled by automated test software"
+        // switch. With --disable-blink-features=AutomationControlled (set by
+        // the runner) navigator.webdriver is then false in the browser itself,
+        // rather than being patched back to false by the stealth plugin only in
+        // the main world - a worker or a cross-origin frame still sees the raw
+        // value, and those are exactly where a check goes looking.
+        ignoreDefaultArgs: ["--enable-automation"],
+        // null = the page takes the real window's size, so innerWidth,
+        // outerWidth and screen agree. Puppeteer's default is an 800x600
+        // viewport inside a larger window, which does not.
+        defaultViewport: obj.headless ? { width: winW, height: winH } : null,
         // executablePath: "/usr/bin/google-chrome",  // for docker
       };
-      this.browser = await puppeteer.launch(options);
+      this.browser = await launchChrome(options);
 
       // Load saved cookies if present; first run has none, which is fine.
       let cookiesLoaded = false;
@@ -134,13 +218,68 @@ export default class SnapBot {
         try { await dialog.accept(); } catch { try { await dialog.dismiss(); } catch {} }
       });
 
-      await this.page.setViewport({
-        width: 1920,
-        height: 1080,
-        deviceScaleFactor: 1,
-      });
-      // No custom User-Agent: the bundled Chromium's real UA (patched by the
-      // stealth plugin) stays consistent with the actual browser fingerprint.
+      // Headed runs keep the real window size (defaultViewport: null above), so
+      // nothing is forced here. Headless has no window to measure, so it gets
+      // the per-profile size instead of the 1920x1080 every bot reports.
+      if (options.headless) {
+        // setViewport alone leaves screen.width/height at the headless default
+        // of 800x600, so the page claims a 1536-wide window on an 800-wide
+        // monitor. A window bigger than the screen it sits on cannot happen,
+        // which makes it a sharper headless tell than navigator.webdriver ever
+        // was. Only setDeviceMetricsOverride moves the screen values, and the
+        // session has to stay attached - the override dies with it.
+        // The viewport is the window minus the browser's own chrome, which is
+        // what a maximised window looks like.
+        const CHROME_UI_PX = 85;
+        try {
+          this._metrics = await this.page.createCDPSession();
+          await this._metrics.send("Emulation.setDeviceMetricsOverride", {
+            width: winW, height: winH - CHROME_UI_PX,
+            screenWidth: winW, screenHeight: winH,
+            deviceScaleFactor: 1, mobile: false,
+          });
+        } catch {
+          await this.page.setViewport({ width: winW, height: winH - CHROME_UI_PX, deviceScaleFactor: 1 });
+        }
+      }
+      // Match the persona's clock so page scripts see the same timezone the AI
+      // claims to live in (defaults to Europe/Paris, override with SNAP_TIMEZONE).
+      try {
+        await this.page.emulateTimezone(SNAP_TZ);
+      } catch { /* ignore, non-fatal */ }
+      // Accept-Language has to agree with navigator.languages, which the
+      // stealth plugin sets from the same locale via --lang. Without this the
+      // header keeps whatever the host machine's Chrome build defaults to.
+      try {
+        await this.page.setExtraHTTPHeaders({ "Accept-Language": acceptLanguage(SNAP_LOCALE) });
+      } catch { /* ignore, non-fatal */ }
+      // The browser's own UA is used, not a made-up one, so it always matches
+      // the real build. The one thing that must never go out is the headless
+      // marker: the browser really does report "HeadlessChrome/154.0.0.0" to
+      // CDP in headless mode.
+      //
+      // The stealth plugin's user-agent-override evasion normally fixes this,
+      // in the page and in the header, along with the platform and the brand
+      // list. So this only checks the result and steps in if the marker
+      // survived - which is what happens when that evasion is turned off or a
+      // new Chrome breaks it. Overriding unconditionally would replace the
+      // plugin's metadata with a bare UA string and lose the rest of it.
+      try {
+        const seen = await this.page.evaluate(() => navigator.userAgent);
+        if (seen.includes("HeadlessChrome")) {
+          const fixed = seen.replace("HeadlessChrome", "Chrome");
+          await this.page.setUserAgent(fixed, {
+            brands: [{ brand: "Chromium", version: (fixed.match(/Chrome\/(\d+)/) || [, "0"])[1] }],
+            fullVersion: (fixed.match(/Chrome\/([\d.]+)/) || [, "0"])[1],
+            platform: "Windows",
+            platformVersion: "10.0.0",
+            architecture: "x86",
+            model: "",
+            mobile: false,
+          });
+          console.log("[SnapBot] Stripped the headless marker from the User-Agent.");
+        }
+      } catch { /* ignore, non-fatal */ }
 
       // Log the Snapchat web build version so selector drift is easy to spot.
       this.page.on("console", (msg) => {
@@ -177,11 +316,102 @@ export default class SnapBot {
     }
   }
 
+  /**
+   * What Snapchat's login page says went wrong, or "" when it says nothing.
+   * It puts the reason in the address (loginError=...) and in red over the
+   * form. Read so that a login it turned down is reported as one: the page
+   * stays on accounts.snapchat.com, which is also what a verification step
+   * looks like, so a refused login used to be waited on as a verification,
+   * for ever, with the card saying to finish it in the window.
+   *
+   * Only visible red text counts. The page also has a hidden announcement for
+   * screen readers (role="alert") holding the page's title, "Log In |
+   * Snapchat", on every step: counted as an error, it stopped every login at
+   * the password.
+   */
+  async loginRefusal() {
+    let url = "";
+    try { url = this.page.url(); } catch { return ""; }
+    if (!url.includes("accounts.snapchat.com")) return "";
+    let code = "";
+    try { code = new URL(url).searchParams.get("loginError") || ""; } catch { /* keep "" */ }
+    let text = "";
+    try {
+      text = await this.page.evaluate(() => {
+        const red = [...document.body.querySelectorAll("p, span, div")].find((e) => {
+          if (e.children.length || !e.textContent || e.closest("next-route-announcer, [role='alert']")) return false;
+          const t = e.textContent.trim();
+          if (t.length < 8 || t.length > 220) return false;
+          const box = e.getBoundingClientRect();
+          if (box.width < 4 || box.height < 4) return false;
+          const c = (getComputedStyle(e).color.match(/\d+/g) || []).map(Number);
+          return c.length >= 3 && c[0] > 170 && c[1] < 90 && c[2] < 110;
+        });
+        return red ? red.textContent.trim() : "";
+      });
+    } catch { /* mid-navigation */ }
+    return text || code;
+  }
+
+  /**
+   * Type the account's name into the login form and move on to the password.
+   * When Snapchat does not know a name, the next one is tried: an account can
+   * be renamed after its login was saved, and Snapchat then says it cannot
+   * find the old name at all, so a login that had worked for months stopped
+   * at its first step. The name it has now is recorded whenever it is signed
+   * in (identity_snap_N.json), and passed here as the next one to try.
+   *
+   * @returns {Promise<string>} "" once past the name, else what Snapchat said
+   */
+  async enterUsername(usernameSelector, names) {
+    const list = names.filter((n, i, all) => n && all.indexOf(n) === i);
+    let refused = "";
+    for (let i = 0; i < list.length; i++) {
+      console.log("Entering username...");
+      // Whatever the box still holds from a try before goes first.
+      await this.page.click(usernameSelector, { clickCount: 3 }).catch(() => {});
+      await this.page.keyboard.press("Backspace").catch(() => {});
+      await this.page.type(usernameSelector, list[i], { delay: typeDelay() });
+
+      // Click the login/next button
+      await delay(500);
+      const submitBtn = await this.page.$('button[type="submit"]');
+      if (submitBtn) {
+        await submitBtn.click();
+        console.log("Clicked submit button for username.");
+      } else {
+        await this.page.keyboard.press("Enter");
+        console.log("Pressed Enter to submit username.");
+      }
+
+      // The answer is one of two pages, and it can take a while: the password
+      // box, or the form again with what went wrong. Checked once after three
+      // seconds, a slow "couldn't find" read as a yes.
+      refused = "";
+      for (const until = Date.now() + 20000; Date.now() < until;) {
+        await delay(500);
+        const pw = await this.page.$('input[type="password"]').catch(() => null);
+        if (pw && (await pw.boundingBox().catch(() => null))) return "";
+        refused = await this.loginRefusal();
+        if (refused) break;
+      }
+      if (!refused) return "";
+      if (i + 1 < list.length && /accountnotfound|couldn.?t find/i.test(refused)) {
+        console.warn(`[Snap] Snapchat does not know "${list[i]}" any more; trying the account's current username, "${list[i + 1]}".`);
+        await this.page.waitForSelector(usernameSelector, { visible: true, timeout: 10000 }).catch(() => {});
+        continue;
+      }
+      break;
+    }
+    return refused;
+  }
+
   async login(credentials) {
     const { username, password } = credentials;
     if (username == "" || password == "") {
       throw new Error("Credentials cannot be empty");
     }
+    this.lastLoginError = "";
     try {
       // Land on the dedicated login page if not already there.
       if (!this.page.url().includes("accounts.snapchat.com")) {
@@ -246,21 +476,14 @@ export default class SnapBot {
         throw new Error("Could not find username input field");
       }
 
-      console.log("Entering username...");
-      await this.page.type(usernameSelector, username, { delay: typeDelay() });
-
-      // Click the login/next button
-      await delay(500);
-      const submitBtn = await this.page.$('button[type="submit"]');
-      if (submitBtn) {
-        await submitBtn.click();
-        console.log("Clicked submit button for username.");
-      } else {
-        await this.page.keyboard.press("Enter");
-        console.log("Pressed Enter to submit username.");
+      // Turned down at the username already: there is no password box to wait
+      // a minute and a half for.
+      const refused = await this.enterUsername(usernameSelector, [username, ...(credentials.alternates || [])]);
+      if (refused) {
+        this.lastLoginError = refused;
+        console.error(`[Snap] Snapchat turned the login down: ${refused}`);
+        return;
       }
-
-      await delay(3000);
     } catch (e) {
       console.log("Username field error:", e);
     }
@@ -317,6 +540,12 @@ export default class SnapBot {
     }
 
     await delay(10000);
+    const refused = await this.loginRefusal();
+    if (refused) {
+      this.lastLoginError = refused;
+      console.error(`[Snap] Snapchat turned the login down: ${refused}`);
+      return;
+    }
 
     // Handle any popup (like "Not now" for notifications)
     try {
@@ -364,7 +593,7 @@ export default class SnapBot {
    * @param {number} timeoutMs  How long to wait. 0 or less waits indefinitely.
    * @returns {Promise<boolean>} true once verification is through
    */
-  async awaitEmailVerification(timeoutMs = 0) {
+  async awaitEmailVerification(timeoutMs = 0, waitingFor = "") {
     // Being on the accounts domain and not on /welcome IS the pending state -
     // that is the only reason this gets called. The page text is read to say
     // what kind of screen it is, not to decide whether to wait: the check was
@@ -381,8 +610,12 @@ export default class SnapBot {
       /* page mid-navigation; the URL already told us enough */
     }
 
-    console.log(`[Snap] 📧  ${kind}.`);
-    console.log("[Snap]     Finish it in the Chrome window that is open - check spam too.");
+    if (waitingFor) {
+      console.log(`[Snap] 🔑  ${waitingFor}.`);
+    } else {
+      console.log(`[Snap] 📧  ${kind}.`);
+      console.log("[Snap]     Finish it in the Chrome window that is open - check spam too.");
+    }
     console.log(timeoutMs > 0
       ? `[Snap]     Waiting up to ${Math.round(timeoutMs / 1000)}s.`
       : "[Snap]     Waiting for as long as it takes. Nothing is closed in the meantime.");
@@ -913,23 +1146,24 @@ export default class SnapBot {
       }
       await delay(1800);
 
-      // Upload the picture into the composer's file input.
+      // Upload the picture (or video) into the composer's file input: one that takes that kind of file.
+      const isVideo = /\.(mp4|mov|m4v|webm)$/i.test(obj.path);
       let uploaded = false;
       const inputs = await this.page.$$('input[type="file"]');
       for (const inp of inputs) {
         try {
           const accept = await inp.evaluate((e) => e.getAttribute("accept") || "");
-          if (accept && !/image|\*/.test(accept)) continue;
+          if (accept && !(isVideo ? /video|\*/ : /image|\*/).test(accept)) continue;
           await inp.uploadFile(obj.path);
           uploaded = true;
           break;
         } catch { /* try the next input */ }
       }
       if (!uploaded) {
-        console.warn("[captureSnap] Composer opened but found no file input to upload into.");
+        console.warn(`[captureSnap] Composer opened but found no file input that takes ${isVideo ? "a video" : "a picture"}.`);
         return false;
       }
-      await delay(2500); // let the preview render
+      await delay(isVideo ? 5000 : 2500); // let the preview render (a video has to load first)
 
       // A real Snap shows a near-fullscreen preview; a small input-bar thumbnail
       // means it landed as a plain picture, cancel, never send it.
@@ -1194,6 +1428,19 @@ export default class SnapBot {
     await requests.click();
   }
 
+  /** Whether the pending-count badge is up on the person+ icon (top left), without opening anything. */
+  async hasPendingFriendBadge() {
+    return await this.page.evaluate(() => {
+      for (const b of document.querySelectorAll("button")) {
+        if (!(b.offsetWidth > 0 && b.offsetHeight > 0)) continue;
+        const r = b.getBoundingClientRect();
+        if (r.top > 130 || r.left > 420) continue; // top-left only
+        if (/\b\d{1,3}\b/.test((b.textContent || "").trim())) return true;
+      }
+      return false;
+    }).catch(() => false);
+  }
+
   /**
    * Open the "Added me" panel (person+ icon with pending-count badge) and accept
    * a small batch by clicking each Add button. Returns how many it added.
@@ -1222,13 +1469,17 @@ export default class SnapBot {
           "add", "accept", "add back", "add friend",
           "ajouter", "accepter", "ajouter en retour", "ajouter l'ami",
         ];
-        const btn = [...document.querySelectorAll("button, [role='button']")].find((b) => {
-          if (!(b.offsetWidth > 0 && b.offsetHeight > 0)) return false;
-          const t = (b.textContent || "").trim().toLowerCase();
-          const a = (b.getAttribute("aria-label") || "").toLowerCase();
-          return exact.includes(t) || /^(add|accept|ajouter|accepter)\b/.test(t) ||
-                 /^(add|accept|ajouter|accepter)\b/.test(a);
-        });
+        const visible = [...document.querySelectorAll("button, [role='button']")].filter((b) => b.offsetWidth > 0 && b.offsetHeight > 0);
+        // An Accept first: Add is also what Quick Add's suggestions (strangers) carry, so Add is only pressed where
+        // there is no Accept at all.
+        const btn = visible.find((b) => /^(accept|accepter)\b/.test((b.textContent || "").trim().toLowerCase()) ||
+                                        /^(accept|accepter)\b/.test((b.getAttribute("aria-label") || "").toLowerCase()))
+          || visible.find((b) => {
+            const t = (b.textContent || "").trim().toLowerCase();
+            const a = (b.getAttribute("aria-label") || "").toLowerCase();
+            return exact.includes(t) || /^(add|accept|ajouter|accepter)\b/.test(t) ||
+                   /^(add|accept|ajouter|accepter)\b/.test(a);
+          });
         if (btn) { btn.click(); return true; }
         return false;
       });
@@ -1255,6 +1506,96 @@ export default class SnapBot {
     return added;
   }
 
+  /**
+   * The friend requests waiting, read off Snapchat's requests panel ("View
+   * friend requests"), then closed again: who, and their picture. Each row is
+   * found from its Accept button, so a layout that moves things about still
+   * reads. Only Accept: Snapchat's Quick Add suggestions have Add buttons of
+   * their own, and those are strangers, not requests.
+   */
+  async readFriendRequests() {
+    // Nothing waiting, nothing to open: the badge says so without touching the page.
+    if (!(await this.hasPendingFriendBadge())) return [];
+    const opened = await this.page.evaluate(() => {
+      const b = document.querySelector('button[title="View friend requests"]');
+      if (!b) return false;
+      b.click();
+      return true;
+    }).catch(() => false);
+    if (!opened) return [];
+    await delay(1400);
+    const list = await this.page.evaluate(() => {
+      const isAdd = (t) => /^(accept|accepter)\b/i.test((t || "").trim());
+      const adds = [...document.querySelectorAll("button, [role='button']")].filter((b) =>
+        b.offsetWidth > 0 && b.offsetHeight > 0 && (isAdd(b.textContent) || isAdd(b.getAttribute("aria-label"))));
+      const out = [];
+      for (const btn of adds) {
+        // Up from the button to the smallest row that is one person's: past that it holds a second Add.
+        let row = btn.parentElement;
+        let prev = btn;
+        for (let k = 0; k < 6 && row; k++) {
+          const inside = [...row.querySelectorAll("button, [role='button']")]
+            .filter((b) => isAdd(b.textContent) || isAdd(b.getAttribute("aria-label")));
+          if (inside.length > 1) { row = prev; break; }
+          if (row.querySelector("img") && (row.innerText || "").trim()) break;
+          prev = row;
+          row = row.parentElement;
+        }
+        if (!row) continue;
+        const lines = (row.innerText || "").split("\n").map((l) => l.trim()).filter((l) => l && !isAdd(l));
+        if (!lines[0] || out.some((o) => o.name === lines[0])) continue;
+        const img = row.querySelector("img");
+        out.push({ name: lines[0].slice(0, 80), username: (lines[1] || "").slice(0, 60), avatar: img ? img.currentSrc || img.src : "" });
+      }
+      return out;
+    }).catch(() => []);
+    try { await this.page.keyboard.press("Escape"); } catch { /* closed already */ }
+    await delay(400);
+    return list;
+  }
+
+  /** Accept one friend request, or turn it down, by the name it shows. True when it was there and done. */
+  async answerFriendRequest(name, accept = true) {
+    if (!name) return false;
+    const opened = await this.page.evaluate(() => {
+      const b = document.querySelector('button[title="View friend requests"]');
+      if (!b) return false;
+      b.click();
+      return true;
+    }).catch(() => false);
+    if (!opened) return false;
+    await delay(1400);
+    const done = await this.page.evaluate((name, accept) => {
+      const want = name.trim().toLowerCase();
+      const isAdd = (t) => /^(accept|accepter)\b/i.test((t || "").trim());
+      const isNo = (t) => /^(ignore|decline|remove|dismiss|not now|ignorer|refuser|supprimer|pas maintenant)\b/i.test((t || "").trim());
+      for (const el of document.querySelectorAll("span, div")) {
+        if (!(el.offsetWidth > 0 && el.offsetHeight > 0)) continue;
+        if ((el.textContent || "").trim().toLowerCase() !== want) continue;
+        for (let row = el.parentElement, k = 0; row && k < 6; row = row.parentElement, k++) {
+          const buttons = [...row.querySelectorAll("button, [role='button']")].filter((b) => b.offsetWidth > 0);
+          const add = buttons.find((b) => isAdd(b.textContent) || isAdd(b.getAttribute("aria-label")));
+          if (!add) continue;
+          if (accept) {
+            add.click();
+            return true;
+          }
+          const no = buttons.find((b) => b !== add && (isNo(b.textContent) || isNo(b.getAttribute("aria-label")) || isNo(b.getAttribute("title"))));
+          if (no) {
+            no.click();
+            return true;
+          }
+          return false;
+        }
+      }
+      return false;
+    }, name, accept).catch(() => false);
+    await delay(600);
+    try { await this.page.keyboard.press("Escape"); } catch { /* closed already */ }
+    await delay(300);
+    return done;
+  }
+
   async listRecipients() {
     await this.page.waitForSelector(
       "div.ReactVirtualized__Grid__innerScrollContainer"
@@ -1268,9 +1609,11 @@ export default class SnapBot {
         .map((row) => {
           const titleSpan = row.querySelector("span[id^='title-']");
           if (!titleSpan) return null;
+          const img = row.querySelector("img");
           return {
             id: titleSpan.id.replace(/^title-/, ""),
             name: (titleSpan.textContent || "").trim(),
+            avatar: img ? img.currentSrc || img.src || "" : "",
           };
         })
         .filter(Boolean)
@@ -1316,6 +1659,7 @@ export default class SnapBot {
           const name = titleSpan.textContent.trim();
 
           let unread = false;
+          let typing = false;
           try {
             const titleWeight = parseInt(getComputedStyle(titleSpan).fontWeight) || 400;
             if (titleWeight >= 600) unread = true;
@@ -1324,6 +1668,7 @@ export default class SnapBot {
             if (statusEl) {
               const statusWeight = parseInt(getComputedStyle(statusEl).fontWeight) || 400;
               const statusText = (statusEl.textContent || "").toLowerCase();
+              typing = /\btyping|is writing|\u00e9crit|en train d.\u00e9crire/.test(statusText);
               if (statusWeight >= 600) unread = true;
               if (/\bnew\b|received|sent you/.test(statusText)) unread = true;
               if (/opened|delivered|^sent\b|sending|tap to chat/.test(statusText)) {
@@ -1334,9 +1679,16 @@ export default class SnapBot {
             unread = true; // never miss a real message
           }
 
+          // The chat's picture: a Bitmoji or a photo; none where Snapchat draws its own figure.
+          const img = item.querySelector("img");
+          const avatar = img ? img.currentSrc || img.src || "" : "";
+
           // Keep first-seen order; if any pass flags it unread, keep it unread.
-          if (!byId.has(id)) byId.set(id, { id, name, unread });
-          else if (unread) byId.get(id).unread = true;
+          if (!byId.has(id)) byId.set(id, { id, name, unread, avatar, typing });
+          else {
+            if (unread) byId.get(id).unread = true;
+            if (typing) byId.get(id).typing = true;
+          }
         }
       };
 
@@ -1495,6 +1847,28 @@ export default class SnapBot {
     return typedOk;
   }
 
+  /** Whether a chat's row says something new is in it, read the way listRecipientsWithUnread reads every row. */
+  async isUnread(chatId) {
+    try {
+      return await this.page.evaluate((id) => {
+        const title = document.getElementById("title-" + id);
+        if (!title) return false;
+        const row = title.closest("div[role='listitem']") || title.parentElement;
+        let unread = (parseInt(getComputedStyle(title).fontWeight) || 400) >= 600;
+        const status = row ? row.querySelector(`[id="status-${id}"]`) : null;
+        if (status) {
+          const text = (status.textContent || "").toLowerCase();
+          if ((parseInt(getComputedStyle(status).fontWeight) || 400) >= 600) unread = true;
+          if (/\bnew\b|received|sent you/.test(text)) unread = true;
+          if (/opened|delivered|^sent\b|sending|tap to chat/.test(text)) unread = false;
+        }
+        return unread;
+      }, chatId);
+    } catch {
+      return false;
+    }
+  }
+
   /** Fast check (no open), is this chat currently rendered in the chat list? */
   async isChatVisible(chatId) {
     try {
@@ -1533,6 +1907,62 @@ export default class SnapBot {
       await this.page.keyboard.up("Control");
       await this.page.keyboard.press("Backspace");
     } catch { /* ignore */ }
+  }
+
+  /**
+   * Open a chat that is not in the list right now, by its name in Snapchat's
+   * own search, for the panel's Chats tab. Only an exact match is clicked,
+   * as sendMessageViaSearch does. The id of the conversation that opened, or
+   * "" when none did; the search stays as typed until clearSearch().
+   */
+  async openViaSearch(name) {
+    if (!name) return "";
+    try {
+      const search = await this.page.$('input[role="searchbox"], input[placeholder="Search" i]');
+      if (!search) return "";
+      const openId = () => this.page.evaluate(() => (document.querySelector("[id^='cv-']")?.id || "").replace(/^cv-/, ""));
+      const before = await openId();
+      await this._clearSearch(search);
+      await search.type(name, { delay: typeDelay() });
+      await delay(1800);
+      const clicked = await this.page.evaluate((name) => {
+        const want = name.trim().toLowerCase();
+        for (const it of document.querySelectorAll("div[role='listitem']")) {
+          const title = it.querySelector("span[id^='title-']");
+          if (title && (title.textContent || "").trim().toLowerCase() === want) {
+            title.click();
+            return true;
+          }
+        }
+        for (const el of document.querySelectorAll("span, div, a")) {
+          if (!(el.offsetWidth > 0 && el.offsetHeight > 0)) continue;
+          if ((el.textContent || "").trim().toLowerCase() !== want) continue;
+          (el.closest("div[role='listitem'], li, a, [role='button'], [role='option']") || el).click();
+          return true;
+        }
+        return false;
+      }, name);
+      if (!clicked) {
+        await this._clearSearch(search);
+        return "";
+      }
+      for (let i = 0; i < 24; i++) {
+        await delay(250);
+        const id = await openId();
+        if (id && id !== before) return id;
+      }
+      return (await openId()) || "";
+    } catch {
+      return "";
+    }
+  }
+
+  /** The search box emptied again, after openViaSearch. */
+  async clearSearch() {
+    try {
+      const search = await this.page.$('input[role="searchbox"], input[placeholder="Search" i]');
+      if (search) await this._clearSearch(search);
+    } catch { /* nothing to clear */ }
   }
 
   /**
@@ -1905,6 +2335,46 @@ export default class SnapBot {
     }
   }
 
+  /**
+   * Who is signed in, from Snapchat's own account page, opened in a tab in
+   * the background and closed again: the username and the name it shows.
+   *
+   * The chat app is no good for this. The user records it keeps have one
+   * shape for everybody, and the one behind the profile button follows
+   * whichever chat is open: read that way, the account was once named after
+   * one of its contacts. The account page only ever shows the account, and
+   * marks the username for its own tests (data-testid="username").
+   *
+   * @returns {Promise<null|{username:string, display_name:string}>}
+   */
+  async whoAmI() {
+    let page = null;
+    try {
+      const cdp = await this.page.createCDPSession();
+      let targetId = "";
+      try {
+        ({ targetId } = await cdp.send("Target.createTarget", { url: "about:blank", background: true }));
+      } finally {
+        await cdp.detach().catch(() => {});
+      }
+      const target = await this.browser.waitForTarget((t) => t._targetId === targetId, { timeout: 10000 });
+      page = await target.page();
+      if (!page) return null;
+      await page.goto("https://accounts.snapchat.com/v2/welcome", { waitUntil: "domcontentloaded", timeout: 45000 });
+      await page.waitForSelector('[data-testid="username"]', { timeout: 20000 });
+      const me = await page.evaluate(() => {
+        const u = document.querySelector('[data-testid="username"]');
+        const name = u?.parentElement?.querySelector('[class*="displayName" i]') || u?.previousElementSibling;
+        return { username: (u?.textContent || "").trim(), display_name: (name?.textContent || "").trim() };
+      });
+      return me.username ? me : null;
+    } catch {
+      return null;
+    } finally {
+      if (page) await page.close().catch(() => {});
+    }
+  }
+
   async saveCookies(username) {
     try {
       const cookies = await this.browser.cookies();
@@ -1926,6 +2396,179 @@ export default class SnapBot {
     }
   }
 
+  /**
+   * Every message the open conversation shows, in order, for the panel's
+   * Chats tab: whether this account sent it, its words, what it was when it
+   * was not words (a Snap, a picture, a video, a voice message, a sticker, a
+   * call), and the day Snapchat writes above it. Only reads: nothing is
+   * clicked or hovered, so the conversation is left exactly as it was.
+   * Null when that conversation is not the one open.
+   */
+  /**
+   * The open conversation, message by message. With each, the reactions on it (Snapchat draws them under the
+   * message as pictures, each naming who reacted): the account's own are the ones under its own name when that is
+   * known (ownName, from the React picker), otherwise any not from the other side of the chat. `mark` is the index
+   * of a message to mark on the page (data-llm-react) for react() to find, walked exactly the way it is read.
+   */
+  async readConversation(chatId, ownName = "", mark = -1) {
+    return await this.page.evaluate((chatId, ownName, mark) => {
+      const cv = document.querySelector(`#cv-${chatId}`);
+      if (!cv) return null;
+      for (const old of document.querySelectorAll("[data-llm-react]")) old.removeAttribute("data-llm-react");
+      // The other side's names, from the headers over their messages.
+      const theirs = new Set([...cv.querySelectorAll("header .nonIntl")]
+        .filter((n) => !n.closest("time"))
+        .map((n) => (n.textContent || "").trim())
+        .filter((t) => t && !/^(me|moi)$/i.test(t)));
+      const reactionsOf = (block) => [...block.querySelectorAll(":scope > ul button[data-tooltip]")]
+        .map((b) => {
+          const who = (b.getAttribute("data-tooltip") || "").trim();
+          return { src: b.querySelector("img")?.getAttribute("src") || "",
+                   mine: ownName ? who === ownName : theirs.size ? !theirs.has(who) : false };
+        })
+        .filter((r) => r.src);
+      const RED = "rgb(242, 60, 87)";
+      const bordered = (el) => {
+        const b = el.matches?.(".KB4Aq") ? el : el.querySelector(".KB4Aq");
+        if (!b) return null;
+        try {
+          return getComputedStyle(b).borderColor === RED;
+        } catch {
+          return null;
+        }
+      };
+      const kindOf = (el) => {
+        if (el.querySelector("audio")) return "voice message";
+        const t = (el.innerText || el.textContent || "").toLowerCase();
+        if (/\bsnaps?\b|click to view|tap to view|hold to view|tap to load/.test(t)) return "snap";
+        if (el.querySelector("video")) return "video";
+        const big = [...el.querySelectorAll("img, canvas")].some((m) => {
+          const r = m.getBoundingClientRect();
+          return r.width >= 100 && r.height >= 100;
+        });
+        if (big) return "image";
+        if (/\b(call|called|missed|appel)\b/.test(t)) return "call";
+        if (el.querySelector("img")) return "sticker";
+        return "";
+      };
+      const out = [];
+      let day = "";
+      for (const li of cv.querySelectorAll("li.T1yt2")) {
+        // A day line is a <time> straight in its row. A message group has one too, in its header: that is the
+        // exact moment it was sent, not a day line.
+        const stamp = li.querySelector(":scope > time");
+        if (stamp) {
+          day = (stamp.textContent || "").trim();
+          continue;
+        }
+        let mineHere = null;
+        let at = 0;
+        const inner = [...li.querySelectorAll("li")];
+        for (const block of inner.length ? inner : [li]) {
+          const header = block.querySelector("header");
+          if (header) {
+            const named = [...header.querySelectorAll(".nonIntl")].find((n) => !n.closest("time"));
+            const name = (named?.textContent || "").trim();
+            mineHere = name ? /^(me|moi)$/i.test(name) : null;
+            const when = Date.parse(header.querySelector("time[datetime]")?.getAttribute("datetime") || "");
+            if (!Number.isNaN(when)) at = when;
+          }
+          const mine = mineHere ?? bordered(block) ?? false;
+          const links = [...block.querySelectorAll("a[href^='http']")]
+            .map((a) => ({ url: a.href, title: (a.querySelector("span")?.textContent || "").trim().slice(0, 140) }))
+            .filter((l, i, all) => all.findIndex((x) => x.url === l.url) === i)
+            .slice(0, 3);
+          const spans = [...block.querySelectorAll("span.ogn1z")].filter((s) => (s.textContent || "").trim());
+          // The reactions are the block's, under its last message.
+          const reactions = reactionsOf(block);
+          const put = (entry, el) => {
+            if (out.length === mark) el.setAttribute("data-llm-react", "1");
+            out.push(entry);
+          };
+          if (spans.length) {
+            spans.forEach((s, i) => put({ mine, text: (s.textContent || "").trim().slice(0, 2000), kind: "", day, at, links,
+                                          reactions: i === spans.length - 1 ? reactions : [] }, s));
+          } else {
+            const kind = kindOf(block);
+            if (kind) put({ mine, text: "", kind, day, at, links: [], reactions }, block);
+          }
+        }
+      }
+      return out;
+    }, chatId, ownName, mark);
+  }
+
+  /**
+   * React to a message of the open conversation (index: where readConversation reads it) with the choice-th of
+   * Snapchat's reactions, or take the account's back: hover it, press React (the first button of the toolbar that
+   * appears over it), and pick, the way a person does. Snapchat keeps one reaction per person on a message, and
+   * pressing the chosen one again takes it back. Answers { ok, reason, name }, name being the account's own as
+   * Snapchat writes it over each choice in the picker, which tells its reactions from the other side's.
+   */
+  async react(chatId, index, choice, remove, ownName = "") {
+    const page = this.page;
+    await this.readConversation(chatId, ownName, index);
+    const el = await page.$("[data-llm-react]");
+    if (!el) return { ok: false, reason: "that message is not on the page any more" };
+    await el.evaluate((e) => e.scrollIntoView({ block: "center" })).catch(() => {});
+    await delay(250);
+    // The toolbar shows on hover: React is its first button (the ones under a message carrying a name are reactions).
+    let picker = false;
+    for (let attempt = 0; attempt < 3 && !picker; attempt++) {
+      await page.mouse.move(8, 8).catch(() => {});
+      await el.hover().catch(() => {});
+      await delay(350 + attempt * 200);
+      const pressed = await el.evaluate((e) => {
+        const block = e.closest("li");
+        const shown = (b) => b.offsetWidth > 0 && !b.hasAttribute("data-tooltip") && b.querySelector("svg");
+        // The toolbar: a row of icon buttons (React, Save, Reply, Copy, Delete); React is its first.
+        const bar = block && [...block.querySelectorAll("div")]
+          .find((d) => [...d.children].filter((c) => c.tagName === "BUTTON" && shown(c)).length >= 3);
+        const btn = bar ? [...bar.children].find((c) => c.tagName === "BUTTON" && shown(c))
+                        : block && [...block.querySelectorAll("button")].find(shown);
+        if (!btn) return false;
+        btn.click();
+        return true;
+      }).catch(() => false);
+      if (!pressed) continue;
+      picker = await page.waitForFunction(() => [...document.querySelectorAll("ul")]
+        .some((u) => u.querySelectorAll(":scope > li > button[data-tooltip]:not([disabled]) img").length >= 6), { timeout: 2500 })
+        .then(() => true, () => false);
+    }
+    if (!picker) return { ok: false, reason: "Snapchat did not offer React on that message" };
+    const state = await el.evaluate((e, choice) => {
+      const list = [...document.querySelectorAll("ul")]
+        .find((u) => u.querySelectorAll(":scope > li > button[data-tooltip]:not([disabled]) img").length >= 6);
+      const items = [...list.querySelectorAll(":scope > li > button[data-tooltip]:not([disabled])")];
+      const name = (items[0]?.getAttribute("data-tooltip") || "").trim();
+      // What the account has on it already: its reaction under the message carries its name.
+      const block = e.closest("li");
+      const minePic = [...(block?.querySelectorAll(":scope > ul button[data-tooltip]") || [])]
+        .find((b) => (b.getAttribute("data-tooltip") || "").trim() === name)?.querySelector("img")?.getAttribute("src") || "";
+      const id = (src) => (String(src).match(/\/d\/([A-Za-z0-9_-]+)/) || [])[1] || "";
+      const want = items[choice]?.querySelector("img")?.getAttribute("src") || "";
+      return { name, count: items.length, has: !!minePic, same: !!minePic && id(minePic) === id(want) };
+    }, choice);
+    if (choice >= state.count) {
+      await page.keyboard.press("Escape").catch(() => {});
+      return { ok: false, reason: "Snapchat's reactions have changed", name: state.name };
+    }
+    // Already as asked: nothing to press.
+    if (remove ? !state.same : state.same) {
+      await page.keyboard.press("Escape").catch(() => {});
+      await page.mouse.move(8, 8).catch(() => {});
+      return { ok: true, name: state.name };
+    }
+    await page.evaluate((choice) => {
+      const list = [...document.querySelectorAll("ul")]
+        .find((u) => u.querySelectorAll(":scope > li > button[data-tooltip]:not([disabled]) img").length >= 6);
+      list.querySelectorAll(":scope > li > button[data-tooltip]:not([disabled])")[choice].click();
+    }, choice);
+    await delay(900);
+    await page.mouse.move(8, 8).catch(() => {});
+    return { ok: true, name: state.name };
+  }
+
   async extractChatData(userId) {
     return await this.page.evaluate((userId) => {
       const output = [];
@@ -1938,7 +2581,9 @@ export default class SnapBot {
       let currentConvo = { time: "", conversation: [] };
 
       listItems.forEach((li) => {
-        const timeElem = li.querySelector("time span");
+        // Only a <time> straight in the row is a day line: a message group's header has one too (when it was
+        // sent), and taking that for a day line skipped every message in the group.
+        const timeElem = li.querySelector(":scope > time span");
         if (timeElem) {
           if (currentTime) output.push({ ...currentConvo });
           currentTime = timeElem.textContent.trim();

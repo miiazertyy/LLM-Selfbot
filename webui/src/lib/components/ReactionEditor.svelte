@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { sweep } from "../arrive";
   /**
    * When the bot taps an emoji on a message instead of, or as well as, replying.
    *
@@ -18,11 +19,15 @@
    */
   import { onMount } from "svelte";
   import { api } from "../api";
+  import { usePersona } from "../personas/context";
   import { toast } from "../stores";
   import Button from "./Button.svelte";
   import Toggle from "./Toggle.svelte";
   import EmojiPicker from "./EmojiPicker.svelte";
   import { springValue } from "../spring";
+
+  /** The persona this edits (the page gives it): its own settings, on everyone's. "" is everyone's. */
+  const persona = usePersona();
 
   let enabled = $state(true);
   let chance = $state(0.3);
@@ -118,7 +123,7 @@
 
   async function load() {
     try {
-      const cfg = await api.config();
+      const cfg = await api.config(persona);
       const r = (cfg?.bot?.reactions ?? {}) as any;
       enabled = r.enabled !== false;
       // Absent from a config file seeded before this setting existed, so the
@@ -141,10 +146,10 @@
     }
     saving = true;
     try {
-      await api.configField("bot.reactions.enabled", enabled);
-      await api.configField("bot.reactions.chance", chance);
-      await api.configField("bot.reactions.react_only_max_ratio", onlyRatio);
-      await api.configField("bot.reactions.emojis", emojis);
+      await api.configField("bot.reactions.enabled", enabled, { persona });
+      await api.configField("bot.reactions.chance", chance, { persona });
+      await api.configField("bot.reactions.react_only_max_ratio", onlyRatio, { persona });
+      await api.configField("bot.reactions.emojis", emojis, { persona });
       stored = JSON.stringify({ enabled, chance, onlyRatio, emojis });
       toast("Reactions saved.", "ok");
     } catch (e: any) {
@@ -192,6 +197,7 @@
             style="--fill: {pct(chance)}"
             class="slider min-w-0 flex-1 sm:w-44 sm:flex-none"
             use:springValue
+            use:sweep
           />
           <span class="slider-value w-10 shrink-0 text-right font-mono text-[12px] text-ink">
             {pct(chance)}
@@ -219,6 +225,7 @@
             style="--fill: {pct(onlyRatio * 2)}"
             class="slider min-w-0 flex-1 sm:w-44 sm:flex-none"
             use:springValue
+            use:sweep
           />
           <span class="slider-value w-10 shrink-0 text-right font-mono text-[12px] text-ink">
             {pct(onlyRatio)}

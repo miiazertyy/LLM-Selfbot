@@ -2,11 +2,8 @@ import json
 import os
 import time
 
-import discord
-
 from datetime import datetime
 from pathlib import Path
-from curl_cffi.requests import AsyncSession
 from app.utils.helpers import load_config, resource_path
 
 
@@ -15,6 +12,12 @@ def print_error(error_type, error):
 
 
 async def webhook_log(ctx, error, is_ratelimit=False):
+    # Imported here, not at the top: this module is reached from the panel's own
+    # imports (through app.utils.ai), and a build without Discord (the iPhone
+    # app, which has no curl_cffi) still has to be able to start the panel.
+    import discord
+    from curl_cffi.requests import AsyncSession
+
     config = load_config()  # Always reload so webhook URL changes are picked up live
     webhook_url = config["notifications"]["error_webhook"]
 
@@ -68,9 +71,7 @@ async def webhook_log(ctx, error, is_ratelimit=False):
         print(f"Error while sending webhook: {e}")
 
 
-# ── Telegram error relay ─────────────────────────────────────────────────────
-# The Discord runner drops a "send_error_notification" entry into its own IPC
-# command file; the Telegram controller polls that file and DMs the owner.
+# telegram error relay: the discord runner drops a "send_error_notification" entry into its own IPC command file and the telegram controller polls that file and DMs the owner
 
 def notify_telegram_error(title: str, detail: str):
     """Queue an error for the Telegram controller (no-op when disabled)."""
@@ -96,8 +97,7 @@ def notify_telegram_error(title: str, detail: str):
             "payload": {"title": title, "detail": str(detail)[:1500]},
             "ts": time.time(),
         })
-        tmp = cmd_file.with_suffix(".tmp")
-        tmp.write_text(json.dumps(entries, ensure_ascii=False), encoding="utf-8")
-        tmp.replace(cmd_file)
+        from app.utils.atomic import write_json_atomic
+        write_json_atomic(cmd_file, entries)
     except Exception:
         pass

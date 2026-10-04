@@ -10,6 +10,16 @@ def is_child() -> bool:
     return os.environ.get("LLMSELFBOT_CHILD") == "1"
 
 
+def under_panel() -> bool:
+    """Whether the panel is reading this worker's output: a process it started,
+    or, on a phone, a thread it runs (app/core/inprocess.py). Workers write
+    their events for the panel (a chat changed, a model was used) only then."""
+    if os.environ.get("LLMSELFBOT_CHILD") == "1":
+        return True
+    from app.core import inprocess
+    return inprocess.current() is not None
+
+
 def pid_file(role: str, account: int | None) -> str:
     """Path of the pid file written for one spawned worker."""
     from app.core.ipc import IPC_DIR
@@ -30,6 +40,12 @@ def role_argv(role: str, account: int | None = None) -> list[str]:
 
 
 def spawn_role(role, account=None, capture=True, extra_env=None) -> subprocess.Popen:
+    # A phone cannot start processes: there the role runs on a thread of this
+    # one, behind the same interface (see app/core/inprocess.py).
+    from app.utils import device
+    if device.single_process():
+        from app.core import inprocess
+        return inprocess.start(role, account)
     env = {**os.environ, "LLMSELFBOT_CHILD": "1", **(extra_env or {})}
     proc = subprocess.Popen(
         role_argv(role, account), env=env, cwd=str(APP_DIR),
@@ -61,4 +77,5 @@ def spawn_process(argv, capture=True, extra_env=None) -> subprocess.Popen:
         stdout=subprocess.PIPE if capture else None,
         stderr=subprocess.STDOUT if capture else None,
         text=True, bufsize=1, encoding="utf-8", errors="replace",
+        **quiet_kwargs(),
     )

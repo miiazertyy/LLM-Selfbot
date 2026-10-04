@@ -1,26 +1,13 @@
-"""
-app/web/routes/people_routes.py - the profile card behind a clicked username.
+"""app/web/routes/people_routes.py - the profile card behind a clicked username. Everything shown here is already on disk: the bio cache the bot fills when it reads someone's profile, the facts it has remembered, and the message log; this just gathers it into one place so a name anywhere in the panel can be clicked. Nothing is fetched from Discord here, if the cache has not seen someone, the card says so rather than going and asking, which keeps clicking a name free. The whole feature can be switched off in Settings, and the cache can be emptied, because it is a local record of real people."""
 
-Everything shown here is already on disk: the bio cache the bot fills when it
-reads someone's profile, the facts it has remembered, and the message log. This
-just gathers it into one place so a name anywhere in the panel can be clicked.
-
-Nothing is fetched from Discord here. If the cache has not seen someone, the
-card says so rather than going and asking, which keeps clicking a name free.
-
-The whole feature can be switched off in Settings, and the cache can be
-emptied, because it is a local record of real people.
-"""
-
+import asyncio
 import sqlite3
 import time
 
 from fastapi import APIRouter, HTTPException, Request
 
 from app.utils.paths import DATA_DIR
-# connect_raw() instead of a bare sqlite3.connect(): a plain connection sets
-# no busy_timeout, so these queries failed with "database is locked" rather
-# than waiting whenever a bot runner happened to be writing.
+# connect_raw() instead of a bare sqlite3.connect(): a plain connection sets no busy_timeout, so these queries failed with "database is locked" rather than waiting whenever a bot runner happened to be writing.
 from app.utils.db import connect_raw
 
 router = APIRouter(tags=["people"])
@@ -37,11 +24,14 @@ def _enabled() -> bool:
         return True
 
 
+# The database is read on a thread throughout: on the event loop a count that waited for a bot runner's write held
+# every other page of the panel with it (the panel's own watchdog caught it, "busy in db.py in profile_cache_size").
+
 @router.get("/api/people/settings")
 async def people_settings(request: Request):
     from app.utils.db import profile_cache_size
     try:
-        size = profile_cache_size()
+        size = await asyncio.to_thread(profile_cache_size)
     except Exception:
         size = 0
     return {"enabled": _enabled(), "cached": size}
@@ -51,15 +41,13 @@ async def people_settings(request: Request):
 async def clear_cache(request: Request):
     from app.utils.db import clear_profile_cache
     try:
-        removed = clear_profile_cache()
+        removed = await asyncio.to_thread(clear_profile_cache)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     return {"ok": True, "removed": removed}
 
 
-# Someone whose account is stopped cannot be looked up, and retrying on every
-# card open would stall the modal every time. A short memory of failures keeps
-# the card instant.
+# Someone whose account is stopped cannot be looked up, and retrying on every card open would stall the modal every time. A short memory of failures keeps the card instant.
 _no_answer: dict = {}
 _RETRY_AFTER = 300.0
 
@@ -87,12 +75,51 @@ async def _fetch_profile(uid: str) -> dict | None:
 
 
 @router.get("/api/people/{uid}")
-async def person(request: Request, uid: str):
-    """One person's card. `uid` is a string: Discord ids are 64 bit and lose
-    precision as JSON numbers."""
+async def person(request: Request, uid: str, persona: str = ""):
+    """One person's card. `uid` is a string: Discord ids are 64 bit and lose precision as JSON numbers. What is on
+    disk is read on a thread; only asking a running account, which waits on another process, stays here. What the
+    bot remembers is one persona's (?persona=), or, with none named, what any of them does."""
     if not _enabled():
         return {"enabled": False}
 
+    out = await asyncio.to_thread(_from_disk, uid, persona)
+
+    # Nothing cached yet? Ask a running account once, rather than showing a blank card forever. Anyone already in the database predates the cache, so waiting for them to message again is not a real answer. One short IPC call, and the result is stored so it never has to be asked twice.
+    if not out.get("avatar") and uid.isdigit():
+        fetched = await _fetch_profile(uid)
+        if fetched:
+            out["cached"] = True
+            out["avatar"] = fetched.get("avatar") or out.get("avatar")
+            out["username"] = fetched.get("username") or out.get("username")
+            out["display_name"] = (out.get("display_name")
+                                   or fetched.get("display_name"))
+
+    # Shown as the heading already, so repeating it in the remembered list is just noise.
+    if out.get("facts", {}).get("name") == out.get("display_name"):
+        out["facts"] = {k: v for k, v in out["facts"].items() if k != "name"}
+
+    await asyncio.to_thread(_talk, uid, out)
+    return out
+
+
+def _remembered(key, persona: str) -> tuple:
+    """(facts, their own tone) one persona remembers; with none named, what any does (Default's first)."""
+    from app.utils import personas
+    from app.utils.memory import get_memory, get_persona
+    if persona and personas.exists(persona):
+        facts = get_memory(key, persona=persona) or {}
+        return {k: v for k, v in facts.items() if k != "__persona__"}, get_persona(key, persona=persona)
+    facts, tone = {}, None
+    for pid in personas.ids():
+        for k, v in (get_memory(key, persona=pid) or {}).items():
+            if k != "__persona__":
+                facts.setdefault(k, v)
+        tone = tone or get_persona(key, persona=pid)
+    return facts, tone
+
+
+def _from_disk(uid: str, persona: str = "") -> dict:
+    """What is already known about someone: their cached profile, what the bot remembered, a Snapchat chat's record."""
     out: dict = {"enabled": True, "user_id": uid, "cached": False}
 
     try:
@@ -112,43 +139,36 @@ async def person(request: Request, uid: str):
 
     # What the bot has remembered about them.
     try:
-        from app.utils.memory import get_memory, get_persona
         key = int(uid) if uid.isdigit() else uid
-        facts = {k: v for k, v in (get_memory(key) or {}).items()
-                 if k != "__persona__"}
+        facts, tone = _remembered(key, persona)
         out["facts"] = facts
-        out["persona"] = get_persona(key)
+        out["persona"] = tone
     except Exception:
         facts = {}
         out["facts"] = {}
         out["persona"] = None
 
-    # The bot has been writing the display name into memory as a "name" fact
-    # since long before the profile cache existed, so use it when the cache has
-    # not caught up. Without this, everyone already in the database shows their
-    # @handle as their name until they happen to message again.
+    # A Snapchat chat (its id is a chat id, not a number): named, pictured and counted from what Snapchat's runner read
+    # and the bot logged.
+    if not uid.isdigit():
+        from app.utils import snappeople
+        info = snappeople.describe([uid]).get(uid)
+        if info:
+            out["display_name"] = out.get("display_name") or info["name"]
+            out["avatar"] = out.get("avatar") or info["avatar"]
+            out.update(platform="snapchat", messages=info["messages"], first_seen=info["first_seen"],
+                       last_seen=info["last_seen"], messages_7d=info["messages_7d"])
+
+    # The bot has been writing the display name into memory as a "name" fact since long before the profile cache existed, so use it when the cache has not caught up. Without this, everyone already in the database shows their @handle as their name until they happen to message again.
     if not out.get("display_name") and facts.get("name"):
         out["display_name"] = facts["name"]
+    return out
 
-    # Nothing cached yet? Ask a running account once, rather than showing a
-    # blank card forever. Anyone already in the database predates the cache, so
-    # waiting for them to message again is not a real answer. One short IPC
-    # call, and the result is stored so it never has to be asked twice.
-    if not out.get("avatar") and uid.isdigit():
-        fetched = await _fetch_profile(uid)
-        if fetched:
-            out["cached"] = True
-            out["avatar"] = fetched.get("avatar") or out.get("avatar")
-            out["username"] = fetched.get("username") or out.get("username")
-            out["display_name"] = (out.get("display_name")
-                                   or fetched.get("display_name"))
 
-    # Shown as the heading already, so repeating it in the remembered list is
-    # just noise.
-    if out.get("facts", {}).get("name") == out.get("display_name"):
-        out["facts"] = {k: v for k, v in out["facts"].items() if k != "name"}
-
-    # And how much they actually talk.
+def _talk(uid: str, out: dict) -> None:
+    """How much they actually talk, from the message log, into `out`."""
+    if not uid.isdigit():
+        return
     try:
         conn = connect_raw()
         try:
@@ -171,5 +191,3 @@ async def person(request: Request, uid: str):
             conn.close()
     except Exception:
         pass
-
-    return out

@@ -76,6 +76,8 @@ class FakeClient:
 def install(n=2):
     clients = [FakeClient("KEY_%d" % (i + 1)) for i in range(n)]
     ai._groq_clients = [{"client": c, "label": c.label} for c in clients]
+    ai._initialised = True        # these are the keys; init_ai would go looking for real ones
+    ai._resting.clear()
     ai._client_index = 0
     ai.groq_models = ["model-a", "model-b"]
     ai.current_model_index = 0
@@ -171,7 +173,8 @@ check("stats recorded for snapchat", db.get_leaderboard_snap()[0]["user_id"] == 
 c[0].reply = "I am sorry, but I cannot help with that"
 msg2 = engine.IncomingMessage(platform="snapchat", user_id="u2", user_name="Bob",
                               channel_id="u2", content="tell me something interesting please")
-check("refusal returns None", run(engine.generate_ai_response(msg2)) is None)
+_fallback = run(engine.generate_ai_response(msg2))
+check("refusal is replaced by a short reaction", _fallback in engine.REFUSAL_FALLBACKS, repr(_fallback))
 
 print("\n== engine: public vs private prompt ==")
 c = install(1)

@@ -116,9 +116,11 @@ jobs:
             dist/LLMSelfbotSetup.exe
             dist/LLMSelfbot-portable.exe
 
-  # Linux, ARM and macOS build the same headless binary: no native window, it
-  # serves the control panel and you open that in a browser. One matrix instead
-  # of three copies of the same twelve steps.
+  # Linux (x86_64 and ARM64, a Raspberry Pi say) and macOS build the same
+  # headless binary: no native window, it serves the control panel and you open
+  # that in a browser. One matrix instead of three copies of the same twelve
+  # steps. The file names are the ones app/utils/device.py looks for when the
+  # app updates itself, so the two must not drift apart.
   headless:
     name: ${{ matrix.name }}
     strategy:
@@ -211,3 +213,195 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: dist/${{ matrix.asset }}
+
+  # The phone apps (mobile/): the bot and its panel running on the phone
+  # itself, built with BeeWare's Briefcase around the same app/. mobile/stage.py
+  # lays the project out and makes the few packages nobody publishes for
+  # phones; see it for why each is needed.
+  android:
+    name: android
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 3.13: curl_cffi, which Discord's library needs, publishes its Android
+      # build for 3.13, and Briefcase builds for the Python it runs on.
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: webui/package-lock.json
+
+      - name: Build web UI
+        working-directory: webui
+        run: |
+          npm ci
+          npm run build
+
+      # The tag decides the version, as for the desktop builds.
+      - name: Version from the tag
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          case "$version" in
+            [0-9]*.[0-9]*) ;;
+            *) version="0.0.0-dev" ;;
+          esac
+          echo "APP_VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Lay out the app
+        run: |
+          python -m pip install --upgrade pip "briefcase==0.4.5" pillow
+          python mobile/stage.py --version "$APP_VERSION" --android
+
+      # The runner's own Android SDK, licences already accepted.
+      - name: Build the APK
+        working-directory: build/mobile
+        run: |
+          export ANDROID_HOME="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          briefcase create android --no-input
+          briefcase build android --no-input
+          briefcase package android --no-input -p apk
+
+      # Android only installs a new version over the old one if both carry the
+      # same signature, so releases should be signed with one key kept as a
+      # secret (README, "Signing the Android app"). Without it the build still
+      # comes out, signed with a key made for this build alone.
+      - name: Sign it
+        env:
+          KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          sdk="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          tools=$(ls -d "$sdk"/build-tools/* | sort -V | tail -1)
+          unsigned=$(ls build/mobile/dist/*.apk | head -1)
+          "$tools/zipalign" -f -p 4 "$unsigned" aligned.apk
+          if [ -n "$KEYSTORE" ]; then
+            echo "$KEYSTORE" | base64 -d > release.keystore
+            "$tools/apksigner" sign --ks release.keystore --ks-pass env:KEYSTORE_PASSWORD \
+              --ks-key-alias "${KEY_ALIAS:-llmselfbot}" --out LLMSelfbot-android.apk aligned.apk
+            rm release.keystore
+          else
+            echo "::warning::No ANDROID_KEYSTORE_BASE64 secret, so this APK is signed with a key made for this build: installing a later one will need this one removed first. See the README."
+            keytool -genkeypair -keystore throwaway.keystore -storepass android -keypass android \
+              -alias llmselfbot -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=LLMSelfbot"
+            "$tools/apksigner" sign --ks throwaway.keystore --ks-pass pass:android \
+              --ks-key-alias llmselfbot --out LLMSelfbot-android.apk aligned.apk
+          fi
+          "$tools/apksigner" verify LLMSelfbot-android.apk
+          # Into the log, not into the release. See the Windows job.
+          sha256sum LLMSelfbot-android.apk
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: LLMSelfbot-android
+          path: LLMSelfbot-android.apk
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: LLMSelfbot-android.apk
+
+  # The iPhone app, unsigned: it is installed with AltStore or SideStore,
+  # which sign it for the phone with the person's own Apple ID. Built on a
+  # Mac because only Xcode builds for iOS.
+  ios:
+    name: ios
+    runs-on: macos-latest
+    # The newest of the builds, and one no computer here could try first: a
+    # failure in it is shown, but does not hold back the rest of the release.
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: webui/package-lock.json
+
+      - name: Build web UI
+        working-directory: webui
+        run: |
+          npm ci
+          npm run build
+
+      - name: Version from the tag
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          case "$version" in
+            [0-9]*.[0-9]*) ;;
+            *) version="0.0.0-dev" ;;
+          esac
+          echo "APP_VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Lay out the app
+        run: |
+          python -m pip install --upgrade pip "briefcase==0.4.5" pillow
+          python mobile/stage.py --version "$APP_VERSION" --ios
+
+      - name: Make the Xcode project
+        working-directory: build/mobile
+        run: briefcase create iOS --no-input
+
+      # For a phone, not the simulator, and not signed: there is no Apple
+      # certificate here. Python's own libraries are still signed as they go
+      # in (its build script always signs them), so they are given "-", an
+      # ad-hoc signature that needs no certificate; the installer re-signs
+      # the whole app for the phone anyway.
+      - name: Build for iPhone
+        run: |
+          xcodebuild \
+            -project "build/mobile/build/llmselfbot/ios/xcode/LLMSelfbot.xcodeproj" \
+            -scheme LLMSelfbot -configuration Release \
+            -sdk iphoneos -destination "generic/platform=iOS" \
+            -derivedDataPath "$RUNNER_TEMP/dd" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            EXPANDED_CODE_SIGN_IDENTITY="-" \
+            build
+
+      # An IPA is the app in a folder called Payload, zipped.
+      - name: Make the IPA
+        run: |
+          app=$(find "$RUNNER_TEMP/dd/Build/Products/Release-iphoneos" -maxdepth 1 -name "*.app" | head -1)
+          test -n "$app"
+          mkdir -p ipa/Payload
+          cp -R "$app" ipa/Payload/
+          (cd ipa && zip -qry ../LLMSelfbot-ios.ipa Payload)
+          # AltStore and SideStore keep an app up to date from a source: this
+          # one lists this release's IPA, and the README says how to add it.
+          python mobile/altstore.py --version "$APP_VERSION" --ipa LLMSelfbot-ios.ipa \
+            --tag "$GITHUB_REF_NAME" > altstore.json
+          shasum -a 256 LLMSelfbot-ios.ipa
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: LLMSelfbot-ios
+          path: |
+            LLMSelfbot-ios.ipa
+            altstore.json
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            LLMSelfbot-ios.ipa
+            altstore.json

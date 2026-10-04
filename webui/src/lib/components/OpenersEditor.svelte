@@ -13,10 +13,14 @@
    */
   import { onMount } from "svelte";
   import { api } from "../api";
+  import { usePersona } from "../personas/context";
   import { toast } from "../stores";
   import Button from "./Button.svelte";
   import Icon from "./Icon.svelte";
   import ListEditor from "./ListEditor.svelte";
+
+  /** The persona this edits (the page gives it): its own settings, on everyone's. "" is everyone's. */
+  const persona = usePersona();
 
   /** Codes worth offering by name; anything else can still be typed. */
   const KNOWN: Record<string, string> = {
@@ -41,7 +45,7 @@
 
   async function load() {
     try {
-      const cfg = await api.config();
+      const cfg = await api.config(persona);
       const lr = (cfg?.bot?.late_reply ?? {}) as any;
       // Read the old shape too, so a config written before this still opens.
       const legacy: Record<string, string[]> = {};
@@ -78,8 +82,8 @@
   async function save() {
     saving = true;
     try {
-      await api.configField("bot.late_reply.openers", openers);
-      await api.configField("bot.late_reply.style", style);
+      await api.configField("bot.late_reply.openers", openers, { persona });
+      await api.configField("bot.late_reply.style", style, { persona });
       stored = JSON.stringify({ openers, style });
       toast("Saved.", "ok");
     } catch (e: any) {
@@ -126,6 +130,7 @@
           value={openers[code]}
           onchange={(list) => setList(code, list)}
           placeholder="Add an opener"
+          width="w-full"
         />
       </div>
     {:else}

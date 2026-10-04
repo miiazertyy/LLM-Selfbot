@@ -9,11 +9,13 @@
    * Secrets arrive masked. Leaving a masked value alone sends nothing for that
    * key, so it cannot be clobbered; typing over it replaces it.
    */
+  import { autowidth } from "../autowidth";
   import { onMount } from "svelte";
   import { api } from "../api";
   import { toast } from "../stores";
   import Button from "./Button.svelte";
   import Icon from "./Icon.svelte";
+  import FootNote from "./FootNote.svelte";
   import KeyList from "./KeyList.svelte";
 
   /**
@@ -256,15 +258,15 @@
     <h3 class="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-faint">Add a variable</h3>
     <div class="flex flex-col gap-2 sm:flex-row">
       <input bind:value={newKey} placeholder="MY_VARIABLE" spellcheck="false"
-             class="field font-mono uppercase sm:w-56" />
+             class="field font-mono uppercase max-sm:!w-full sm:max-w-[45%] sm:shrink-0" use:autowidth={{ value: newKey }} />
       <input bind:value={newValue} placeholder="value" spellcheck="false" class="field font-mono" />
       <Button size="sm" onclick={addVar} disabled={!newKey.trim()}>Add</Button>
     </div>
   </div>
   {/if}
 
-  <p class="mt-4 text-[11px] text-faint">
-    Stored in config/.env on this machine. Most values are read when an account
+  <FootNote class="mt-4" icon="key">
+    Stored in <code>config/.env</code> on this computer. Most values are read when an account
     starts, so restart the affected account after changing one.
-  </p>
+  </FootNote>
 {/if}

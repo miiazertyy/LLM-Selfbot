@@ -1,16 +1,4 @@
-"""
-app/cli.py - argv parsing and role dispatch.
-
-This is the single place that decides what the process does. Both entry points
-route through it:
-
-  main.py           source checkouts  (python main.py ...)
-  app/desktop.py    the frozen exe    (LLMSelfbot.exe ...)
-
-That matters because the supervisor spawns workers by re-invoking its own
-executable with --role. If an entry point ignores argv, every "worker" becomes
-another supervisor and the process count explodes.
-"""
+"""app/cli.py - argv parsing and role dispatch; both entry points route through it, which matters because the supervisor spawns workers by re-invoking its own executable with --role, and an entry point that ignores argv turns every "worker" into another supervisor."""
 
 import argparse
 import os
@@ -23,12 +11,7 @@ ROLES = ("supervisor", "discord", "snapchat", "telegram", "updater")
 
 
 def ensure_std_streams():
-    """A windowed PyInstaller build (console=False) leaves sys.stdout/stderr as
-    None, so the first print() raises AttributeError. Give them a sink.
-
-    This lives here rather than in main.py because the frozen exe enters through
-    app/desktop.py and never executes main.py.
-    """
+    """A windowed PyInstaller build (console=False) leaves sys.stdout/stderr as None, so the first print() raises AttributeError; give them a sink. Lives here rather than in main.py because the frozen exe enters through app/desktop.py and never executes main.py."""
     for name in ("stdout", "stderr"):
         if getattr(sys, name, None) is None:
             try:
@@ -64,14 +47,19 @@ def build_parser() -> argparse.ArgumentParser:
 
 # ── Roles ────────────────────────────────────────────────────────────────────
 
+# Each runner is one account, and LLMSELFBOT_ACCOUNT says which, before anything is imported: the engine reads the
+# settings as it loads, and they are this account's persona's (app/utils/personas.py).
+
 def _run_discord_role(account: int):
     os.environ["DISCORD_ACCOUNT_INDEX"] = str(account)
+    os.environ["LLMSELFBOT_ACCOUNT"] = f"discord_{account}"
     from app.platforms import discord_runner
     discord_runner.run_discord_role(account)
 
 
 def _run_snapchat_role(account: int):
     os.environ["SNAP_ACCOUNT_INDEX"] = str(account)
+    os.environ["LLMSELFBOT_ACCOUNT"] = f"snapchat_{account}"
     from app.platforms.snapchat_bridge import run
     run()
 
@@ -82,11 +70,10 @@ def _run_telegram_role():
 
 
 def _run_updater_role():
-    """Download + stage the latest release, then swap and relaunch."""
-    from app.utils.paths import APP_DIR
-    sys.path.insert(0, str(APP_DIR / "scripts"))
-    import updater
-    updater.main()
+    """Update to the latest release from the command line: download this
+    device's file, put it in place, start it (app/core/update.py)."""
+    from app.core import update
+    print(f"[Updater] {update.run(wait=True)}", flush=True)
 
 
 # ── Supervisor ───────────────────────────────────────────────────────────────
@@ -95,29 +82,13 @@ _lock_handle = None     # module-level so the lock cannot be dropped by GC
 
 
 def acquire_single_instance():
-    """Take the cross-process lock, or exit if another instance holds it.
-
-    This is the backstop against runaway process spawning: only one supervisor
-    can ever hold it, so a bad --role dispatch cannot multiply.
-
-    The handle is stored module-side as well as returned. An OS file lock lives
-    only as long as its handle, so a caller that ignored the return value would
-    otherwise have the lock silently released the moment it was collected.
-    """
+    """Take the cross-process lock, or exit if another instance holds it - the backstop against runaway process spawning: only one supervisor can ever hold it, so a bad --role dispatch cannot multiply. The handle is stored module-side as well as returned, since an OS file lock lives only as long as its handle, and a caller that ignored the return value would otherwise have the lock silently released the moment it was collected."""
     global _lock_handle
     if _lock_handle is not None:
         return _lock_handle
     lock_path = os.path.join(tempfile.gettempdir(), "llmselfbot.lock")
 
-    # A restart launches the replacement while the old process is still serving,
-    # and the old process going away is the handover: it drops this lock and its
-    # port at the same moment. So for that one case the lock is worth waiting
-    # for. Everything else still fails immediately, which is what keeps a bad
-    # role dispatch from multiplying.
-    #
-    # Popped rather than read: the workers this process goes on to spawn inherit
-    # its environment, and a flag left set would make some later second instance
-    # wait twenty seconds instead of saying so straight away.
+    # A restart launches the replacement while the old process is still serving, and the old one going away is the handover: it drops this lock and its port at the same moment. So that one case is worth waiting for; everything else still fails immediately, which is what keeps a bad role dispatch from multiplying. Popped rather than read: the workers this process goes on to spawn inherit its environment, and a flag left set would make some later second instance wait twenty seconds instead of saying so straight away.
     deadline = time.time() + (20.0 if os.environ.pop("LLMSELFBOT_RESTART", "") else 0.0)
 
     while True:
@@ -153,12 +124,15 @@ def run_supervisor(port=None, no_web=False):
     from app.web.server import run_server
     from app.web.supervisor import Supervisor
 
-    # A restart hands the port over, so the panel that asked for it reconnects
-    # to the address it is already on rather than to nothing.
+    # A restart hands the port over, so the panel that asked for it reconnects to the address it is already on rather than to nothing.
     if port is None:
         port = int(os.environ.get("SELFBOT_PORT", "") or 0) or None
 
     lock_file = acquire_single_instance()
+    # A restore chosen in the panel lands now, before any account opens its files.
+    from app.utils.paths import apply_pending_restore
+    if apply_pending_restore():
+        load_env()
     supervisor = Supervisor(port=port or 8787, no_web=no_web)
     try:
         supervisor.start_all()
@@ -212,20 +186,15 @@ def bootstrap():
     """Prepare the process: data dir, credentials, PATH for bundled tools."""
     from app.utils.paths import seed_data_dir
     from app.utils import binaries
+    from app.core import update
+    update.clean_leftovers()   # the exe the last update stepped aside from
     seed_data_dir()
     load_env()
     binaries.ensure_path()   # DATA_DIR/bin (ffmpeg), inherited by child roles
 
 
 def load_env():
-    """Load config/.env into this process.
-
-    The runners each did this for themselves, but the supervisor never did - so
-    it decided how many accounts to start from an environment that had no
-    tokens in it. That was survivable only because the account counter used to
-    floor at 1; with the counter reporting the truth, the supervisor would
-    otherwise start nothing at all.
-    """
+    """Load config/.env into this process. The runners each did this for themselves, but the supervisor never did, so it decided how many accounts to start from an environment that had no tokens in it; that was survivable only because the account counter used to floor at 1, and with the counter reporting the truth the supervisor would otherwise start nothing at all."""
     try:
         from dotenv import load_dotenv
         from app.utils.helpers import get_env_path
@@ -235,11 +204,7 @@ def load_env():
 
 
 def run(argv=None) -> bool:
-    """Dispatch on argv.
-
-    Returns True when a role/mode was handled, False when the caller should
-    fall through to its own default (the desktop window).
-    """
+    """Dispatch on argv. Returns True when a role/mode was handled, False when the caller should fall through to its own default (the desktop window)."""
     args = build_parser().parse_args(argv)
     bootstrap()
 

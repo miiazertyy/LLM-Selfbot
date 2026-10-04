@@ -4,9 +4,7 @@ import time
 from fastapi import APIRouter, HTTPException, Request
 
 from app.utils.paths import DATA_DIR
-# connect_raw() instead of a bare sqlite3.connect(): a plain connection sets
-# no busy_timeout, so these queries failed with "database is locked" rather
-# than waiting whenever a bot runner happened to be writing.
+# connect_raw() instead of a bare sqlite3.connect(): a plain connection sets no busy_timeout, so these queries failed with "database is locked" rather than waiting whenever a bot runner happened to be writing.
 from app.utils.db import connect_raw
 
 router = APIRouter(tags=["stats"])
@@ -40,7 +38,10 @@ async def leaderboard(request: Request, target: str = "", filter: str = ""):
             unit_names = {"h": "hour", "d": "day", "w": "week", "m": "month"}
             n = int(amount) if amount == int(amount) else amount
             filter_label = f"last {n} {unit_names[unit]}{'s' if n != 1 else ''}"
-    rows = get_leaderboard(limit=50, since=since)
+    # On a thread: counting the message log while a bot runner writes to it waited on the lock, with every page of
+    # the panel waiting too.
+    import asyncio
+    rows = await asyncio.to_thread(get_leaderboard, limit=50, since=since)
     return {
         "rows": [{"username": r["username"], "message_count": r["message_count"],
                   "first_seen_fmt": datetime.fromtimestamp(r["first_seen"]).strftime("%d %b %Y")}
@@ -51,14 +52,7 @@ async def leaderboard(request: Request, target: str = "", filter: str = ""):
 
 @router.get("/api/stats/overview")
 def overview(request: Request):
-    """Everything the dashboard draws, on one connection.
-
-    The dashboard polls this every five seconds. It used to open two
-    connections and run three separate "COUNT(*) WHERE ts >= ?" scans; those
-    are now one pass, and idx_message_log_ts means they use an index instead
-    of walking the whole table. Plain def so FastAPI runs it on its threadpool
-    rather than blocking the event loop on sqlite.
-    """
+    """Everything the dashboard draws, on one connection. The dashboard polls this every five seconds; it used to open two connections and run three separate "COUNT(*) WHERE ts >= ?" scans, and those are now one pass, with idx_message_log_ts meaning they use an index instead of walking the whole table. Plain def so FastAPI runs it on its threadpool rather than blocking the event loop on sqlite."""
     conn = connect_raw()
     try:
         try:
@@ -66,8 +60,7 @@ def overview(request: Request):
             total_snap = conn.execute("SELECT COUNT(*) FROM message_log_snap").fetchone()[0]
             day = 86400
             now = time.time()
-            # One scan of the last 30 days, bucketed in SQL, instead of three
-            # separate counts over overlapping ranges.
+            # One scan of the last 30 days, bucketed in SQL, instead of three separate counts over overlapping ranges.
             row = conn.execute(
                 "SELECT "
                 "  SUM(CASE WHEN ts >= ? THEN 1 ELSE 0 END), "
@@ -92,12 +85,7 @@ def overview(request: Request):
 
 
 def _extra_overview(conn) -> dict:
-    """The rest of what the dashboard draws: an hourly curve, who is most
-    active, and how many distinct people have been spoken to.
-
-    Takes the caller's connection; it used to open a second one for the same
-    request.
-    """
+    """The rest of what the dashboard draws: an hourly curve, who is most active, and how many distinct people have been spoken to. Takes the caller's connection; it used to open a second one for the same request."""
     import time as _t
     out = {"hourly": [], "top": [], "people": 0, "people_7d": 0, "snap_series": []}
     now = _t.time()
@@ -112,9 +100,7 @@ def _extra_overview(conn) -> dict:
                          for i in range(25)]
 
         out["top"] = [
-            # The id rides along as a string: a Discord snowflake is 19
-            # digits and JSON numbers lose precision past 2^53, which was
-            # corrupting ids into ones that do not exist.
+            # The id rides along as a string: a Discord snowflake is 19 digits and JSON numbers lose precision past 2^53, which was corrupting ids into ones that do not exist.
             {"user_id": str(uid), "username": u or str(uid), "count": n}
             for uid, u, n in conn.execute(
                 "SELECT user_id, username, COUNT(*) AS n FROM message_log "
@@ -138,15 +124,116 @@ def _extra_overview(conn) -> dict:
     return out
 
 
-# ── Drill-down ───────────────────────────────────────────────────────────────
-# The dashboard tiles are a number each, which answers "how many" and nothing
-# else. Clicking one opens this: the same figure broken down by time of day,
-# day of week, platform and person, against the window before it.
-#
-# One connection, one pass per shape, all of it indexed on ts. The window is
-# capped because this is a local sqlite file on someone's laptop, not a
-# warehouse - 365 days of an active account is still a fast scan, more is not
-# a question anyone is asking of a chat bot.
+# ── Per account ──────────────────────────────────────────────────────────────
+@router.get("/api/accounts/activity")
+def accounts_activity(request: Request, days: int = 7):
+    """What each account has been doing, for its card on the Accounts page. Per account: replies per day for the last `days` calendar days (today last), today and the last seven days, the people it answered most this week with their pictures, and the last reply it sent. Days are this computer's calendar days, not UTC ones: the card labels its bars Mon, Tue ... Today, and "today" has to be the same day the clock on the wall says, UTC buckets moved a reply sent at 1am into yesterday. Replies only carry the account that sent them from this version on, older rows have none: on a platform with a single account they can only be that account's, so they are counted for it; with several there is no telling which one sent them, so they are left out rather than guessed at."""
+    from datetime import date, datetime, timedelta
+    from app.core import ipc
+    from app.utils.db import ensure_account_columns
+
+    days = max(7, min(int(days or 7), 90))
+    now = time.time()
+    today = date.today()
+    dates = [(today - timedelta(days=days - 1 - i)).isoformat() for i in range(days)]
+    index = {d: i for i, d in enumerate(dates)}
+    since = datetime.combine(today - timedelta(days=days - 1), datetime.min.time()).timestamp()
+    week_from = datetime.combine(today - timedelta(days=6), datetime.min.time()).timestamp()
+
+    targets = ipc.discover_targets()
+    per_platform: dict = {}
+    for meta in targets.values():
+        per_platform[meta["platform"]] = per_platform.get(meta["platform"], 0) + 1
+
+    out: dict = {}
+    for web_id, meta in targets.items():
+        out[web_id] = {"today": 0, "week": 0, "people_week": 0,
+                       "series": [0] * days, "top": [], "last": None}
+
+    conn = connect_raw()
+    try:
+        try:
+            ensure_account_columns(conn)
+        except sqlite3.OperationalError:
+            pass
+        for platform, table, id_col in (("discord", "message_log", "user_id"),
+                                        ("snapchat", "message_log_snap", "chat_id")):
+            if not per_platform.get(platform):
+                continue
+            # What an untagged row counts as: account 1 when that is the only account there is, otherwise nobody (-1 matches no account).
+            legacy = 1 if per_platform[platform] == 1 else -1
+            acct = "COALESCE(account, ?)"
+
+            def slot_for(n):
+                return out.get(f"{platform}_{n}")
+
+            try:
+                for a, d, n in conn.execute(
+                        f"SELECT {acct} AS a, strftime('%Y-%m-%d', ts, 'unixepoch', 'localtime') AS d, "
+                        f"COUNT(*) FROM {table} WHERE ts >= ? GROUP BY a, d", (legacy, since)).fetchall():
+                    slot = slot_for(a)
+                    if slot and d in index:
+                        slot["series"][index[d]] = n
+
+                for a, people in conn.execute(
+                        f"SELECT {acct} AS a, COUNT(DISTINCT {id_col}) FROM {table} WHERE ts >= ? GROUP BY a",
+                        (legacy, week_from)).fetchall():
+                    slot = slot_for(a)
+                    if slot:
+                        slot["people_week"] = people or 0
+
+                # Ranked in SQL, cut to four per account here: a window function would do it in one go but needs a newer sqlite than some Python builds ship.
+                for a, uid, uname, n in conn.execute(
+                        f"SELECT {acct} AS a, {id_col}, username, COUNT(*) AS n FROM {table} "
+                        f"WHERE ts >= ? GROUP BY a, {id_col} ORDER BY a, n DESC",
+                        (legacy, week_from)).fetchall():
+                    slot = slot_for(a)
+                    if slot and len(slot["top"]) < 4:
+                        # Ids as strings: a snowflake is 19 digits, past what a JSON number holds exactly.
+                        slot["top"].append({"id": str(uid), "name": uname or str(uid), "count": n,
+                                            "avatar": ""})
+
+                # SQLite returns the other columns from the row that holds the MAX, which is exactly "the last reply". Bounded, so it walks the ts index rather than the whole table.
+                for a, uid, uname, ts in conn.execute(
+                        f"SELECT {acct} AS a, {id_col}, username, MAX(ts) FROM {table} "
+                        f"WHERE ts >= ? GROUP BY a", (legacy, now - 90 * 86400)).fetchall():
+                    slot = slot_for(a)
+                    if slot and ts:
+                        slot["last"] = {"id": str(uid), "name": uname or str(uid), "ts": ts}
+            except sqlite3.OperationalError:
+                continue
+
+        # A Snapchat account's people, from what its runner saved off the chat list.
+        from app.utils import snappeople
+        for k, v in out.items():
+            if k.startswith("snapchat_"):
+                n = int(k.split("_", 1)[1] or 1)
+                for t in v["top"]:
+                    t["avatar"] = snappeople.avatar_url(n, t["id"])
+        # Pictures for the people each Discord account talks to most, from the local profile cache: a face is how you recognise someone at a glance.
+        wanted = {t["id"] for k, v in out.items() if k.startswith("discord_") for t in v["top"]}
+        if wanted:
+            try:
+                marks = ",".join("?" * len(wanted))
+                pics = {str(uid): (avatar or "") for uid, avatar in conn.execute(
+                    f"SELECT user_id, avatar FROM user_profiles WHERE user_id IN ({marks})",
+                    [int(i) for i in wanted if i.isdigit()]).fetchall()}
+                for k, v in out.items():
+                    if k.startswith("discord_"):
+                        for t in v["top"]:
+                            t["avatar"] = pics.get(t["id"], "")
+            except (sqlite3.OperationalError, ValueError):
+                pass
+    finally:
+        conn.close()
+
+    for slot in out.values():
+        slot["today"] = slot["series"][-1]
+        slot["week"] = sum(slot["series"][-7:])
+    return {"days": days, "dates": dates, "generated_at": now, "accounts": out}
+
+
+# ── Drill-down ── the dashboard tiles are a number each, which answers "how many" and nothing else. Clicking one opens this: the same figure broken down by time of day, day of week, platform and person, against the window before it. One connection, one pass per shape, all of it indexed on ts. The window is capped because this is a local sqlite file on someone's laptop, not a warehouse: 365 days of an active account is still a fast scan, more is not a question anyone is asking of a chat bot.
 _MAX_WINDOW_DAYS = 365
 
 
@@ -194,10 +281,7 @@ def stats_detail(request: Request, days: int = 30):
         out["previous"] = prev_n
         out["platform"] = {"discord": discord_n, "snapchat": snap_n}
 
-        # ── Per day, per platform. Faceted in the UI rather than drawn as two
-        # coloured series: the app's two accent colours fail a colour-vision
-        # separation check in four of its six themes, so one hue per chart is
-        # the only encoding that holds up whatever theme is picked.
+        # ── Per day, per platform ── faceted in the UI rather than drawn as two coloured series: the app's two accent colours fail a colour-vision separation check in four of its six themes, so one hue per chart is the only encoding that holds up whatever theme is picked.
         d_days = _bucket(conn, "message_log", "user_id", since, "CAST(ts/86400 AS INT)")
         s_days = _bucket(conn, "message_log_snap", "chat_id", since, "CAST(ts/86400 AS INT)")
         first_day = int(since // day)
@@ -208,8 +292,7 @@ def stats_detail(request: Request, days: int = 30):
             for i in range(days + 1)
         ]
 
-        # ── Shape of a day, and of a week ────────────────────────────────────
-        # strftime on a unix ts: '%H' is 00-23 local-to-UTC, '%w' is 0=Sunday.
+        # ── Shape of a day, and of a week ── strftime on a unix ts: '%H' is 00-23 local-to-UTC, '%w' is 0=Sunday.
         d_hour = _bucket(conn, "message_log", "user_id", since,
                          "CAST(strftime('%H', ts, 'unixepoch', 'localtime') AS INT)")
         s_hour = _bucket(conn, "message_log_snap", "chat_id", since,
@@ -231,8 +314,7 @@ def stats_detail(request: Request, days: int = 30):
                     "SELECT user_id, username, COUNT(*) AS n FROM message_log "
                     "WHERE ts >= ? GROUP BY user_id ORDER BY n DESC LIMIT 12",
                     (since,)).fetchall():
-                # Ids go out as strings: a snowflake is 19 digits and a JSON
-                # number loses precision past 2**53.
+                # Ids go out as strings: a snowflake is 19 digits and a JSON number loses precision past 2**53.
                 top.append({"id": str(uid), "name": uname or str(uid),
                             "count": n, "platform": "discord"})
         except sqlite3.OperationalError:
@@ -248,6 +330,24 @@ def stats_detail(request: Request, days: int = 30):
             pass
         top.sort(key=lambda r: r["count"], reverse=True)
         out["top"] = top[:12]
+        # Their pictures, from the local profile cache, for the widgets that list people: a face is how anyone is recognised at a glance.
+        wanted = [int(t["id"]) for t in out["top"] if t["platform"] == "discord" and t["id"].isdigit()]
+        pics = {}
+        if wanted:
+            try:
+                marks = ",".join("?" * len(wanted))
+                pics = {str(uid): avatar or "" for uid, avatar in conn.execute(
+                    f"SELECT user_id, avatar FROM user_profiles WHERE user_id IN ({marks})", wanted).fetchall()}
+            except sqlite3.OperationalError:
+                pass
+        from app.core import ipc as _ipc
+        from app.utils import snappeople
+        snap_n = [int(m["account"]) for m in _ipc.discover_targets().values() if m["platform"] == "snapchat"] or [1]
+        for t in out["top"]:
+            if t["platform"] == "discord":
+                t["avatar"] = pics.get(t["id"], "")
+            else:
+                t["avatar"] = next((u for u in (snappeople.avatar_url(n, t["id"]) for n in snap_n) if u), "")
 
         # ── People ───────────────────────────────────────────────────────────
         def _scalar(sql, args=()):
@@ -267,8 +367,7 @@ def stats_detail(request: Request, days: int = 30):
                 (prev_since, since)),
             "all_time": _scalar("SELECT COUNT(DISTINCT user_id) FROM message_log")
             + _scalar("SELECT COUNT(DISTINCT chat_id) FROM message_log_snap"),
-            # first_seen is when the row was created, so this really is "people
-            # who had never been spoken to before this window".
+            # first_seen is when the row was created, so this really is "people who had never been spoken to before this window".
             "new": _scalar("SELECT COUNT(*) FROM user_stats WHERE first_seen >= ?", (since,))
             + _scalar("SELECT COUNT(*) FROM user_stats_snap WHERE first_seen >= ?", (since,)),
         }

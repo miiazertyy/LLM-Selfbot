@@ -5,6 +5,8 @@ from discord.ext import commands
 from app.utils.ai import generate_response
 from app.utils.split_response import split_response
 from app.utils.error_notifications import webhook_log, notify_telegram_error
+from app.core.engine import is_refusal, refusal_fallbacks
+from app.utils.helpers import load_instructions
 
 
 class General(commands.Cog):
@@ -115,7 +117,7 @@ class General(commands.Cog):
             message_history = message_history[-200:]
 
         instructions = (
-            self.bot.instructions +
+            load_instructions() +
             f"\n\nSomeone asked you to give your honest read on {user.name} based on their messages. "
             "Stay in character. Give your real unfiltered opinion like you would to a friend. "
             "Be casual, funny, and direct. Roast them a bit but also be real about what you actually see. "
@@ -135,6 +137,9 @@ class General(commands.Cog):
                 if not response:
                     await temp.edit(content="Couldn't generate a response.", delete_after=15)
                     return
+                if is_refusal(response):
+                    import random as _rnd
+                    response = _rnd.choice(refusal_fallbacks())
                 chunks = split_response(response)
                 await temp.delete()
                 for chunk in chunks:

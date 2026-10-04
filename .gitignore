@@ -14,6 +14,8 @@
 # of its state inside its own folder, so it holds exactly what /config/ holds.
 /portable/
 /webview/
+# Model files the app downloads for llama.cpp (app/utils/localai.py app_models_dir): gigabytes each.
+/models/
 *.flag
 **/*-cookies.json
 

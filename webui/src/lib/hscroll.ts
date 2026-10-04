@@ -26,6 +26,7 @@
  * Markup contract: the node must sit inside an element with class "hscroll",
  * which is what the bar is positioned against.
  */
+import { play } from "./uisound";
 
 type Options = {
   /** How long the bar stays up after the last scroll, in ms. */
@@ -130,6 +131,7 @@ export function hscroll(node: HTMLElement, options: Options = {}) {
       moved = true;
       node.setPointerCapture?.(e.pointerId);
       host!.classList.add("is-dragging");
+      play("grab");
     }
     if (moved) node.scrollLeft = startScroll - dx;
   }
@@ -137,6 +139,7 @@ export function hscroll(node: HTMLElement, options: Options = {}) {
   function onPointerUp(e: PointerEvent) {
     if (!dragging) return;
     dragging = false;
+    if (moved) play("release");
     node.releasePointerCapture?.(e.pointerId);
     host!.classList.remove("is-dragging");
   }
@@ -164,6 +167,7 @@ export function hscroll(node: HTMLElement, options: Options = {}) {
   function onBarDown(e: PointerEvent) {
     if (!scrollable || e.button !== 0) return;
     barDragging = true;
+    play("grab");
     bar.setPointerCapture?.(e.pointerId);
     host!.classList.add("is-dragging");
     seek(e.clientX);
@@ -178,6 +182,7 @@ export function hscroll(node: HTMLElement, options: Options = {}) {
   function onBarUp(e: PointerEvent) {
     if (!barDragging) return;
     barDragging = false;
+    play("release");
     bar.releasePointerCapture?.(e.pointerId);
     host!.classList.remove("is-dragging");
   }
@@ -197,8 +202,34 @@ export function hscroll(node: HTMLElement, options: Options = {}) {
   // The strip changes width when the window does, and its contents change when
   // you switch tabs, so both are watched rather than measured once.
   const ro = new ResizeObserver(schedule);
-  ro.observe(node);
-  for (const child of Array.from(node.children)) ro.observe(child);
+  function watch() {
+    ro.disconnect();
+    ro.observe(node);
+    for (const child of Array.from(node.children)) ro.observe(child);
+  }
+  watch();
+
+  // Switching tabs swaps every button in the subtab strip for new ones. Only
+  // the buttons that existed when the page opened were being watched, and the
+  // strip itself keeps its width, so nothing re-measured it: if the first tab's
+  // subtabs fitted, the bar decided there was nothing to scroll and never came
+  // back for a tab whose subtabs did not.
+  const mo = new MutationObserver(() => {
+    watch();
+    schedule();
+    // New contents: bring the selected one into view, else start at the left.
+    requestAnimationFrame(() => {
+      const active = node.querySelector<HTMLElement>('[aria-selected="true"], .is-active');
+      if (!active) {
+        node.scrollLeft = 0;
+        return;
+      }
+      const a = active.getBoundingClientRect();
+      const n = node.getBoundingClientRect();
+      if (a.left < n.left || a.right > n.right) node.scrollLeft += a.left - n.left - 12;
+    });
+  });
+  mo.observe(node, { childList: true });
 
   measure();
 
@@ -208,6 +239,7 @@ export function hscroll(node: HTMLElement, options: Options = {}) {
     },
     destroy() {
       ro.disconnect();
+      mo.disconnect();
       if (frame) cancelAnimationFrame(frame);
       if (hideTimer !== null) clearTimeout(hideTimer);
       node.removeEventListener("scroll", onScroll);

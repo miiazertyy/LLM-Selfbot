@@ -9,6 +9,7 @@
    * The runner has to be running for any of this to work; a stopped account
    * simply times out, which is reported as such.
    */
+  import { autowidth } from "../autowidth";
   import { api } from "../api";
   import { toast } from "../stores";
   import Button from "./Button.svelte";
@@ -79,7 +80,7 @@
     <div class="mb-1.5 text-[12px] font-medium text-ink">Custom status</div>
     <div class="flex gap-2">
       <input bind:value={emoji} placeholder="🙂" aria-label="Status emoji"
-             class="field w-14 shrink-0 text-center" />
+             class="field shrink-0 text-center" use:autowidth={{ value: emoji }} />
       <input bind:value={statusText} placeholder="What's happening" class="field min-w-0 flex-1" />
     </div>
     <div class="mt-2 flex flex-wrap items-center gap-2">

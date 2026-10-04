@@ -1,30 +1,4 @@
-"""
-telegram_controller.py - External Telegram controller for the LLMSelfbot.
-
-SETUP:
-  1. @BotFather → /newbot → copy token
-  2. Get your Telegram user ID from @userinfobot
-  3. Add to config/.env:  TELEGRAM_BOT_TOKEN / TELEGRAM_OWNER_ID
-  4. pip install python-telegram-bot
-  5. Run: python app/telegram_bot/telegram_controller.py  (or scripts\run.bat / run.sh, which auto-start it)
-
-WHY TELEGRAM: running commands on Discord creates selfbot-detectable activity.
-This controller keeps 100% of management off Discord.
-
-MULTI-ACCOUNT: /account <n> switches between Discord tokens (IPC files
-tg_commands_N.json), /account snap targets the Snapchat bridge.
-
-COMMANDS:
-  /account [n|snap]  /pause  /pauseuser <id>  /unpauseuser <id>  /wipe
-  /persona <id> [txt|off]  /analyse <id>  /reply check|all|<id>  /response <id>
-  /config [key val]  /prompt [text|clear]  /getconfig  /setconfig  /instructions
-  /getinstructions  /getdb  /reload  /mood [n]  /ignore <id>  /status
-  /setstatus [emoji] [text]  /bio [text]  /pfp <url>  /banner <url>
-  /toggledm  /togglegc  /toggleserver  /toggleactive <id>
-  /join <id/link>  /leave  /autojoin <id/link|off>
-  /imagels  /imagedownload <n>  /imagedelete <n>  /imagedesc <n> <text>  /imagedeleteall
-  /leaderboard [filter]  /addfriend <id>  /restart  /shutdown  /ping  /update [main]
-"""
+"""External Telegram controller for the LLMSelfbot, keeps all management off Discord. Setup: BotFather -> /newbot -> token, get your id from @userinfobot, put TELEGRAM_BOT_TOKEN / TELEGRAM_OWNER_ID in config/.env, pip install python-telegram-bot. Multi-account: /account <n> or /account snap. Commands: /account /pause /pauseuser /unpauseuser /wipe /persona /analyse /reply /response /config /prompt /getconfig /setconfig /instructions /getinstructions /getdb /reload /mood /ignore /status /setstatus /bio /pfp /banner /toggledm /togglegc /toggleserver /toggleactive /join /leave /autojoin /imagels /imagedownload /imagedelete /imagedesc /imagedeleteall /leaderboard /addfriend /restart /shutdown /ping /update."""
 
 import asyncio
 import functools
@@ -78,8 +52,7 @@ from telegram.constants import ParseMode
 
 from dotenv import load_dotenv
 
-# ── Paths ─────────────────────────────────────────────────────────────────────
-# telegram_controller.py lives in app/telegram_bot/, two levels below root.
+# paths: telegram_controller.py lives in app/telegram_bot/, two levels below root
 _BASE = Path(__file__).resolve().parent.parent.parent
 if str(_BASE) not in sys.path:
     sys.path.insert(0, str(_BASE))
@@ -100,6 +73,7 @@ _ENV_PATH = _CONFIG_DIR / ".env"
 _CONFIG_YAML = _CONFIG_DIR / "config.yaml"
 _INSTRUCTIONS_PATH = _CONFIG_DIR / "instructions.txt"
 _DB_PATH = _CONFIG_DIR / "bot_data.db"
+# Default's pictures; the commands use the selected account's persona's (_pictures_dir).
 _PICTURES_DIR = _CONFIG_DIR / "pictures"
 
 # Buffer for media-group (album) messages: media_group_id -> [(file, name, ts)]
@@ -108,10 +82,7 @@ _MEDIA_GROUP_WAIT = 1.2  # seconds to wait for all album messages to arrive
 
 load_dotenv(dotenv_path=_ENV_PATH, override=True)
 
-# Parsed defensively: config/.env is seeded from the template, whose
-# TELEGRAM_OWNER_ID is the literal text "your_telegram_user_id_here". A bare
-# int() on that raised ValueError before the friendly check below could run, so
-# the worker died with a traceback instead of a one-line explanation.
+# parsed defensively: the template seeds TELEGRAM_OWNER_ID with literal "your_telegram_user_id_here", and a bare int() on that raised ValueError before the friendly check below could run
 from app.utils.credentials import real, real_int
 
 TG_TOKEN = real("TELEGRAM_BOT_TOKEN")
@@ -191,8 +162,7 @@ def _snap_enabled() -> bool:
 
 
 def _coerce_user_id(account, raw):
-    """Coerce a user-id argument: Discord ids are ints; Snapchat ids are UUID
-    strings. Returns None if a Discord id can't be parsed."""
+    """Coerce a user-id argument: Discord ids are ints, Snapchat ids are UUID strings; None if it can't parse."""
     if _is_snap(account):
         return str(raw).strip()
     try:
@@ -202,8 +172,7 @@ def _coerce_user_id(account, raw):
 
 
 async def _block_on_snap(update: Update, account, feature: str = "This command") -> bool:
-    """Reply with a notice and return True if the target is Snapchat. Guards
-    Discord-only commands (voice, friend requests, profile edits, toggles)."""
+    """Warn and return True when the target is Snapchat, guarding Discord-only commands (voice, friends, profile, toggles)."""
     if _is_snap(account):
         await update.message.reply_text(
             f"⚠️ {feature} isn't available on Snapchat. "
@@ -240,20 +209,41 @@ def _load_config() -> dict:
         return yaml.safe_load(f)
 
 
-def _save_config(cfg: dict):
-    import yaml
-    with open(_CONFIG_YAML, "w", encoding="utf-8") as f:
-        yaml.dump(cfg, f, default_flow_style=False, allow_unicode=True)
+# ── The selected account's persona (app/utils/personas.py) ───────────────────
+# Each account speaks as a persona of its own, with its own text and pictures: the commands here work on the one the
+# selected account (/account) speaks as. The Application's bot_data, which holds the selection, is kept by main().
+_BOT_DATA: dict = {}
+
+
+def _selected_persona() -> str:
+    from app.core.ipc import web_id_for
+    from app.utils import personas
+    web = web_id_for(_BOT_DATA.get("account", 1))
+    return personas.persona_of(web) if web else personas.DEFAULT
+
+
+def _pictures_dir():
+    """The selected account's persona's pictures. Asking for them also makes the rest of this command work as that
+    persona (personas.scope): the database rows it reads and writes are that persona's."""
+    from app.utils import personas
+    pid = _selected_persona()
+    personas._scope.set(pid)
+    return personas.pictures_dir(pid)
+
+
+def _instructions_path():
+    from app.utils import personas
+    return personas.instructions_path(_selected_persona())
 
 
 def _load_instructions() -> str:
-    if _INSTRUCTIONS_PATH.exists():
-        return _INSTRUCTIONS_PATH.read_text(encoding="utf-8")
-    return ""
+    from app.utils import personas
+    return personas.read_text(_selected_persona())
 
 
 def _save_instructions(text: str):
-    _INSTRUCTIONS_PATH.write_text(text, encoding="utf-8")
+    from app.utils import personas
+    personas.save_text(_selected_persona(), text)
 
 
 def _fmt_bool(val) -> str:
@@ -404,7 +394,7 @@ async def cmd_config(update: Update, context: ContextTypes.DEFAULT_TYPE):
             status = bot_cfg.get("status") or {}
             notif = cfg.get("notifications") or {}
             wait_times = bot_cfg.get("batch_wait_times") or []
-            wt_str = "  ".join(f"{w['time']}s({w['weight']})" for w in wait_times)
+            wt_str = "  ".join(f"{w['time']}s" + (f"-{w['to']}s" if w.get('to') and w['to'] > w['time'] else "") + f"({w['weight']})" for w in wait_times)
             mood_list = ", ".join(mood.get("moods", {}).keys())
             nudge_hours = nudge.get("send_during_hours", [10, 22])
             models = bot_cfg.get("groq_models", [])
@@ -531,30 +521,35 @@ async def cmd_config(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return v
 
     try:
-        cfg = _load_config()
+        from app.utils import configstore
+        # As the selected account has it: its persona's own value where it has one, everyone's otherwise.
+        pid = _selected_persona()
+        cfg = configstore.effective(pid)
         keys_parts = key.split(".")
-        node = None
+        dotted = None
+        old_val = None
         for _section in ["bot", "notifications"]:
             _candidate = cfg.get(_section, {})
             _found = True
             for k in keys_parts[:-1]:
-                if k not in _candidate:
+                if not isinstance(_candidate, dict) or k not in _candidate:
                     _found = False
                     break
                 _candidate = _candidate[k]
-            if _found and keys_parts[-1] in _candidate:
-                node = _candidate
+            if _found and isinstance(_candidate, dict) and keys_parts[-1] in _candidate:
+                dotted = f"{_section}.{key}"
+                old_val = _candidate[keys_parts[-1]]
                 break
-        if node is None:
+        if dotted is None:
             await update.message.reply_text(f"❌ Key `{key}` not found in config.")
             return
-        final_key = keys_parts[-1]
-        old_val = node[final_key]
-        node[final_key] = coerce(value, old_val)
-        _save_config(cfg)
-        _send_command(account, "config_update", {"key": key, "value": node[final_key]})
+        new_val = coerce(value, old_val)
+        # Written where it comes from (configstore.set_effective), as ,config does on Discord: rewriting the whole
+        # file put one persona's change into everyone's, and a crash mid-write could leave it half written.
+        configstore.set_effective(dotted, new_val, persona=pid)
+        _send_command(account, "config_update", {"key": dotted})
         await update.message.reply_text(
-            f"{label}✅ `{key}` updated: `{old_val}` → `{node[final_key]}`",
+            f"{label}✅ `{key}` updated: `{old_val}` → `{new_val}`",
             parse_mode=ParseMode.MARKDOWN
         )
     except Exception as e:
@@ -646,11 +641,11 @@ async def cmd_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @owner_only
 async def cmd_getinstructions(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not _INSTRUCTIONS_PATH.exists():
+    if not _instructions_path().exists():
         await update.message.reply_text("❌ instructions.txt not found.")
         return
     await update.message.reply_document(
-        document=open(_INSTRUCTIONS_PATH, "rb"),
+        document=open(_instructions_path(), "rb"),
         filename="instructions.txt",
         caption="📝 instructions.txt"
     )
@@ -815,11 +810,7 @@ _bot_message_ids: list[int] = []   # track message IDs sent by the controller
 
 @owner_only
 async def cmd_clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Delete all messages in this chat (up to 200 recent).
-
-    Telegram bots can only delete their own messages in private chats, so we
-    delete bot messages + the user's /clear command, plus a 200-ID sweep.
-    """
+    """Delete everything recent in this chat: bots can only delete their own messages in private chats, so bot messages + the /clear command, plus a 200-id sweep."""
     chat_id = update.effective_chat.id
     clear_msg_id = update.message.message_id
 
@@ -829,8 +820,7 @@ async def cmd_clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         pass
 
-    # Full set of IDs to delete: tracked + a sweep of recent history (catches
-    # everything regardless of tracking)
+    # tracked ids + a sweep of recent history, catches everything regardless of tracking
     ids_to_delete = set(_bot_message_ids)
     _bot_message_ids.clear()
 
@@ -860,19 +850,18 @@ async def cmd_imagels(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
     try:
         from app.utils.db import get_picture_description
-        if not _PICTURES_DIR.exists():
+        if not _pictures_dir().exists():
             await update.message.reply_text("No pictures folder found.")
             return
-        exts = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
-        files = sorted([f for f in _PICTURES_DIR.iterdir() if f.suffix.lower() in exts])
+        exts = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".mp4"}
+        files = sorted([f for f in _pictures_dir().iterdir() if f.suffix.lower() in exts])
         if not files:
             await update.message.reply_text("No images saved yet.")
             return
 
         total = len(files)
 
-        # Store browse state in context so navigation callbacks can use it
-        # We'll send page 0 and attach ◀ ▶ buttons
+        # send page 0 with ◀ ▶ buttons, nav state rides in the callback data
         def _build_nav(index: int):
             buttons = []
             if index > 0:
@@ -890,6 +879,9 @@ async def cmd_imagels(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if len(caption) > 1024:
                 caption = caption[:1021] + "…"
             kb = _build_nav(idx)
+            if f.suffix.lower() == ".mp4":
+                target = reply_to or update.message
+                return await target.reply_video(video=open(f, "rb"), caption=caption, reply_markup=kb)
             try:
                 if reply_to:
                     return await reply_to.reply_photo(
@@ -943,11 +935,11 @@ async def _imagels_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         from app.utils.db import get_picture_description, delete_picture_db, rename_picture_db
-        exts = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
+        exts = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".mp4"}
 
         if data.startswith("imgdel:"):
             idx = int(data.split(":")[1])
-            files = sorted([f for f in _PICTURES_DIR.iterdir() if f.suffix.lower() in exts])
+            files = sorted([f for f in _pictures_dir().iterdir() if f.suffix.lower() in exts])
             if idx >= len(files):
                 await query.edit_message_caption(caption="❌ Image not found (already deleted?)")
                 return
@@ -956,20 +948,20 @@ async def _imagels_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             delete_picture_db(target.name)
             # Renumber remaining
             remaining = sorted(
-                [f for f in _PICTURES_DIR.iterdir() if f.suffix.lower() in exts],
+                [f for f in _pictures_dir().iterdir() if f.suffix.lower() in exts],
                 key=lambda f: int(f.stem[4:]) if f.stem.startswith("IMG_") and f.stem[4:].isdigit() else 99999
             )
             for i, rf in enumerate(remaining, start=1):
                 if rf.stem.startswith("IMG_") and rf.stem[4:].isdigit() and int(rf.stem[4:]) != i:
                     new_name = f"IMG_{i}{rf.suffix}"
-                    rf.rename(_PICTURES_DIR / new_name)
+                    rf.rename(_pictures_dir() / new_name)
                     rename_picture_db(rf.name, new_name)
             await query.edit_message_caption(caption=f"🗑 Deleted `{target.name}`.")
             return
 
         # Navigation
         idx = int(data.split(":")[1])
-        files = sorted([f for f in _PICTURES_DIR.iterdir() if f.suffix.lower() in exts])
+        files = sorted([f for f in _pictures_dir().iterdir() if f.suffix.lower() in exts])
         total = len(files)
         if not files or idx >= total:
             await query.edit_message_caption(caption="No more images.")
@@ -989,16 +981,21 @@ async def _imagels_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         buttons.append(InlineKeyboardButton("🗑 Delete", callback_data=f"imgdel:{idx}"))
         kb = InlineKeyboardMarkup([buttons]) if buttons else None
 
-        # Edit the existing message, replace the photo
+        # Edit the existing message, replace the photo (or video)
+        is_video = f.suffix.lower() == ".mp4"
         try:
-            from telegram import InputMediaPhoto
+            from telegram import InputMediaPhoto, InputMediaVideo
+            media_cls = InputMediaVideo if is_video else InputMediaPhoto
             await query.edit_message_media(
-                media=InputMediaPhoto(media=open(f, "rb"), caption=caption),
+                media=media_cls(media=open(f, "rb"), caption=caption),
                 reply_markup=kb,
             )
         except Exception:
             # Fallback: send a new message
-            await query.message.reply_photo(photo=open(f, "rb"), caption=caption, reply_markup=kb)
+            if is_video:
+                await query.message.reply_video(video=open(f, "rb"), caption=caption, reply_markup=kb)
+            else:
+                await query.message.reply_photo(photo=open(f, "rb"), caption=caption, reply_markup=kb)
 
     except Exception as e:
         try:
@@ -1013,11 +1010,11 @@ async def cmd_imagedownload(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Usage: /imagedownload <number>\nUse /imagels to see images.")
         return
     name = context.args[0]
-    if not _PICTURES_DIR.exists():
+    if not _pictures_dir().exists():
         await update.message.reply_text("No pictures folder found.")
         return
-    exts = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
-    files = sorted([f for f in _PICTURES_DIR.iterdir() if f.suffix.lower() in exts])
+    exts = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".mp4"}
+    files = sorted([f for f in _pictures_dir().iterdir() if f.suffix.lower() in exts])
     target = None
     if name.isdigit():
         matches = [f for f in files if f.stem == f"IMG_{name}"]
@@ -1139,11 +1136,11 @@ async def cmd_imagedeleteall(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 def _next_img_index() -> int:
     """Return the next free IMG_N index in the pictures folder."""
-    valid_exts = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
-    if not _PICTURES_DIR.exists():
-        _PICTURES_DIR.mkdir(parents=True, exist_ok=True)
+    valid_exts = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".mp4"}
+    if not _pictures_dir().exists():
+        _pictures_dir().mkdir(parents=True, exist_ok=True)
     used = set()
-    for f in _PICTURES_DIR.iterdir():
+    for f in _pictures_dir().iterdir():
         if f.suffix.lower() in valid_exts and f.stem.startswith("IMG_") and f.stem[4:].isdigit():
             used.add(int(f.stem[4:]))
     idx = 1
@@ -1167,8 +1164,7 @@ def _extract_tg_file_info(msg):
 
 
 async def _process_images(account, label, msg, file_infos):
-    """Download, save, and analyse a list of (tg_obj, filename_hint) tuples.
-    Sends a single status message that is updated per image."""
+    """Download, save and analyse (tg_obj, filename_hint) tuples; one status message, updated per image."""
     total = len(file_infos)
     status = await msg.reply_text(f"{label}⏳ Uploading {total} image{'s' if total > 1 else ''}...")
 
@@ -1193,7 +1189,7 @@ async def _process_images(account, label, msg, file_infos):
 
         idx = _next_img_index()
         new_name = f"IMG_{idx}{ext}"
-        dest = _PICTURES_DIR / new_name
+        dest = _pictures_dir() / new_name
         try:
             dest.write_bytes(bytes(image_bytes))
         except Exception as e:
@@ -1276,9 +1272,7 @@ async def cmd_imageupload(update: Update, context: ContextTypes.DEFAULT_TYPE):
     label = _account_label(account)
     msg = update.message
 
-    # ── Media group (album) handling ──────────────────────────────────────────
-    # Telegram sends each album photo as a separate message with the same
-    # media_group_id, buffer them briefly, then process all together.
+    # media group (album) handling: Telegram sends each album photo as its own message with one media_group_id, buffer briefly then process together
     if msg.media_group_id:
         mgid = msg.media_group_id
         tg_obj, filename_hint = _extract_tg_file_info(msg)
@@ -1806,11 +1800,7 @@ async def cmd_bio(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def _tg_download_image(tg_obj) -> bytes:
-    """Download a Telegram photo/document as bytes via aiohttp.
-
-    python-telegram-bot uses httpx for all Bot API calls, which raises
-    ConnectError on some networks. We bypass it by calling getFile ourselves.
-    """
+    """Download a Telegram photo/document via aiohttp; httpx raises ConnectError on some networks, so we call getFile ourselves."""
     import aiohttp
 
     file_id = tg_obj.file_id
@@ -1862,8 +1852,7 @@ async def cmd_pfp(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return doc, _ext
         return None, None
 
-    # context.args is only populated for plain /command messages. When
-    # triggered via a captioned photo, parse the URL from the caption instead.
+    # args only exist for plain /command messages; captioned photo -> parse the URL from the caption
     if context.args:
         url = context.args[0]
     elif update.message.caption:
@@ -1935,8 +1924,7 @@ async def cmd_banner(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return doc, _ext
         return None, None
 
-    # context.args is only populated for plain /command messages. When
-    # triggered via a captioned photo, parse the URL from the caption instead.
+    # args only exist for plain /command messages; captioned photo -> parse the URL from the caption
     if context.args:
         url = context.args[0]
     elif update.message.caption:
@@ -2035,8 +2023,7 @@ async def cmd_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
     source = "main" if (context.args and context.args[0].lower() == "main") else "release"
     label_str = "latest commit (main)" if source == "main" else "latest release"
 
-    # Write a sentinel flag file directly, avoids the JSON IPC channel, which
-    # the error notification loop also reads.
+    # sentinel flag file directly, avoids the JSON IPC channel that the error notification loop also reads
     flag_path = _CONFIG_DIR / "update.flag"
     try:
         flag_path.write_text(source, encoding="utf-8")
@@ -2103,8 +2090,7 @@ def _parse_platform_arg(context: ContextTypes.DEFAULT_TYPE):
 
 
 def _switch_platform(context: ContextTypes.DEFAULT_TYPE, platform: str):
-    """Point the active target at the chosen platform (keeps the current
-    Discord account number when already on Discord)."""
+    """Point the active target at the chosen platform, keeping the current Discord account number when already on Discord."""
     if _is_snap(platform):
         context.bot_data["account"] = platform
     elif platform == "discord" and _is_snap(_get_account(context)):
@@ -2112,8 +2098,7 @@ def _switch_platform(context: ContextTypes.DEFAULT_TYPE, platform: str):
 
 
 def _trim_help_for_snap(help_text: str) -> str:
-    """Strip the Discord-only sections from the help so the Snapchat list only
-    shows commands that actually work there (keeping mood & ignore)."""
+    """Drop the Discord-only sections so Snapchat help only shows commands that work there (mood & ignore stay)."""
     SEP_CH = "─"  # the box-drawing char used in the separator rows
     drop_titles = ("*Channels*", "*Voice*", "*Profile & Status*")
     drop_cmds = (
@@ -2232,8 +2217,7 @@ async def _send_help(update: Update, context: ContextTypes.DEFAULT_TYPE = None, 
 """
     if is_snap:
         help_text = _trim_help_for_snap(help_text)
-    # Recombine any UTF-16 surrogate pairs (emoji can end up stored as surrogates,
-    # which Telegram's UTF-8 encoder rejects) back into real code points.
+    # recombine UTF-16 surrogate pairs (emoji can land as surrogates, which Telegram's UTF-8 encoder rejects)
     try:
         help_text = help_text.encode("utf-16", "surrogatepass").decode("utf-16")
     except Exception:
@@ -2288,25 +2272,26 @@ async def _error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> 
 
 # ── Error notification polling loop ──────────────────────────────────────────
 async def _error_notification_loop(app):
-    """Poll the IPC commands file for error notifications sent by the selfbot
-    and forward them as Telegram DMs to the owner."""
+    """Poll the IPC commands file for error notifications from the selfbot and DM them to the owner."""
     _POLL_INTERVAL = 3.0
 
-    def _tg_notifications_enabled() -> bool:
-        # load_config() is mtime-cached, so this is a stat() rather than a full
-        # YAML parse. Opening and parsing config.yaml directly, every 3 seconds
-        # for the life of the process, was about 28,800 parses a day.
+    def _alert_settings() -> tuple[bool, bool, bool]:
+        """Errors on, crashes on, and whether they arrive silently."""
+        # load_config() is mtime-cached, so this is a stat() not a YAML parse (direct parsing every 3s was ~28,800/day)
         from app.utils.helpers import load_config
         try:
-            cfg = load_config() or {}
-            return cfg.get("notifications", {}).get("telegram_error_notifications", False)
+            n = (load_config() or {}).get("notifications", {}) or {}
         except Exception:
-            return False
+            n = {}
+        return (bool(n.get("telegram_error_notifications", False)),
+                bool(n.get("telegram_crash_alerts", True)),
+                bool(n.get("telegram_quiet", False)))
 
     logger.info("[TG Error Loop] Started, polling for error notifications")
     while True:
         await asyncio.sleep(_POLL_INTERVAL)
-        if not _tg_notifications_enabled():
+        errors_on, crashes_on, quiet = _alert_settings()
+        if not errors_on and not crashes_on:
             continue
         targets = list(range(1, NUM_ACCOUNTS + 1))
         # Include every configured Snapchat account: snap, snap2, snap3...
@@ -2332,12 +2317,17 @@ async def _error_notification_loop(app):
                 payload = entry.get("payload", {})
                 title = payload.get("title", "Error")
                 detail = payload.get("detail", "")
+                # A crash alert (queued by the supervisor) has its own switch; one switched off is dropped, not kept for later.
+                crash = payload.get("kind") == "crash"
+                if not (crashes_on if crash else errors_on):
+                    continue
                 try:
-                    msg_text = f"🚨 *{_escape(title)}*\n\n{_escape(detail)}"
+                    msg_text = f"{'⚠️' if crash else '🚨'} *{_escape(title)}*\n\n{_escape(detail)}"
                     sent = await app.bot.send_message(
                         chat_id=TG_OWNER_ID,
                         text=msg_text,
                         parse_mode=ParseMode.MARKDOWN_V2,
+                        disable_notification=quiet,
                     )
                     _bot_message_ids.append(sent.message_id)
                     if len(_bot_message_ids) > 2000:
@@ -2345,9 +2335,7 @@ async def _error_notification_loop(app):
                 except Exception as e:
                     logger.error(f"[TG Error Loop] Failed to send error notification: {e}")
             if sent_ids:
-                # Re-read before writing: the bot drains this same file, so
-                # rewriting our stale copy would resurrect commands it already
-                # ran. Remove only the notifications we just delivered.
+                # re-read before writing: the bot drains this same file, and our stale copy would resurrect commands it already ran
                 try:
                     current = json.loads(cmd_file.read_text(encoding="utf-8"))
                 except Exception:
@@ -2355,65 +2343,21 @@ async def _error_notification_loop(app):
                 if not isinstance(current, list):
                     current = []
                 keep = [e for e in current if e.get("id") not in sent_ids]
-                tmp = cmd_file.with_suffix(".tmp")
-                tmp.write_text(json.dumps(keep, ensure_ascii=False), encoding="utf-8")
-                tmp.replace(cmd_file)
+                from app.utils.atomic import write_json_atomic
+                try:
+                    write_json_atomic(cmd_file, keep)
+                except Exception as e:
+                    logger.error(f"[TG Error Loop] Could not rewrite {cmd_file.name}: {e}")
 
 
 
 # ── Telegram command menu (shown in the "/" list so you don't memorise them) ──
-_MENU_COMMANDS = [
-    BotCommand("start", "Show commands (/start snapchat to switch)"),
-    BotCommand("help", "Show the command list"),
-    BotCommand("account", "Show/switch target (number or snap)"),
-    BotCommand("pause", "Pause / unpause AI responses"),
-    BotCommand("pauseuser", "Stop responding to a user"),
-    BotCommand("unpauseuser", "Resume responding to a user"),
-    BotCommand("persona", "Set/clear a per-user persona"),
-    BotCommand("wipe", "Clear conversation history"),
-    BotCommand("analyse", "Psychological read of a user"),
-    BotCommand("reply", "Reply to a user (check / all / <id>)"),
-    BotCommand("config", "View or edit config"),
-    BotCommand("prompt", "View / set instructions"),
-    BotCommand("instructions", "Upload a new instructions.txt"),
-    BotCommand("getinstructions", "Download instructions.txt"),
-    BotCommand("getconfig", "Download config.yaml"),
-    BotCommand("setconfig", "Upload a new config.yaml"),
-    BotCommand("getdb", "Download the memory database"),
-    BotCommand("reload", "Reload instructions + config"),
-    BotCommand("mood", "View or set the mood"),
-    BotCommand("ignore", "Ignore / unignore a user"),
-    BotCommand("status", "Show bot status"),
-    BotCommand("leaderboard", "Top users by messages"),
-    BotCommand("imagels", "List pictures"),
-    BotCommand("imageupload", "Upload picture(s)"),
-    BotCommand("imagedownload", "Download a picture by number"),
-    BotCommand("imagedelete", "Delete a picture by number"),
-    BotCommand("imagedesc", "Set a picture's description"),
-    BotCommand("imagedeleteall", "Delete all pictures"),
-    BotCommand("ping", "Check the controller is running"),
-    BotCommand("restart", "Restart the bot"),
-    BotCommand("shutdown", "Shut down the bot"),
-    BotCommand("update", "Update to latest (main for latest commit)"),
-    # Discord-only
-    BotCommand("toggledm", "Discord: toggle DM responses"),
-    BotCommand("togglegc", "Discord: toggle group chats"),
-    BotCommand("toggleserver", "Discord: toggle server responses"),
-    BotCommand("toggleactive", "Discord: toggle a channel"),
-    BotCommand("join", "Discord: join a voice channel"),
-    BotCommand("leave", "Discord: leave voice"),
-    BotCommand("autojoin", "Discord: auto-join voice on start"),
-    BotCommand("setstatus", "Discord: set custom status"),
-    BotCommand("bio", "Discord: set profile bio"),
-    BotCommand("pfp", "Discord: change profile picture"),
-    BotCommand("banner", "Discord: change profile banner"),
-    BotCommand("addfriend", "Discord: send a friend request"),
-]
+# The list lives in app/telegram_bot/commands.py, which the panel's Telegram page reads too.
+from app.telegram_bot.commands import menu as _menu
+_MENU_COMMANDS = [BotCommand(name, does) for name, does in _menu()]
 
 
-# ── Single-instance lock ──────────────────────────────────────────────────────
-# Only ONE controller may poll a given bot token, two instances make Telegram
-# return 409 Conflict and NEITHER receives commands.
+# single-instance lock: only one controller may poll a token, two instances make Telegram return 409 Conflict and neither gets commands
 _lock_handle = None
 
 
@@ -2456,8 +2400,7 @@ def main():
     request = HTTPXRequest(connect_timeout=20.0, read_timeout=20.0)
     app = Application.builder().token(TG_TOKEN).request(request).build()
 
-    # Default target: Discord account 1, unless Discord is disabled and
-    # Snapchat is enabled (a Snapchat-only setup), then the Snapchat bridge.
+    # default target: Discord account 1, or snap when Discord is off and Snapchat is on
     default_target = 1
     try:
         _cfg = _load_config()
@@ -2466,6 +2409,9 @@ def main():
     except Exception:
         pass
     app.bot_data["account"] = default_target
+    # The selection, for the commands that work on the selected account's persona (_selected_persona).
+    global _BOT_DATA
+    _BOT_DATA = app.bot_data
 
     app.add_handler(CommandHandler("start",           cmd_start))
     app.add_handler(CommandHandler("account",         cmd_account))
@@ -2520,8 +2466,7 @@ def main():
     app.add_handler(CallbackQueryHandler(_leaderboard_callback, pattern=r"^lb:"))
     app.add_handler(MessageHandler(filters.Document.FileExtension("txt"),  cmd_instructions_file))
     app.add_handler(MessageHandler(filters.Document.FileExtension("yaml"), cmd_setconfig))
-    # Photos with a /pfp or /banner caption route to those handlers; other
-    # photos and image documents fall through to cmd_imageupload.
+    # photos with a /pfp or /banner caption go to those handlers; everything else falls through to imageupload
     _cap_pfp    = filters.CaptionRegex(r"^/pfp(\s|$)")
     _cap_banner = filters.CaptionRegex(r"^/banner(\s|$)")
     _cap_either = _cap_pfp | _cap_banner
@@ -2532,8 +2477,7 @@ def main():
 
     async def _post_init(application):
         """Start background tasks after the app initialises."""
-        # Identify which bot this token connects to, so a token/bot mismatch
-        # (the #1 reason commands seem to do nothing) is obvious.
+        # identify which bot this token connects to, so a token/bot mismatch (the #1 reason commands seem dead) is obvious
         try:
             me = await application.bot.get_me()
             print("=" * 60)
@@ -2554,8 +2498,12 @@ def main():
     app.post_init = _post_init
 
     print("[TG Controller] Running, send /start to your bot on Telegram.")
+    # Signal handlers can only be set from a process's main thread, which a
+    # controller running on a thread of the app (a phone) is not.
+    from app.core import inprocess
+    signals = {"stop_signals": None} if inprocess.current() is not None else {}
     try:
-        app.run_polling(allowed_updates=Update.ALL_TYPES, bootstrap_retries=5)
+        app.run_polling(allowed_updates=Update.ALL_TYPES, bootstrap_retries=5, **signals)
     except Exception as e:
         from telegram.error import Conflict, InvalidToken
         if isinstance(e, Conflict):

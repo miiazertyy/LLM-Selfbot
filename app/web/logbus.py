@@ -12,10 +12,7 @@ from app.utils.paths import DATA_DIR
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
-# Worker output arrives as plain text on a pipe, so the colours the runner
-# prints are stripped along with the escape codes and every line looked
-# identical in the panel. The glyphs the logger uses survive, so the kind of
-# line can be recovered from those and coloured properly.
+# Worker output arrives as plain text on a pipe, so the colours the runner prints are stripped along with the escape codes and every line looked identical in the panel. The glyphs the logger uses survive, so the kind of line can be recovered from those and coloured properly.
 _MARKERS = (
     ("error", ("✗", "Traceback", "Exception", "error:", "Error:", "failed", "Failed")),
     ("warn", ("⚠", "⟳", "⏱", "RATE LIMITED", "rate limit",
@@ -42,14 +39,12 @@ MAX_FILE_BYTES = 5 * 1024 * 1024
 class LogBus:
     def __init__(self):
         self.buffer: deque = deque(maxlen=MAX_BUFFER)
-        # queue -> the loop it belongs to, so entries published from a worker
-        # thread can be handed over with call_soon_threadsafe.
+        # queue -> the loop it belongs to, so entries published from a worker thread can be handed over with call_soon_threadsafe.
         self.subscribers: dict = {}
         self.lock = threading.Lock()
         self.file_path = LOGS_DIR / "app.jsonl"
         LOGS_DIR.mkdir(parents=True, exist_ok=True)
-        # Held open rather than reopened per line, with the size tracked in
-        # memory so rotation costs no stat() on every write either.
+        # Held open rather than reopened per line, with the size tracked in memory so rotation costs no stat() on every write either.
         self._fh = None
         self._written = 0
 
@@ -78,8 +73,7 @@ class LogBus:
         text = _ANSI_RE.sub("", str(text)).rstrip()
         if not text:
             return
-        # Callers that know the level pass it; captured worker output does not,
-        # so infer it rather than flattening everything to "info".
+        # Callers that know the level pass it; captured worker output does not, so infer it rather than flattening everything to "info".
         if level is None:
             level = classify(text)
         entry = {
@@ -99,15 +93,22 @@ class LogBus:
                 self._fh.flush()
                 self._written += len(line.encode("utf-8"))
             except OSError:
-                # Losing the line on disk must not lose it for live viewers;
-                # the next append reopens.
+                # Losing the line on disk must not lose it for live viewers; the next append reopens.
                 self._fh = None
         self.publish(entry)
 
+    def event(self, kind: str, payload: dict):
+        """Push a live update to the pages, over the same socket as the logs.
+
+        Not a log line: kept out of the buffer and the file, so it is never
+        replayed to a page that connects later and never shows up in Logs.
+        """
+        self.publish({"ts": time.time(), "source": "_event", "level": "event",
+                      "text": "", "kind": kind, "event": payload})
+
     def tail(self, n: int = 100) -> list:
         with self.lock:
-            # islice over the deque's tail, rather than copying all MAX_BUFFER
-            # entries and then slicing: tail(50) copied 2000 of them.
+            # islice over the deque's tail, rather than copying all MAX_BUFFER entries and then slicing: tail(50) copied 2000 of them.
             start = max(0, len(self.buffer) - n)
             return list(islice(self.buffer, start, None))
 
@@ -124,15 +125,7 @@ class LogBus:
         self.subscribers.pop(q, None)
 
     def publish(self, entry):
-        """Hand an entry to every WebSocket subscriber.
-
-        Called from supervisor reader threads, not from the event loop. A bare
-        put_nowait from another thread does not wake the loop's selector, so
-        the waiting coroutine only picked entries up when the loop happened to
-        wake for something else - lines surfaced late, in bursts, or at the
-        25s ping timeout. Handing the put to the owning loop is also the only
-        thread-safe way to do it.
-        """
+        """Hand an entry to every WebSocket subscriber. Called from supervisor reader threads, not from the event loop. A bare put_nowait from another thread does not wake the loop's selector, so the waiting coroutine only picked entries up when the loop happened to wake for something else: lines surfaced late, in bursts, or at the 25s ping timeout. Handing the put to the owning loop is also the only thread-safe way to do it."""
         for q, loop in list(self.subscribers.items()):
             try:
                 if loop is not None and not loop.is_closed():

@@ -6,10 +6,7 @@ from colorama import Fore, Style
 
 RESET = "\033[0m"
 
-# Every log line uses box-drawing and symbol glyphs. When stdout is not a UTF-8
-# console, piped output, a redirected log file, or a subprocess started by
-# main.py on Windows, printing them raises UnicodeEncodeError, taking down
-# whatever was logging (including the Groq key-rotation path).
+# Every log line uses box-drawing and symbol glyphs. When stdout is not a UTF-8 console, piped output, a redirected log file, or a subprocess started by main.py on Windows, printing them raises UnicodeEncodeError, taking down whatever was logging (including the Groq key-rotation path).
 for _stream in (sys.stdout, sys.stderr):
     try:
         _stream.reconfigure(encoding="utf-8", errors="replace")
@@ -17,9 +14,7 @@ for _stream in (sys.stdout, sys.stderr):
         pass
 
 
-# ── Per-platform accent palette ──────────────────────────────────────────────
-# set_theme() distinguishes Discord (blurple) and Snapchat (gold) output in a
-# shared console.
+# per-platform accent palette: set_theme() distinguishes discord (blurple) and snapchat (gold) output in a shared console
 def _supports_truecolor() -> bool:
     if os.environ.get("COLORTERM", "").lower() in ("truecolor", "24bit"):
         return True
@@ -93,10 +88,35 @@ def log_rate_limit(wait: int, model: str = None):
     )
 
 
-def log_model_fallback(from_model: str, to_model: str):
+def log_model_fallback(from_model: str, to_model: str, why: str = ""):
     print(
-        f"{timestamp()} {Fore.YELLOW}⟳ Model fallback: {Style.BRIGHT}{from_model}{Style.NORMAL} → {to_model}{RESET}"
+        f"{timestamp()} {Fore.YELLOW}⟳ Model fallback: {Style.BRIGHT}{from_model}{Style.NORMAL} → {to_model}"
+        f"{f' ({why})' if why else ''}{RESET}"
     )
+
+
+# In front of a line the panel's supervisor turns into a "thinking" log entry. The thinking is many lines long, and the pipe is read a line at a time, so it travels as one line of JSON and the panel puts the line breaks back.
+THINK_MARK = "\x1eTHINK "
+
+
+def log_thinking(text: str, model: str = ""):
+    """What a reasoning model thought before it answered, for the Logs page."""
+    text = (text or "").strip()
+    if not text:
+        return
+    from app.core.launcher import under_panel
+    if under_panel():
+        try:
+            import json as _json
+            sys.stdout.write(THINK_MARK + _json.dumps({"model": model, "text": text[:12000]},
+                                                      ensure_ascii=True) + "\n")
+            sys.stdout.flush()
+        except Exception:
+            pass
+        return
+    first = " ".join(text.split())
+    print(f"{timestamp()} {Fore.MAGENTA}💭 {model or 'Thinking'}:{RESET} "
+          f"{Style.DIM}{first[:300]}{'…' if len(first) > 300 else ''}{RESET}")
 
 
 def log_error(context: str, error: str):

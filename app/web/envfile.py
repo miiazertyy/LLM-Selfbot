@@ -1,10 +1,4 @@
-"""
-app/web/envfile.py - read/write config/.env.
-
-Shared by the secrets editor and the account manager, both of which change the
-same file. Reading is plain; writing preserves comments, blank lines and key
-order, and always leaves a .env.bak behind.
-"""
+"""app/web/envfile.py - read/write config/.env. Shared by the secrets editor and the account manager, both of which change the same file. Reading is plain; writing preserves comments, blank lines and key order, and always leaves a .env.bak behind."""
 
 import os
 import re
@@ -16,6 +10,8 @@ ENV_PATH = DATA_DIR / "config" / ".env"
 
 SECRET_KEYS = re.compile(
     r"^(DISCORD_TOKEN(?:_\d+)?|DISCORD_PROXY(?:_\d+)?|GROQ_API_KEY(?:_\d+)?|"
+    # every provider on the Models tab keeps its key as <NAME>_API_KEY
+    r"[A-Z][A-Z0-9]*_API_KEY(?:_\d+)?|"
     r"TELEGRAM_BOT_TOKEN|SNAP_PASSWORD(?:_\d+)?)$"
 )
 
@@ -28,9 +24,7 @@ def mask(value: str) -> str:
     return f"{value[:4]}…{value[-4:]}"
 
 
-# Every secrets, env and account endpoint calls read_env(), and several call it
-# more than once per request, so the file was re-read and re-parsed constantly.
-# Keyed on mtime+size, the same way helpers.load_config() caches config.yaml.
+# Every secrets, env and account endpoint calls read_env(), and several call it more than once per request, so the file was re-read and re-parsed constantly. Keyed on mtime+size, the same way helpers.load_config() caches config.yaml.
 _env_cache = {"key": None, "value": {}}
 
 
@@ -46,12 +40,7 @@ def _parse_env(text: str) -> dict:
 
 
 def read_env() -> dict:
-    """The parsed .env, cached until the file changes.
-
-    Returns a copy: callers mutate what they get back before handing it to
-    write_env(), and handing out the cached dict itself would let one caller's
-    edits leak into the next reader.
-    """
+    """The parsed .env, cached until the file changes. Returns a copy: callers mutate what they get back before handing it to write_env(), and handing out the cached dict itself would let one caller's edits leak into the next reader."""
     try:
         st = ENV_PATH.stat()
         key = (st.st_mtime_ns, st.st_size)
@@ -70,15 +59,9 @@ def read_env() -> dict:
 
 
 def write_env(values: dict):
-    """Rewrite .env in place, preserving comments, blank lines and ordering.
-
-    An early version wrote only the parsed key/value pairs, which erased every
-    comment in the file the first time secrets were saved from the UI.
-    """
+    """Rewrite .env in place, preserving comments, blank lines and ordering. An early version wrote only the parsed key/value pairs, which erased every comment in the file the first time secrets were saved from the UI."""
     ENV_PATH.parent.mkdir(parents=True, exist_ok=True)
-    # The next read_env() re-stats and sees the new mtime, so the cache cannot
-    # go stale across a write. Cleared anyway: mtime granularity on Windows is
-    # coarse enough that a write inside the same tick could otherwise be missed.
+    # The next read_env() re-stats and sees the new mtime, so the cache cannot go stale across a write. Cleared anyway: mtime granularity on Windows is coarse enough that a write inside the same tick could otherwise be missed.
     _env_cache["key"] = None
     if ENV_PATH.exists():
         shutil.copyfile(ENV_PATH, ENV_PATH.parent / ".env.bak")
@@ -101,12 +84,7 @@ def write_env(values: dict):
 
 
 def reload_into_process(values: dict | None = None):
-    """Make .env changes visible to this process immediately.
-
-    The account counters read os.environ, so without this a token added from
-    the UI would not appear until the supervisor was restarted. Keys that were
-    deleted from the file are removed from the environment too.
-    """
+    """Make .env changes visible to this process immediately. The account counters read os.environ, so without this a token added from the UI would not appear until the supervisor was restarted. Keys that were deleted from the file are removed from the environment too."""
     values = read_env() if values is None else values
     managed = {k for k in os.environ if SECRET_KEYS.match(k)
                or k.startswith(("DISCORD_TOKEN", "DISCORD_PROXY",

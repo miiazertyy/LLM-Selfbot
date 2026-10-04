@@ -55,6 +55,16 @@ bot:
     tts_model: ""         # speaks               (kokoro, tts-1, ...)
     tts_voice: ""         # voice names are per-engine (af_sky, alloy, ...)
 
+  # The summary card on the Memory page: what you and each person have been
+  # talking about, written from their last few messages when you open them.
+  memory_summary:
+    enabled: true
+    messages: 20              # how many recent messages it reads (5-100)
+    length: "medium"          # short / medium / detailed
+    language: "auto"          # auto = the language the conversation is in
+    include_my_messages: true # false = summarise only what they said
+    refresh_minutes: 30       # reuse a summary this recent instead of rewriting it
+
   # TTS voice settings
   tts:
     enabled: false
@@ -67,6 +77,26 @@ bot:
   # config/pictures (upload with ,image / Telegram). Used by Discord + Snapchat.
   pictures:
     enabled: true
+    # Videos are kept as MP4; one bigger than this (MB) is made smaller to fit.
+    # Discord takes 10 MB without Nitro.
+    video_max_mb: 10
+    # A filter put on each new picture: "off", "one" (the filter below),
+    # "random" (one of looks, or any when that is empty) or "ai" (the AI picks
+    # one that suits the picture). The original is kept, so a filter can be
+    # removed again.
+    auto_look:
+      mode: "off"
+      look: warm
+      looks: []
+      strength: 0.7
+      vary: 0.1
+    # What the AI may put on a picture as it sends it, like on Snapchat: a
+    # caption, big text, the time, the day, emoji, a filter. Only on the accounts
+    # listed here (discord_1, snapchat_1, ...), and only this often.
+    touches:
+      accounts: []
+      chance: 0.5
+      kinds: [caption, big_text, time, day, emoji, look]
 
   # Respond to DMs
   allow_dm: true
@@ -160,11 +190,8 @@ bot:
   # "desktop" = spoof the Discord desktop app (profile shows desktop).
   # "web" = Discord in a browser (what a normal discord.com user looks like).
   # Both require a restart; web is the safer of the two.
-  # Give each account its own persona file. Off means every account shares
-  # config/instructions.txt. On, account 2 reads config/instructions_2.txt,
-  # account 3 instructions_3.txt, and so on; account 1 keeps the shared file.
-  per_account_persona: false
-
+  # (Each account's own persona, text and pictures and all, is a persona
+  # profile now: the Personas page. See app/utils/personas.py.)
   client_profile: desktop
 
   # Persona timezone/locale for REST headers (kept consistent with the AI's
@@ -287,6 +314,46 @@ bot:
         - "oh pardon je regardais tiktok "
         - "déso j'ai mis du temps "
 
+  # --- How it writes ---
+  # The sampling settings sent with every reply. Each is optional: left blank,
+  # the provider's own default is used and nothing is sent for it.
+  #
+  #   temperature        how varied it lets itself be (0 to 2)
+  #   top_p              the same idea, by probability mass (0 to 1)
+  #   frequency_penalty  pushes away from words it has already used (-2 to 2)
+  #   presence_penalty   pushes towards new subjects (-2 to 2)
+  #
+  # The two penalties are what stop a character answering several people with
+  # the same three sentences. Not every provider takes them: Anthropic and
+  # Gemini have no penalties, and a local server takes whatever it was built
+  # with, so anything unsupported is simply not sent.
+  sampling:
+    temperature:
+    top_p:
+    frequency_penalty:
+    presence_penalty:
+
+  # --- Refusals ---
+  # When the model answers like an assistant ("I can't help with that", "I'm
+  # an AI") the reply is never sent: it would give the account away at once.
+  # One of `fallbacks` goes instead, which is what a real person sends when a
+  # conversation takes a weird turn.
+  #
+  # The built-in list of refusal wording is long and covers both languages;
+  # `extra_phrases` adds to it, for anything a particular model keeps saying.
+  # A phrase matches anywhere in the reply and is not case-sensitive. Set
+  # `replace_phrases: true` to use only your own list instead of the built-in
+  # one. There are also regex patterns in the code for wording no fixed phrase
+  # catches; those stay in the code, since a bad one here would swallow real
+  # replies.
+  refusal:
+    enabled: true
+    fallbacks:
+      - "wtf"
+      - "??"
+    extra_phrases: []
+    replace_phrases: false
+
   # --- Abandon reply ---
   stale_reply:
     enabled: true
@@ -313,6 +380,8 @@ notifications:
   error_webhook: ""
   ratelimit_notifications: true
   telegram_error_notifications: true
+  telegram_crash_alerts: true    # an account stopped or keeps restarting
+  telegram_quiet: false          # alerts without a sound
 
 # ── Services: what the supervisor launches ────────────────────────────────────
 # Each platform can be toggled independently. The webui service controls the

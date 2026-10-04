@@ -31,7 +31,15 @@ type Warm = { key: string; run: () => Promise<unknown>; initial: unknown };
 
 const WARM: Warm[] = [
   // Cheap and almost always looked at.
+  // Accounts: the list, the saved logins, and each account's recent activity.
+  // Initial values must match lib/accounts/state.ts.
+  { key: "accounts", run: () => api.accounts(), initial: { accounts: [] } },
+  { key: "accountSlots", run: () => api.slots(), initial: { slots: [] } },
+  { key: "accountActivity", run: () => api.accountActivity(7),
+    initial: { days: 7, dates: [], accounts: {} } },
   { key: "instructions", run: () => api.instructions(), initial: { text: "" } },
+  // The personas: the Personas page, the account cards and every persona pill. Initial matches lib/personas/store.ts.
+  { key: "personas", run: () => api.personas(), initial: { personas: [], accounts: {}, palette: [] } },
   { key: "memory", run: () => api.memory(), initial: { users: [] } },
   { key: "pictures", run: () => api.pictures(), initial: { pictures: [] } },
   { key: "chatArchive", run: () => api.chatArchive(40), initial: { conversations: [] } },
@@ -70,7 +78,7 @@ export function warmPages(gapMs = 400): () => void {
     // resource() returns the entry that already exists rather than a new one.
     const res = resource<any>(item.key, item.run, item.initial);
     res
-      .refresh({ maxAge: 0 })
+      .refresh({ maxAge: 0, quiet: true })
       .catch(() => {})       // a warm-up that fails is not worth reporting
       .finally(() => {
         if (stopped) return;

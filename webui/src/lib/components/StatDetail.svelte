@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { DAY_MONTH, fmtDate } from "../fmt";
   /**
    * What is behind a dashboard figure.
    *
@@ -69,7 +70,7 @@
 
   const dayLabels = $derived(
     series.map((d: any) =>
-      new Date(d.day * 86400000).toLocaleDateString(undefined, { day: "numeric", month: "short" })),
+      fmtDate(d.day * 86400000, DAY_MONTH)),
   );
 
   const hourly = $derived((data?.hourly ?? []).map((h: any) => h.count));
@@ -310,11 +311,7 @@
                 {#each top as t (t.platform + t.id)}
                   <div class="group flex items-center gap-3 rounded-lg px-2 py-1.5 hover:bg-white/[0.03]">
                     <span class="min-w-0 flex-1 truncate text-[13px]">
-                      {#if t.platform === "discord"}
-                        <UserChip id={t.id} name={t.name} />
-                      {:else}
-                        <span class="text-ink">{t.name}</span>
-                      {/if}
+                      <UserChip id={t.id} name={t.name} />
                     </span>
                     <!-- The bar is the magnitude; the number beside it is the
                          value. Text keeps text colours, never the series hue. -->

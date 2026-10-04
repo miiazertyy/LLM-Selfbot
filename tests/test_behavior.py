@@ -507,5 +507,88 @@ check("and again after every reload, when a new build arrives",
       _run.count("reportSelectorHealth(bot)") >= 2)
 check("dotenv is kept out of the Logs tab", _run.count("quiet: true") == 2)
 
+
+print()
+print("== the Discord worker does not run curl through a helper thread ==")
+# Exit code 0xC0000005 after "BufferError: memoryview has 1 exported buffer",
+# with curl_cffi/_asyncio_selector.add_reader in the trace. On Windows' default
+# Proactor loop, curl_cffi polls sockets from a helper thread of its own; the
+# selector loop has add_reader natively, so that thread never starts.
+import asyncio as _aio
+# Read fresh: an earlier block rebinds _src to a Path.
+_rsrc = (ROOT / "app" / "platforms" / "discord_runner.py").read_text(encoding="utf-8")
+_lf_src = _rsrc[_rsrc.index("def _loop_factory():"):]
+# The whole function: it now hands the loop to app/core/inprocess.py as well,
+# which gives it back untouched outside a thread role, as here.
+_lf_src = _lf_src[:_lf_src.index("\n\n\nif __name__")]
+_lf_ns = {"sys": sys, "asyncio": _aio}
+exec(compile(_lf_src, "_loop_factory", "exec"), _lf_ns)
+_factory = _lf_ns["_loop_factory"]()
+if sys.platform == "win32":
+    check("Windows gets the selector loop", _factory is _aio.SelectorEventLoop, repr(_factory))
+else:
+    check("elsewhere the default loop is kept", _factory is None, repr(_factory))
+check("the worker actually starts on it", "loop_factory=_loop_factory()" in _rsrc)
+# asyncio subprocesses do not work on the Windows selector loop. Nothing in the
+# worker uses them today; this is what would catch one being added.
+_worker_files = [ROOT / "app" / "platforms" / "discord_runner.py"] + \
+    sorted((ROOT / "app" / "cogs").glob("*.py")) + sorted((ROOT / "app" / "utils").glob("*.py"))
+_subproc = [f.name for f in _worker_files
+            if "create_subprocess" in f.read_text(encoding="utf-8", errors="replace")]
+check("nothing in the worker needs asyncio subprocesses", not _subproc, str(_subproc))
+
+print()
+print("== the Chats sweep answers inside the panel's timeout ==")
+# Raising the DM cap to 80 made a cold sweep outlast the 10s IPC wait, so the
+# request timed out, everything found was discarded, and the tab never loaded.
+# With the helpers it now uses to describe the message: the preview text and
+# the full payload (text, pictures, stickers) the Chats tab draws.
+_we_src = _rsrc[_rsrc.index("def _preview_text("):]
+_we_src = _we_src[:_we_src.index("def _waiting_entry(")] + \
+    _we_src[_we_src.index("def _waiting_entry("):].split("\n\n\n")[0]
+_we_ns = {"_sticker_names": lambda m: ""}
+exec(compile(_we_src, "_waiting_entry", "exec"), _we_ns)
+_we = _we_ns["_waiting_entry"]
+
+import datetime as _dt
+
+
+class _Au:
+    def __init__(self, i):
+        self.id = i
+
+
+class _Msg:
+    def __init__(self, who, minute, text="hi"):
+        self.id = who * 1000 + minute
+        self.author = _Au(who)
+        self.created_at = _dt.datetime(2026, 1, 1, 12, minute)
+        self.content = text
+
+
+ME, THEM = 1, 2
+# Newest first, as history() returns them.
+check("their message after mine is waiting",
+      (_we([_Msg(THEM, 5, "you there?"), _Msg(ME, 3)], ME) or {}).get("snippet") == "you there?")
+check("my reply after theirs is not waiting",
+      _we([_Msg(ME, 6), _Msg(THEM, 5)], ME) is None)
+check("it counts only what arrived since my last reply",
+      (_we([_Msg(THEM, 9), _Msg(THEM, 8), _Msg(ME, 7), _Msg(THEM, 2)], ME) or {}).get("count") == 2)
+check("a chat of only my messages is not waiting", _we([_Msg(ME, 4)], ME) is None)
+check("an empty chat is not waiting", _we([], ME) is None)
+check("long messages are cut for the list",
+      len((_we([_Msg(THEM, 5, "x" * 200)], ME) or {}).get("snippet", "")) == 61)
+check("but the whole message comes along for the tab to draw",
+      (_we([_Msg(THEM, 5, "x" * 200)], ME) or {}).get("text") == "x" * 200)
+
+check("the sweep stops fetching before the timeout", "_deadline = time.monotonic() + 6.0" in _rsrc)
+check("and each fetch is bounded by what is left",
+      "asyncio.wait_for(" in _rsrc and "_recent_messages(_ch, 10), timeout=_left" in _rsrc)
+check("a DM whose last message has not changed is not fetched again",
+      "_memo[0] == _ch.last_message_id" in _rsrc)
+check("what it learns is remembered for next time",
+      "_dm_scan_memo[_ch.id] = (_ch.last_message_id, _entry)" in _rsrc)
+check("and channels that are gone are forgotten", "_dm_scan_memo.pop(_gone, None)" in _rsrc)
+
 print(f"\n  {len(PASS)} passed, {len(FAIL)} failed")
 sys.exit(1 if FAIL else 0)

@@ -1,10 +1,4 @@
-"""
-app/utils/binaries.py - external tools the app can fetch on demand.
-
-ffmpeg cannot be bundled into the Python exe (licence + ~80 MB), so it is
-downloaded into DATA_DIR/bin on request. Everything that shells out to ffmpeg
-finds it via PATH, which ensure_path() extends at startup.
-"""
+"""External tools the app can fetch on demand. ffmpeg cannot be bundled into the Python exe (licence + ~80 MB), so it is downloaded into DATA_DIR/bin on request. Everything that shells out to ffmpeg finds it via PATH, which ensure_path() extends at startup."""
 
 import os
 import shutil
@@ -20,8 +14,7 @@ _EXE = ".exe" if os.name == "nt" else ""
 
 
 def ensure_path() -> None:
-    """Put DATA_DIR/bin (and any bundled resources/bin) on PATH for this
-    process and every child it spawns."""
+    """Put DATA_DIR/bin (and any bundled resources/bin) on PATH for this process and every child it spawns."""
     for d in (BIN_DIR, APP_DIR / "resources" / "bin"):
         if d.is_dir():
             current = os.environ.get("PATH", "")
@@ -49,10 +42,7 @@ def ffmpeg_status() -> dict:
 
 
 def install_ffmpeg(progress=None) -> dict:
-    """Download a static ffmpeg build into DATA_DIR/bin.
-
-    progress: optional callable(str) for streaming status to the UI.
-    """
+    """Download a static ffmpeg build into DATA_DIR/bin. progress: optional callable(str) for streaming status to the UI."""
     def say(msg):
         if progress:
             progress(msg)

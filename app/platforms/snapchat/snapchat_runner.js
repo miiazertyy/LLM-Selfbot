@@ -12,7 +12,7 @@ import fs from "fs";
 import net from "net";
 import path from "path";
 import { fileURLToPath } from "url";
-import { randomUUID } from "crypto";
+import { createHash, randomUUID } from "crypto";
 import { createRequire } from "module";
 import { patchConsole } from "./log.js";
 
@@ -88,6 +88,146 @@ function setState(state, detail = "") {
 }
 
 /**
+ * Keep the panel's picture of this account current: the name it shows, its
+ * username, and its Bitmoji, read off the page into
+ * config/identity_snap_N.json. The Bitmoji itself, and its background when it
+ * has one, are saved beside it, so the panel shows them without ever asking
+ * Snapchat. Discord accounts have had this from the start; a Snapchat card
+ * was a generic ghost with the login name under it.
+ *
+ * Called whenever the app is (back) on screen: after logging in, after a
+ * refresh, after logging back in. Pictures are only fetched again when their
+ * address changes.
+ */
+const IDENTITY_FILE = path.join(DATA_DIR, "config", `identity_snap_${ACCOUNT_INDEX}.json`);
+const PICTURE_HOSTS = /^https:\/\/([a-z0-9-]+\.)*(sc-cdn\.net|bitmoji\.com|snapchat\.com)\//i;
+
+async function savePicture(url, stem, before) {
+  if (!url || !PICTURE_HOSTS.test(url)) return "";
+  if (before && before.url === url && before.file && fs.existsSync(path.join(DATA_DIR, "config", before.file))) {
+    return before.file;
+  }
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
+    if (!res.ok) return "";
+    const type = res.headers.get("content-type") || "";
+    const ext = type.includes("png") ? "png" : type.includes("jpeg") ? "jpg" : type.includes("svg") ? "" : "webp";
+    if (!ext) return "";
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.length < 100 || buf.length > 4_000_000) return "";
+    const file = `${stem}.${ext}`;
+    fs.writeFileSync(path.join(DATA_DIR, "config", file), buf);
+    return file;
+  } catch {
+    return "";
+  }
+}
+
+const BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36";
+
+/**
+ * The account's public Snapchat page, read the way anyone could, without the
+ * signed-in session: its profile photo when it has one, and its Bitmoji and
+ * the Bitmoji's background. Accounts with a public profile carry
+ * publicProfileInfo; the rest carry userInfo, with no photo.
+ */
+async function publicProfile(username) {
+  try {
+    const res = await fetch(`https://www.snapchat.com/add/${encodeURIComponent(username)}`, {
+      headers: { "user-agent": BROWSER_UA, "accept-language": "en-US,en;q=0.9" },
+      signal: AbortSignal.timeout(20000),
+    });
+    if (!res.ok) return null;
+    const html = await res.text();
+    const m = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
+    if (!m) return null;
+    const profile = JSON.parse(m[1])?.props?.pageProps?.userProfile || {};
+    const info = profile.publicProfileInfo || profile.userInfo || {};
+    // Whatever shape the Bitmoji comes in: its picture, and its background.
+    const urls = [];
+    (function walk(v, key) {
+      if (!v) return;
+      if (typeof v === "string") { if (/^https:\/\//.test(v)) urls.push([key, v]); return; }
+      if (typeof v === "object") for (const [k, x] of Object.entries(v)) walk(x, `${key}.${k}`);
+    })(info.bitmoji3d, "bitmoji3d");
+    const bitmoji = (urls.find(([k]) => /avatar/i.test(k)) || urls.find(([k, u]) => !/background/i.test(k + u)) || [])[1] || "";
+    const background = (urls.find(([k, u]) => /background/i.test(k + u)) || [])[1] || "";
+    return {
+      name: String(info.title || info.displayName || ""),
+      // Asked for at 400px: the address it gives is for 90, which is soft on a card.
+      photo: String(info.profilePictureUrl || "").replace(/_RS\d+,\d+_/, "_RS0,400_"),
+      bitmoji,
+      background,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function recordIdentity(bot, { maxAgeHours = 0 } = {}) {
+  let before = {};
+  try { before = JSON.parse(fs.readFileSync(IDENTITY_FILE, "utf-8")); } catch { /* first time */ }
+  if (maxAgeHours && before.username && Date.now() / 1000 - (before.at || 0) < maxAgeHours * 3600) return;
+  const me = await bot.whoAmI();
+  if (!me) {
+    console.warn("[Snap] Could not read who is signed in from Snapchat's account page; the panel keeps what it had.");
+    return;
+  }
+  const pub = await publicProfile(me.username);
+  const stem = `identity_snap_${ACCOUNT_INDEX}`;
+  const was = { url: before.picture_url, file: before.picture };
+  // The profile photo first, then the Bitmoji: what Snapchat itself shows as the account's picture.
+  let picture = "", kind = "", pictureUrl = "";
+  if (pub?.photo) {
+    picture = await savePicture(pub.photo, stem, was);
+    if (picture) { kind = "photo"; pictureUrl = pub.photo; }
+  }
+  if (!picture && pub?.bitmoji) {
+    picture = await savePicture(pub.bitmoji, stem, was);
+    if (picture) { kind = "bitmoji"; pictureUrl = pub.bitmoji; }
+  }
+  const background = await savePicture(pub?.background || "", `${stem}_bg`, { url: before.background_url, file: before.background });
+  // A picture from before that is not the picture any more goes with it.
+  for (const [old, now] of [[before.picture, picture], [before.background, background]]) {
+    if (old && old !== now && /^identity_snap_\d+(_bg)?\.(webp|png|jpg)$/.test(old)) {
+      try { fs.unlinkSync(path.join(DATA_DIR, "config", old)); } catch { /* already gone */ }
+    }
+  }
+  const out = {
+    username: me.username,
+    display_name: me.display_name || pub?.name || "",
+    picture, picture_kind: kind, picture_url: pictureUrl,
+    background, background_url: background ? pub.background : "",
+    at: Date.now() / 1000,
+  };
+  try {
+    const tmp = `${IDENTITY_FILE}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(out, null, 2), "utf-8");
+    fs.renameSync(tmp, IDENTITY_FILE);
+  } catch {
+    return;
+  }
+  if (before.username !== out.username || before.display_name !== out.display_name || before.picture !== out.picture) {
+    const pic = kind === "photo" ? "its profile photo" : kind === "bitmoji" ? "its Bitmoji" : "no picture";
+    console.log(`[Snap] Signed in as ${out.display_name || out.username} (@${out.username}), with ${pic}.`);
+  }
+}
+
+/**
+ * The login, with the name the account has now to try next when it has been
+ * renamed since the login was saved (see SnapBot.enterUsername). Only a saved
+ * username is swapped: an email address or a phone number does not change
+ * with a rename.
+ */
+function loginDetails() {
+  let now = "";
+  try { now = JSON.parse(fs.readFileSync(IDENTITY_FILE, "utf-8")).username || ""; } catch { /* never recorded */ }
+  const saved = String(CREDENTIALS.username || "");
+  const isName = !saved.includes("@") && !/^\+?\d[\d\s-]{6,}$/.test(saved);
+  return { ...CREDENTIALS, alternates: now && isName && now.toLowerCase() !== saved.toLowerCase() ? [now] : [] };
+}
+
+/**
  * Rewrite the current state once a minute while running.
  *
  * States are only written when they change, so without this a healthy runner
@@ -143,6 +283,12 @@ function connectWake(retry = 0) {
         continue;
       }
       if (msg && msg.kind === "response" && onResponsePoke) onResponsePoke();
+      // Something the panel's Chats tab wants done: read a conversation, send a message. Done at the next point the
+      // bot is between two of its own steps (see processPanel); woken now if it is only waiting.
+      if (msg && msg.kind === "panel" && msg.id) {
+        panelQueue.push(msg);
+        if (onResponsePoke) onResponsePoke();
+      }
     }
   });
   sock.on("error", () => {
@@ -152,6 +298,17 @@ function connectWake(retry = 0) {
     if (wakeSock === sock) wakeSock = null;
     backoff();
   });
+}
+
+/** Something for Python that is more than a poke: a request's answer, a conversation as read. */
+function tellPython(data) {
+  if (!wakeSock) return false;
+  try {
+    wakeSock.write(JSON.stringify(data) + "\n");
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Tell Python to look now. Silent no-op when nothing is connected. */
@@ -189,6 +346,9 @@ const SAVE_MESSAGES = (process.env.SNAP_SAVE_MESSAGES || "true").toLowerCase() !
 // Accept a small batch every interval (interleaved with chatting).
 const FRIEND_ADD_INTERVAL_MS = parseInt(process.env.SNAP_FRIEND_ADD_INTERVAL_MS || "20000"); // 20s
 const FRIEND_ADD_BATCH = parseInt(process.env.SNAP_FRIEND_ADD_BATCH || "5");
+// How long a friend request waits before it is accepted, in seconds, as Discord's do (bot.friend_requests).
+const ACCEPT_DELAY_MIN = parseInt(process.env.SNAP_ACCEPT_DELAY_MIN || "0") || 0;
+const ACCEPT_DELAY_MAX = parseInt(process.env.SNAP_ACCEPT_DELAY_MAX || "0") || 0;
 
 // ── Anti-ban send governor ────────────────────────────────────────────────────
 // The #1 flag trigger is BURSTS: many messages in a short window on a robotic
@@ -248,10 +408,12 @@ function delay(ms) {
 }
 
 /**
- * Simulate realistic typing delay based on message length (~10-18 chars/sec).
+ * Simulate realistic typing delay based on message length. ~3.5-7 chars/sec is
+ * a real person on a keyboard or phone (research: ~36 WPM on mobile); the old
+ * 10-18 was superhuman and visible to whoever is watching the typing bubble.
  */
 function typingDelay(text) {
-  const cps = 10 + Math.random() * 8; // chars per second
+  const cps = 3.5 + Math.random() * 3.5; // chars per second
   const ms = Math.max(TYPING_DELAY_BASE_MS, (text.length / cps) * 1000);
   return delay(ms);
 }
@@ -296,11 +458,378 @@ function recordSend() {
   _lastSendAt = Date.now();
   _sendTimes.push(_lastSendAt);
   _nextGap = MIN_SEND_GAP_MS + Math.random() * Math.max(0, MAX_SEND_GAP_MS - MIN_SEND_GAP_MS);
+  // Humans drift off mid-conversation: occasionally the next reply takes a
+  // few minutes, so the gap never settles into a metronome.
+  if (Math.random() < 0.08) {
+    _nextGap += (120 + Math.random() * 180) * 1000;
+  }
 }
 
 /** Poll interval with ±30% jitter so the cadence isn't robotically constant. */
 function jitteredPoll() {
   return Math.round(POLL_INTERVAL_MS * (0.7 + Math.random() * 0.6));
+}
+
+// ── Conversations for the panel's Chats tab ───────────────────────────────────
+// Snapchat for Web gives its messages no ids and no times, only the day written
+// above them. Each message read gets a key made of the chat, that day, who sent
+// it, its words, and which of the same it is that day, so reading the same
+// conversation again finds the same keys and the panel's log never doubles one.
+const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+const MONTHS_FR = ["janv", "fevr", "mars", "avr", "mai", "juin", "juil", "aout", "sept", "oct", "nov", "dec"];
+const WEEKDAYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+const WEEKDAYS_FR = ["dim", "lun", "mar", "mer", "jeu", "ven", "sam"];
+const MONTH_FIRST = /^en-us/i.test((process.env.SNAP_LOCALE || "en-US").trim());
+
+function isoDay(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/** The day a label above some messages names, as YYYY-MM-DD: "Today", "Yesterday", "Monday", "Sep 28", "September 28, 2025", "28/09/2025". "" when it names none. */
+function dayOfLabel(label, now = new Date()) {
+  let v = String(label || "").toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[\u2018\u2019]/g, "'");
+  v = v.replace(/\b\d{1,2}[:h]\d{2}(\s*[ap]m)?/g, " ").replace(/[,.]/g, " ").replace(/\s+/g, " ").trim();
+  if (!v) return "";
+  const ago = (days) => {
+    const d = new Date(now);
+    d.setHours(12, 0, 0, 0);
+    d.setDate(d.getDate() - days);
+    return isoDay(d);
+  };
+  if (/^(today|aujourd'?hui)$/.test(v)) return ago(0);
+  if (/^(yesterday|hier)$/.test(v)) return ago(1);
+  if (!/\d/.test(v)) {
+    const i = [...WEEKDAYS, ...WEEKDAYS_FR].findIndex((w) => v.startsWith(w));
+    if (i >= 0) {
+      for (let k = 1; k <= 7; k++) {
+        const d = new Date(now);
+        d.setDate(d.getDate() - k);
+        if (d.getDay() === i % 7) return ago(k);
+      }
+    }
+    return "";
+  }
+  const num = v.match(/^(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?$/);
+  let y = 0, m = 0, d = 0;
+  if (num) {
+    const [a, b] = [+num[1], +num[2]];
+    [m, d] = MONTH_FIRST ? (a > 12 ? [b, a] : [a, b]) : (b > 12 ? [a, b] : [b, a]);
+    y = num[3] ? (+num[3] < 100 ? 2000 + +num[3] : +num[3]) : 0;
+  } else {
+    for (const w of v.split(" ")) {
+      const mi = Math.max(MONTHS.findIndex((x) => w.startsWith(x)), MONTHS_FR.findIndex((x) => w.startsWith(x)));
+      if (/^[a-z]/.test(w) && mi >= 0 && !m) m = mi + 1;
+      else if (/^\d{4}$/.test(w)) y = +w;
+      else if (/^\d{1,2}(st|nd|rd|th|er)?$/.test(w)) d = parseInt(w, 10);
+    }
+  }
+  if (!m || !d) return "";
+  if (!y) {
+    y = now.getFullYear();
+    if (new Date(y, m - 1, d) > now) y -= 1;       // "Dec 30" read in January was last year's
+  }
+  const at = new Date(y, m - 1, d, 12);
+  return at.getMonth() === m - 1 ? isoDay(at) : "";
+}
+
+/** The messages as read, each with its key and its day. */
+// Snapchat's reactions: in the order its React picker shows them, and the picture each is drawn with (the part of
+// its address after /d/). A picture it does not know is shown as itself.
+const REACTIONS = ["❤️", "😂", "🔥", "👍", "👎", "😰", "🤯", "❓"];
+const REACTION_PICTURES = {
+  zIo4rYPDHUTUzlJagiLos: "❤️", hPsjuqrILjrrdt6U3kt6h: "😂", lPdlkKti9OurpfsWYqnDq: "🔥", g1eEeq3Tau8maYLqViXt5: "👍",
+  tfK3eLNpxqdRfwiUABOBQ: "👎", muOvtDsQWy321fbIYIm1R: "😰", ZfiC0jJB3F4WBbEGlIFqW: "🤯", "5vpAIaiDyVKWaLwcW4QVZ": "❓",
+};
+
+/** The reactions read off a message, one each per person, as the Chats tab draws them: one per emoji, how many, and whether the account's own is one. */
+function reactionsFrom(raw) {
+  const out = [];
+  for (const r of Array.isArray(raw) ? raw : []) {
+    const id = (String(r.src || "").match(/\/d\/([A-Za-z0-9_-]+)/) || [])[1] || "";
+    const name = REACTION_PICTURES[id] || "";
+    const key = name || r.src;
+    let hit = out.find((x) => (x.name || x.url) === key);
+    if (!hit) {
+      hit = name ? { name, count: 0, mine: false } : { name: "", url: r.src, count: 0, mine: false };
+      out.push(hit);
+    }
+    hit.count++;
+    if (r.mine) hit.mine = true;
+  }
+  return out;
+}
+
+// The account's own name as Snapchat writes it over its reactions, learned from the React picker: tells its
+// reactions from the other side's. Kept with the contacts, so a restart still knows it.
+const SELF_FILE = path.join(DATA_DIR, "cache", "snap_people", `self_${ACCOUNT_INDEX}.json`);
+let ownName = (() => {
+  try {
+    return String(JSON.parse(fs.readFileSync(SELF_FILE, "utf-8")).name || "");
+  } catch {
+    return "";
+  }
+})();
+function rememberOwnName(name) {
+  if (!name || name === ownName) return;
+  ownName = name;
+  try {
+    fs.mkdirSync(path.dirname(SELF_FILE), { recursive: true });
+    fs.writeFileSync(SELF_FILE, JSON.stringify({ name }));
+  } catch { /* known for this run */ }
+}
+
+function keyed(chatId, raw) {
+  const seen = new Map();
+  let day = isoDay(new Date());
+  // Messages above the first label Snapchat shows belong to the day of that label, not to today.
+  const firstLabel = raw.find((m) => dayOfLabel(m.day));
+  if (firstLabel) day = dayOfLabel(firstLabel.day);
+  return raw.map((m) => {
+    // The exact moment it was sent, where the page gives one, says the day better than any label.
+    const named = m.at ? isoDay(new Date(m.at)) : dayOfLabel(m.day);
+    if (named) day = named;
+    const body = m.text || `[${m.kind || "message"}]`;
+    const base = `${chatId}|${day}|${m.mine ? 1 : 0}|${body}`;
+    const n = (seen.get(base) || 0) + 1;
+    seen.set(base, n);
+    return {
+      key: "s" + createHash("sha1").update(`${base}|${n}`).digest("hex").slice(0, 24),
+      mine: !!m.mine, text: m.text || "", kind: m.kind || "", day,
+      at: m.at || 0, links: Array.isArray(m.links) ? m.links : [],
+      reactions: reactionsFrom(m.reactions),
+    };
+  });
+}
+
+/** The open conversation, read and keyed. Empty when it is not open. `shownAs` is the id the page opened it under,
+ * when that was through search and is not the one asked for. */
+async function transcript(bot, chatId, shownAs = chatId) {
+  try {
+    return keyed(chatId, (await bot.readConversation(shownAs, ownName)) || []);
+  } catch {
+    return [];
+  }
+}
+
+/** A reaction from the Chats tab on one message of the open conversation, found by its key; the message's reactions after. */
+async function reactTo(bot, chatId, shownAs, req) {
+  const choice = REACTIONS.indexOf(String(req.emoji || ""));
+  if (choice < 0) return { ok: false, reason: `Snapchat only has ${REACTIONS.join(" ")}` };
+  await delay(400);                         // the conversation finishes drawing
+  const index = (await transcript(bot, chatId, shownAs)).findIndex((m) => m.key === String(req.key || ""));
+  if (index < 0) return { ok: false, reason: "that message is not in the conversation on Snapchat's page any more" };
+  const done = await bot.react(shownAs, index, choice, !!req.remove, ownName);
+  rememberOwnName(done.name);
+  if (!done.ok) return { ok: false, reason: done.reason };
+  const after = await transcript(bot, chatId, shownAs);
+  const m = after.find((x) => x.key === req.key) || after[index];
+  const mine = (m?.reactions || []).find((r) => r.mine);
+  // Read back off the page: the reaction is there, or gone, or Snapchat did not take it.
+  if (req.remove ? mine?.name === req.emoji : mine?.name !== req.emoji) {
+    return { ok: false, reason: "Snapchat did not take it; try again" };
+  }
+  return { ok: true, reactions: m?.reactions || [] };
+}
+
+/** Hand the conversation as it now reads to Python, which keeps it for the panel and tells the panel what is new. */
+async function shareTranscript(bot, chatId, name) {
+  if (!wakeSock) return;
+  const messages = await transcript(bot, chatId);
+  if (messages.length) tellPython({ kind: "transcript", chat: chatId, name: name || "", messages: messages.slice(-120) });
+}
+
+// Who each chat is, with their picture, for the panel: names and pictures are
+// read off the chat list as the bot goes through it, and each picture is saved
+// here (cache/snap_people) when it changes, so the panel never asks Snapchat.
+const PEOPLE_DIR = path.join(DATA_DIR, "cache", "snap_people");
+const CONTACTS_FILE = path.join(PEOPLE_DIR, `contacts_${ACCOUNT_INDEX}.json`);
+let contacts = null;
+let contactsDirty = false;
+// Pictures that would not download this session: not asked for again on every pass.
+const failedPictures = new Set();
+
+function loadContacts() {
+  if (contacts) return contacts;
+  try {
+    contacts = JSON.parse(fs.readFileSync(CONTACTS_FILE, "utf-8")) || {};
+  } catch {
+    contacts = {};
+  }
+  return contacts;
+}
+
+async function rememberContacts(list) {
+  const known = loadContacts();
+  let fetched = 0;
+  for (const r of list || []) {
+    if (!r || !r.id || !/^[A-Za-z0-9_-]{1,80}$/.test(r.id)) continue;
+    const was = known[r.id] || {};
+    const now = { ...was, name: r.name || was.name || "", seen: Date.now() / 1000 };
+    // A row drawn without its picture yet keeps the one already saved: only a new picture replaces it.
+    if (r.avatar && r.avatar !== was.url && !failedPictures.has(r.avatar)) {
+      if (fetched < 3 && PICTURE_HOSTS.test(r.avatar)) {
+        // A few at a time, between the bot's own steps; the rest on a later pass.
+        fetched++;
+        fs.mkdirSync(PEOPLE_DIR, { recursive: true });
+        const file = await savePictureTo(r.avatar, path.join(PEOPLE_DIR, `${ACCOUNT_INDEX}_${r.id}`));
+        if (file) {
+          if (was.file && was.file !== file) {
+            try { fs.unlinkSync(path.join(PEOPLE_DIR, was.file)); } catch { /* already gone */ }
+          }
+          now.url = r.avatar;
+          now.file = file;
+        } else {
+          failedPictures.add(r.avatar);
+        }
+      }
+    }
+    if (JSON.stringify(now) !== JSON.stringify({ ...was, seen: now.seen }) || !was.seen || now.seen - was.seen > 3600) {
+      known[r.id] = now;
+      contactsDirty = true;
+    }
+  }
+  if (contactsDirty) {
+    contactsDirty = false;
+    try {
+      fs.mkdirSync(PEOPLE_DIR, { recursive: true });
+      const tmp = `${CONTACTS_FILE}.${process.pid}.tmp`;
+      fs.writeFileSync(tmp, JSON.stringify(known, null, 1), "utf-8");
+      fs.renameSync(tmp, CONTACTS_FILE);
+    } catch {
+      contactsDirty = true;               // the next pass tries again
+    }
+  }
+}
+
+/** A picture from Snapchat's CDN saved as `stem` plus its own extension. The file's name, or "" when it could not be. */
+async function savePictureTo(url, stem) {
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(15000), headers: { "user-agent": BROWSER_UA } });
+    if (!res.ok) return "";
+    const type = res.headers.get("content-type") || "";
+    const ext = type.includes("png") ? "png" : type.includes("jpeg") || type.includes("jpg") ? "jpg" : type.includes("webp") ? "webp" : "";
+    if (!ext) return "";
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.length < 100 || buf.length > 3_000_000) return "";
+    fs.writeFileSync(`${stem}.${ext}`, buf);
+    return path.basename(`${stem}.${ext}`);
+  } catch {
+    return "";
+  }
+}
+
+// Snapchat's own chats: there is nobody in them to answer.
+const SYSTEM_CHATS = ["my ai", "team snapchat"];
+
+// The panel's requests, done one at a time between the bot's own steps: there
+// is one page, and two things driving it at once would click into each other.
+const panelQueue = [];
+
+async function openChat(bot, chatId) {
+  if (await bot.page.$(`#cv-${chatId}`).catch(() => null)) return true;
+  try {
+    await bot.sendMessage({ chat: chatId, message: "", alreadyOpen: false });
+    await bot.page.waitForSelector(`#cv-${chatId}`, { timeout: 6000 });
+    return true;
+  } catch {
+    return !!(await bot.page.$(`#cv-${chatId}`).catch(() => null));
+  }
+}
+
+// The friend requests last read, and when: the Chats tab and Big Picture both ask, and each look opens Snapchat's
+// requests panel on the bot's page, so an answer up to three minutes old is given instead of opening it again.
+let friendRequestsSeen = [];
+let friendRequestsAt = 0;
+
+async function panelRequest(bot, req) {
+  // Friend requests are not about a chat.
+  if (req.op === "friends") {
+    if (Date.now() - friendRequestsAt > 180000) {
+      friendRequestsSeen = await bot.readFriendRequests();
+      friendRequestsAt = Date.now();
+    }
+    return { ok: true, requests: friendRequestsSeen };
+  }
+  if (req.op === "friend") {
+    const done = await bot.answerFriendRequest(String(req.name || ""), req.accept !== false);
+    friendRequestsAt = 0;                   // read again next time
+    return done ? { ok: true } : { ok: false, reason: req.accept === false ? "Snapchat has no way to turn it down here" : "that request is not there any more" };
+  }
+  const chatId = String(req.chat || "");
+  if (!/^[A-Za-z0-9_-]{1,80}$/.test(chatId)) return { ok: false, reason: "which chat?" };
+  // Whether something new was waiting in it, asked before opening it, since opening it is what marks it read.
+  const wasUnread = req.op === "history" ? await bot.isUnread(chatId) : false;
+  // Not in the list right now (an older chat Snapchat no longer shows): opened through its search, by name, as the
+  // bot's own fallback for sending does, and the search emptied again once done.
+  let shownAs = chatId;
+  let searched = false;
+  if (!(await openChat(bot, chatId))) {
+    const name = req.name || loadContacts()[chatId]?.name || "";
+    const found = name ? await bot.openViaSearch(name) : "";
+    if (!found) return { ok: false, reason: "that chat is not in Snapchat's list right now" };
+    shownAs = found;
+    searched = true;
+  }
+  try {
+    return await panelAct(bot, req, chatId, shownAs, wasUnread);
+  } finally {
+    if (searched) await bot.clearSearch();
+  }
+}
+
+async function panelAct(bot, req, chatId, shownAs, wasUnread) {
+  if (req.op === "history") {
+    await delay(450);                       // the conversation finishes drawing
+    // Opened with something new in it, the bot would now never see it as unread: it is read the bot's own way as well,
+    // and what is new is answered as usual. One already read is only looked at, so opening an old conversation never
+    // has the bot answer a message from days ago.
+    const name = req.name || loadContacts()[chatId]?.name || chatId;
+    // Snapchat's own chats (My AI, Team Snapchat) are left out of the bot's passes, so never answered from here either.
+    if (wasUnread && !SYSTEM_CHATS.includes(String(name).toLowerCase().trim())) {
+      try { await readChat(bot, chatId, name); } catch { /* the transcript is still read below */ }
+    }
+    return { ok: true, messages: await transcript(bot, chatId, shownAs) };
+  }
+  if (req.op === "send") {
+    const text = String(req.text || "").slice(0, 2000);
+    const images = (Array.isArray(req.images) ? req.images : []).filter((p) => typeof p === "string" && fs.existsSync(p));
+    if (!text && !images.length) return { ok: false, reason: "nothing to send" };
+    for (const imagePath of images) {
+      await bot.sendImageSnap({ chat: shownAs, name: req.name || chatId, imagePath, caption: "" });
+      recordSend();
+      await openChat(bot, shownAs);
+    }
+    if (text) {
+      const sent = await bot.typeInOpenChat(shownAs, text);
+      if (!sent) return { ok: false, reason: "Snapchat did not take the message; try again" };
+      recordSend();
+    }
+    await delay(700);
+    const messages = await transcript(bot, chatId, shownAs);
+    let key = "";
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].mine && (!text || messages[i].text === text)) {
+        key = messages[i].key;
+        break;
+      }
+    }
+    return { ok: true, messages, sent: key };
+  }
+  if (req.op === "react") return await reactTo(bot, chatId, shownAs, req);
+  return { ok: false, reason: `unknown request ${req.op}` };
+}
+
+async function processPanel(bot) {
+  while (panelQueue.length) {
+    const req = panelQueue.shift();
+    let out;
+    try {
+      out = await panelRequest(bot, req);
+    } catch (e) {
+      out = { ok: false, reason: (e && e.message) || String(e) };
+    }
+    tellPython({ kind: "panel_result", id: req.id, ...out });
+  }
 }
 
 // ── Per-chat seen-message tracking (in memory, resets on restart) ─────────────
@@ -448,6 +977,7 @@ async function drainReadyResponses(bot) {
     if (ok) {
       recordSend(); // governor: count it + roll the next randomised gap
       console.log(`  ✅ sent to ${name}`);
+      await shareTranscript(bot, chatId, name);
       // Small human gap, only after an actual send, never behind a failure.
       await delay(500 + Math.random() * 900);
     } else if (attempts >= MAX_SEND_ATTEMPTS) {
@@ -474,11 +1004,31 @@ let lastFriendAdd = 0;
  * between chats, during reply-drain) so requests get accepted even while the
  * bot is busy. Cheap when idle (interval gate + pending-badge check).
  */
+// When the requests seen waiting are accepted; 0 while none are.
+let friendsDueAt = 0;
+
 async function maybeAcceptFriends(bot) {
   if (!AUTO_ADD_FRIENDS) return;
   if (Date.now() - lastFriendAdd <= FRIEND_ADD_INTERVAL_MS) return;
   lastFriendAdd = Date.now();
   try {
+    // A few minutes after a request shows, as Discord's are, not the moment it does.
+    if (ACCEPT_DELAY_MAX > 0) {
+      if (!(await bot.hasPendingFriendBadge())) {
+        friendsDueAt = 0;
+        return;
+      }
+      if (!friendsDueAt) {
+        const lo = Math.max(0, ACCEPT_DELAY_MIN);
+        const hi = Math.max(lo, ACCEPT_DELAY_MAX);
+        const wait = (lo + Math.random() * (hi - lo) + Math.random() * 120) * 1000;
+        friendsDueAt = Date.now() + wait;
+        console.log(`[Snap] 👥 Friend request waiting, accepting in ${Math.round(wait / 1000)}s.`);
+        return;
+      }
+      if (Date.now() < friendsDueAt) return;
+      friendsDueAt = 0;
+    }
     const added = await bot.addPendingFriends(FRIEND_ADD_BATCH);
     if (added > 0) console.log(`[Snap] 👥 Accepted ${added} friend request(s).`);
   } catch (frErr) {
@@ -586,6 +1136,7 @@ async function attemptRelogin(bot) {
     relogin.attempts = 0;
     relogin.nextAt = 0;
     setState("ready");
+    await recordIdentity(bot);
     return true;
   }
   relogin.attempts++;
@@ -619,7 +1170,8 @@ async function _attemptReloginOnce(bot) {
     return false;
   }
   try {
-    await bot.login(CREDENTIALS);
+    await bot.login(loginDetails());
+    if (bot.lastLoginError && !(await handToPerson(bot, process.env.SNAP_HEADLESS === "true"))) return false;
     await delay(5000);
     if (bot.page.url().includes("accounts.snapchat.com")) {
       await bot.page.goto("https://web.snapchat.com/", { waitUntil: "networkidle2", timeout: 60000 });
@@ -721,6 +1273,7 @@ async function drainWindow(bot, ms) {
   const until = Date.now() + ms;
   while (Date.now() < until) {
     await sleepOrPoke(2000);
+    try { await processPanel(bot); } catch { /* answered inside */ }
     if (DECLINE_CALLS) {
       try { await handleIncomingCall(bot); } catch { /* ignore */ }
     }
@@ -769,6 +1322,8 @@ async function readChat(bot, chatId, chatName) {
   }
 
   const newMessages = extractNewMessages(chatId, chatData);
+  // The panel keeps the conversation as it now reads, and shows what is new in it.
+  await shareTranscript(bot, chatId, chatName);
 
   // Open + screenshot an incoming Snap so the AI can actually see it. Gated on
   // a cheap cue check + per-chat cooldown so an un-openable snap can't loop.
@@ -870,13 +1425,14 @@ async function processOutgoing(bot) {
 
   // ── Picture / Snap send (mirrors Discord attaching a photo) ───────────────
   if (image) {
-    console.log(`[Snap] 📸 Sending picture to ${name}: ${image}`);
+    const kind = /\.mp4$/i.test(image) ? "Video" : "Picture";
+    console.log(`[Snap] 📸 Sending ${kind.toLowerCase()} to ${name}: ${image}`);
     try {
       await bot.sendImageSnap({ chat, name, imagePath: image, caption: message || "" });
       recordSend(); // governor: count it + roll the next gap
-      console.log(`[Snap] ✅ Picture sent to ${name}`);
+      console.log(`[Snap] ✅ ${kind} sent to ${name}`);
     } catch (err) {
-      console.error(`[Snap] Picture send failed to ${name}:`, err.message);
+      console.error(`[Snap] ${kind} send failed to ${name}:`, err.message);
     }
     return;
   }
@@ -885,11 +1441,43 @@ async function processOutgoing(bot) {
   try {
     await typingDelay(message);
     const sent = await bot.sendMessage({ chat, message, alreadyOpen: false, exit: false });
-    if (sent) { recordSend(); console.log(`[Snap] ✅ Proactive send complete to ${name}`); }
+    if (sent) {
+      recordSend();
+      console.log(`[Snap] ✅ Proactive send complete to ${name}`);
+      await shareTranscript(bot, chat, name);
+    }
     else console.warn(`[Snap] ${name}'s chat wasn't visible, proactive send skipped.`);
   } catch (err) {
     console.error(`[Snap] Proactive send failed to ${name}:`, err.message);
   }
+}
+
+/**
+ * Snapchat turned the automatic login down: say so, with what it said, and
+ * wait for a person to log in in the window, however long that takes. The
+ * window is the only place it can be done, so it stays open. Headless there is
+ * no window to use, and the card says how to get one.
+ * @returns {Promise<boolean>} true once someone has logged in
+ */
+async function handToPerson(bot, headless) {
+  const why = bot.lastLoginError;
+  // The card gets Snapchat's first sentence; the log gets the rest.
+  let said = (why.match(/^[^.!?]*[.!?]/) || [why])[0].trim();
+  if (said.length > 90) said = said.slice(0, 88).trimEnd() + "…";
+  setState("needs-login", headless
+    ? `Snapchat blocked the automatic login ("${said}"). Turn off "Hide the browser window", restart it, and log in yourself in its window.`
+    : `Snapchat blocked the automatic login ("${said}"). Log in yourself in its Chrome window, once; it carries on from there.`);
+  if (/couldn.?t find|accountnotfound/i.test(why)) {
+    console.error("[Snap] Snapchat says it cannot find the account to automatic logins it does not trust, even for accounts that exist.");
+  }
+  console.error("[Snap] Log in yourself in the Chrome window; it carries on as soon as you are in.");
+  const through = await bot.awaitEmailVerification(0, "Waiting for you to log in in the Chrome window");
+  if (!through) {
+    console.error("[Snap] The window closed before anyone logged in. Start the account again from the panel.");
+    return false;
+  }
+  setState("starting", "opening the chats");
+  return true;
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
@@ -907,26 +1495,47 @@ async function main() {
 
   setState("starting", "launching the browser");
   console.log(`[Snap] Launching Snapchat (account #${ACCOUNT_INDEX}: ${CREDENTIALS.username})...`);
+  const headless = process.env.SNAP_HEADLESS === "true";
+  const locale = (process.env.SNAP_LOCALE || "en-US").trim() || "en-US";
   await bot.launchSnapchat(
     {
-      headless: process.env.SNAP_HEADLESS === "true",
+      headless,
       args: [
-        "--start-maximized",
+        // Turns off the flag Blink sets when it is being driven, so
+        // navigator.webdriver is genuinely false everywhere - workers and
+        // cross-origin frames included - instead of being patched to false in
+        // the main world only.
+        "--disable-blink-features=AutomationControlled",
+        // navigator.languages and the UI language, kept in step with the
+        // Accept-Language header and the emulated timezone set in snapbot.js.
+        `--lang=${locale}`,
+        // Maximised only when there is a window to maximise. Headless has no
+        // window, so snapbot.js adds --window-size with the size it picked for
+        // this profile; passing both makes Chrome report a viewport that does
+        // not match the window it says it has.
+        ...(headless ? [] : ["--start-maximized"]),
         "--force-device-scale-factor=1",
         "--allow-file-access-from-files",
         "--use-fake-ui-for-media-stream",
         "--enable-media-stream",
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
+        // Only where it is actually needed: containers and root on Linux.
+        // On Windows and macOS these turn off a sandbox that was working, for
+        // nothing, and the switches are visible to anything that looks.
+        ...(process.platform === "linux" ? ["--no-sandbox", "--disable-setuid-sandbox"] : []),
       ],
     },
     COOKIE_FILE
   );
 
+  // Each step says what it is doing: "launching the browser" used to stand
+  // for the whole minute or two of logging in, whatever was actually going on.
+  setState("starting", "checking the saved login");
   const isLogged = await bot.isLogged();
   if (!isLogged) {
     console.log("[Snap] Not logged in, starting login flow...");
-    await bot.login(CREDENTIALS);
+    setState("starting", "logging in");
+    await bot.login(loginDetails());
+    setState("starting", "waiting for Snapchat to let it in");
 
     // ── Post-login navigation ─────────────────────────────────────────────────
     // After credentials are accepted, Snapchat lands on one of:
@@ -937,6 +1546,17 @@ async function main() {
 
     let currentUrl = bot.page.url();
     console.log(`[Snap] Post-login URL: ${currentUrl}`);
+    const verifyWait = Number(process.env.SNAP_VERIFY_WAIT_MS || 0) || 0;
+
+    // Turned down at the form, which is not a verification to wait out.
+    // Snapchat says "couldn't find an account" to automatic logins it does not
+    // trust, even for an account that exists; a person logging in once in
+    // this window gets through, and the saved profile keeps it in after that.
+    if (bot.lastLoginError) {
+      const turnedDown = await handToPerson(bot, headless);
+      if (!turnedDown) return;
+      currentUrl = bot.page.url();
+    }
 
     // Email or code interstitial: wait for it to be finished in the browser.
     // SNAP_VERIFY_WAIT_MS sets a limit for anyone who wants one; the default
@@ -944,7 +1564,6 @@ async function main() {
     // point - closing it throws away a half-finished login and makes the next
     // attempt ask Snapchat for another code.
     if (currentUrl.includes("accounts.snapchat.com") && !currentUrl.includes("/welcome")) {
-      const verifyWait = Number(process.env.SNAP_VERIFY_WAIT_MS || 0) || 0;
       setState("awaiting-verification",
                "Snapchat wants an email or code. Finish it in the Chrome window.");
       const verified = await bot.awaitEmailVerification(verifyWait);
@@ -969,6 +1588,7 @@ async function main() {
     }
 
     // ── Confirm we're inside the app ─────────────────────────────────────────
+    setState("starting", "opening the chats");
     let loggedNow = false;
     for (let attempt = 0; attempt < 10; attempt++) {
       loggedNow = await bot.isLogged();
@@ -998,6 +1618,7 @@ async function main() {
     await bot.saveCookies(CREDENTIALS.username);
   } else {
     console.log("[Snap] Already logged in via cookies.");
+    setState("starting", "opening the chats");
     // Refresh the saved cookies so they don't go stale over time.
     try {
       await bot.saveCookies(CREDENTIALS.username);
@@ -1018,6 +1639,7 @@ async function main() {
 
   setState("ready");
   await reportSelectorHealth(bot);
+  await recordIdentity(bot);
   console.log(`[Snap] Ready. Polling every ~${Math.round(POLL_INTERVAL_MS / 1000)}s for new messages...`);
   console.log(
     `[Snap] 🛡️ Anti-ban: ${Math.round(MIN_SEND_GAP_MS / 1000)}–${Math.round(MAX_SEND_GAP_MS / 1000)}s between sends, ` +
@@ -1034,7 +1656,7 @@ async function main() {
   if (!fs.existsSync(PROCESSED_FILE)) writeJson(PROCESSED_FILE, []);
 
   // Names to ignore (case-insensitive), Snapchat system bots
-  const IGNORED_NAMES = ["my ai", "team snapchat"];
+  const IGNORED_NAMES = SYSTEM_CHATS;
 
   // ── Main polling loop ─────────────────────────────────────────────────────
   // Each cycle: (1) send any replies the AI has finished, (2) drain proactive
@@ -1057,6 +1679,7 @@ async function main() {
   while (true) {
     heartbeatState();
     try {
+      await processPanel(bot);
       // 0. A long-lived page stops listing some chats. Refresh before reading,
       // never mid-reply - periodicReload() defers itself if one is pending.
       if (RELOAD_INTERVAL_MS > 0) {
@@ -1067,6 +1690,7 @@ async function main() {
             // A reload is when a new Snapchat build arrives, so it is also
             // when a selector is most likely to have just stopped matching.
             await reportSelectorHealth(bot);
+            await recordIdentity(bot, { maxAgeHours: 6 });
           }
         } catch (rlErr) {
           console.warn("[Snap] Refresh error:", rlErr.message);
@@ -1117,6 +1741,11 @@ async function main() {
           ? await bot.listRecipientsWithUnread()
           : await bot.listRecipients();
         listFailures = 0; // got the list, session is healthy
+        try { await rememberContacts(recipients); } catch { /* names and pictures wait for the next pass */ }
+        // Someone writing to the account right now, as the list says: the panel shows the same dots as for Discord.
+        for (const r of recipients || []) {
+          if (r.typing && !SYSTEM_CHATS.includes(String(r.name || "").toLowerCase().trim())) tellPython({ kind: "typing", chat: r.id });
+        }
       } catch (err) {
         console.warn("[Snap] Could not list recipients:", err.message);
         // The chat list only goes missing when the app isn't open, usually a
@@ -1146,9 +1775,14 @@ async function main() {
       if (ONLY_UNREAD) targets = targets.filter((r) => r.unread);
       targets = targets.slice(0, MAX_RECIPIENTS);
 
+      // A person glances at the app a beat before diving in; without this the
+      // first chat of every pass opens right on the poll edge, every time.
+      await delay(500 + Math.random() * 2500);
+
       for (const recipient of targets) {
         if (!recipient.id) continue;
         await readChat(bot, recipient.id, recipient.name);
+        await processPanel(bot);
         // Accept pending friends BETWEEN conversations so a long backlog of
         // chats doesn't starve the acceptor (throttled inside).
         await maybeAcceptFriends(bot);

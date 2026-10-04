@@ -24,7 +24,8 @@ export type Sub = {
   /** Config keys, in display order. */
   keys?: string[];
   /** A bespoke panel instead of a key list. */
-  panel?: "theme" | "typeface" | "interface" | "profiles" | "snapchat-setup" | "env" | "local";
+  panel?: "theme" | "typeface" | "interface" | "profiles" | "snapchat-setup" | "env" | "local"
+    | "models" | "providers" | "usage" | "telegram" | "pictures";
   /** For panel "env": which .env sections and key families to show. */
   env?: { sections?: string[]; keyLists?: string[]; extras?: boolean };
   /** Collects whatever keys in `owns` no subtab claimed. */
@@ -45,17 +46,13 @@ export const TABS: Tab[] = [
   {
     id: "discord",
     name: "Discord",
-    icon: "accounts",
-    blurb: "Tokens, where it replies, presence",
+    icon: "discord",
+    blurb: "Where it replies, triggers, presence",
     owns: ["discord"],
+    // No Tokens subtab: accounts, their tokens and proxies are added, edited and
+    // removed on the Accounts page, and this was the same list a second time.
+    // The raw values are still under App, All variables.
     subs: [
-      {
-        id: "tokens",
-        name: "Tokens",
-        blurb: "One token per account. Each runs on its own.",
-        panel: "env",
-        env: { sections: ["Discord"], keyLists: ["discord"] },
-      },
       {
         id: "replies",
         name: "Where it replies",
@@ -72,10 +69,11 @@ export const TABS: Tab[] = [
         ],
       },
       {
+        // The trigger words moved to the Persona page, as the names it answers to.
         id: "triggers",
-        name: "Commands and triggers",
-        blurb: "What makes it reply, and who may command it.",
-        keys: ["bot.owner_id", "bot.prefix", "bot.priority_prefix", "bot.trigger"],
+        name: "Commands",
+        blurb: "Who may command it, and how.",
+        keys: ["bot.owner_id", "bot.prefix", "bot.priority_prefix"],
       },
       {
         id: "friends",
@@ -104,15 +102,15 @@ export const TABS: Tab[] = [
       },
       {
         id: "fingerprint",
-        name: "Client fingerprint",
+        name: "Client",
         blurb: "What the account looks like to Discord. Leave it alone unless you know why not.",
         keys: [
           "bot.client_profile",
           "bot.timezone",
           "bot.locale",
-          "bot.default_language",
           "bot.desktop.build_source",
           "bot.desktop.build_number",
+          "bot.cache.max_messages",
         ],
       },
       { id: "rest", name: "Everything else", rest: true },
@@ -123,7 +121,7 @@ export const TABS: Tab[] = [
     id: "snapchat",
     name: "Snapchat",
     icon: "snapchat",
-    blurb: "Install, logins, pacing",
+    blurb: "Install, browser, pacing",
     owns: ["snapchat"],
     subs: [
       {
@@ -133,21 +131,21 @@ export const TABS: Tab[] = [
         panel: "snapchat-setup",
       },
       {
-        id: "logins",
-        name: "Logins",
-        blurb: "Each login gets its own browser and cookies.",
-        panel: "env",
-        env: { sections: ["Snapchat account"], keyLists: ["snapchat"] },
-      },
-      {
         id: "browser",
         name: "Browser",
-        keys: ["snapchat.headless", "snapchat.response_timeout_ms"],
+        blurb: "The Chrome it drives: whether you see it, and how long it waits on it.",
+        keys: [
+          "snapchat.headless",
+          "snapchat.response_timeout_ms",
+          "snapchat.verify_wait_ms",
+          "snapchat.reload_interval_ms",
+        ],
       },
       {
+        // "pacing" as an id, so links made before the rename still land here.
         id: "pacing",
-        name: "Polling and limits",
-        blurb: "How often it looks, and how fast it is allowed to send.",
+        name: "Behaviour",
+        blurb: "How often it looks, how fast it may send, and friend requests.",
         keys: [
           "snapchat.poll_interval_ms",
           "snapchat.max_recipients",
@@ -155,9 +153,9 @@ export const TABS: Tab[] = [
           "snapchat.max_send_gap_ms",
           "snapchat.max_sends_per_hour",
           "snapchat.quiet_hours",
+          "snapchat.auto_add_friends",
         ],
       },
-      { id: "friends", name: "Friends", keys: ["snapchat.auto_add_friends"] },
       { id: "rest", name: "Everything else", rest: true },
     ],
   },
@@ -165,38 +163,35 @@ export const TABS: Tab[] = [
   {
     id: "groq",
     // Still "groq" as an id, because released builds and the doctor point at it
-    // by that name. The tab covers both providers now.
-    name: "AI provider",
+    // by that name. It covers every provider now.
+    name: "Models",
     icon: "sparkle",
-    blurb: "Keys, models, and running it locally",
+    blurb: "Which AI writes, sees, hears and speaks",
     subs: [
-      {
-        id: "keys",
-        name: "API keys",
-        blurb:
-          "When one hits its rate limit the bot falls through to the next, then to the next model.",
-        panel: "env",
-        env: { sections: ["Groq API"], keyLists: ["groq"] },
-      },
       {
         id: "models",
         name: "Models",
-        blurb: "Each picker only offers models that can do that particular job.",
-        keys: [
-          "bot.groq_models",
-          "bot.groq_small_model",
-          "bot.max_reply_tokens",
-          "bot.groq_image_model",
-          "bot.groq_whisper_model",
-          "bot.groq_tts_model",
-        ],
+        blurb: "Which model does each job, and what takes over when one is busy.",
+        panel: "models",
+      },
+      {
+        // "keys" as an id for the same reason: links to Groq's keys land here.
+        id: "keys",
+        name: "Providers",
+        blurb: "Connect the services the models come from.",
+        panel: "providers",
       },
       {
         id: "local",
-        name: "Local AI",
-        blurb:
-          "Write replies on this machine instead. No rate limits, no key, nothing leaves the computer.",
+        name: "This computer",
+        blurb: "Run models on this machine. No rate limits, and nothing leaves it.",
         panel: "local",
+      },
+      {
+        id: "usage",
+        name: "Usage",
+        blurb: "What each model has done today, and what is left of its limits.",
+        panel: "usage",
       },
     ],
   },
@@ -209,25 +204,42 @@ export const TABS: Tab[] = [
     owns: ["bot"],
     subs: [
       {
+        // Reply style and human touches used to be two subtabs, the first
+        // holding a single setting. Reactions used to sit here too; they are on
+        // the Persona page, with the moods, because how often this character
+        // laughs at something without a word is a trait, not a preference.
         id: "style",
-        name: "Reply style",
-        // Reactions used to sit here. They are on the Persona page now, with
-        // the moods, because how often this character laughs at something
-        // without saying anything is a trait and not a preference.
-        blurb: "How long replies are, and how they are broken up.",
-        keys: ["bot.message_style.mode", "bot.message_style.max_chunk_chars"],
-      },
-      {
-        id: "human",
-        name: "Human touches",
-        blurb: "Typing, typos, and not answering everything.",
+        name: "How it talks",
+        blurb: "How long its replies are, the language it falls back to, typos, and not answering everything.",
         keys: [
-          "bot.realistic_typing",
+          "bot.message_style.mode",
+          "bot.message_style.max_chunk_chars",
+          "bot.default_language",
           "bot.typo_chance",
           "bot.edit_after_send_chance",
           "bot.ignore_chance",
           "bot.trigger_bypasses_ignore",
           "bot.mention_bypasses_ignore",
+        ],
+      },
+      {
+        id: "typing",
+        name: "Typing",
+        blurb: "How long it reads and thinks before a reply, and how fast it types it.",
+        keys: [
+          "bot.realistic_typing",
+          "bot.typing.wpm_min",
+          "bot.typing.wpm_max",
+          "bot.typing.think_min",
+          "bot.typing.think_max",
+          "bot.typing.pause_chance",
+          "bot.typing.max_seconds",
+          "bot.read_delay_dm_min",
+          "bot.read_delay_dm_max",
+          "bot.read_delay_group_min",
+          "bot.read_delay_group_max",
+          "bot.read_delay_server_min",
+          "bot.read_delay_server_max",
         ],
       },
       {
@@ -260,10 +272,63 @@ export const TABS: Tab[] = [
         ],
       },
       {
+        // The switches for pictures and voice notes as rows, and under them a
+        // panel of its own (PicturesPanel.svelte): the look new pictures get,
+        // and what the AI may put on a picture as it sends it, on which accounts.
         id: "media",
         name: "Pictures and voice",
-        blurb: "Sending a selfie or a voice note when it fits.",
-        keys: ["bot.pictures.enabled", "bot.tts.enabled", "bot.tts.voice", "bot.tts.tones"],
+        blurb: "Sending a selfie or a voice note, filters on pictures, and what the AI may add to one.",
+        panel: "pictures",
+        keys: [
+          "bot.pictures.enabled",
+          "bot.pictures.video_max_mb",
+          "bot.tts.enabled",
+          "bot.tts.voice",
+          "bot.tts.tones",
+          "bot.pictures.auto_look.mode",
+          "bot.pictures.auto_look.look",
+          "bot.pictures.auto_look.looks",
+          "bot.pictures.auto_look.strength",
+          "bot.pictures.auto_look.vary",
+          "bot.pictures.touches.accounts",
+          "bot.pictures.touches.chance",
+          "bot.pictures.touches.kinds",
+        ],
+      },
+      {
+        id: "summaries",
+        name: "Memory summaries",
+        blurb: "The conversation summary shown when you open someone on the Memory page.",
+        keys: [
+          "bot.memory_summary.enabled",
+          "bot.memory_summary.messages",
+          "bot.memory_summary.length",
+          "bot.memory_summary.language",
+          "bot.memory_summary.include_my_messages",
+          "bot.memory_summary.refresh_minutes",
+        ],
+      },
+      {
+        id: "sampling",
+        name: "How it writes",
+        blurb: "The sampling settings sent with every reply, where the provider takes them.",
+        keys: [
+          "bot.sampling.temperature",
+          "bot.sampling.top_p",
+          "bot.sampling.frequency_penalty",
+          "bot.sampling.presence_penalty",
+        ],
+      },
+      {
+        id: "refusal",
+        name: "Refusals",
+        blurb: "Catching a reply that sounds like an assistant, and what to send instead.",
+        keys: [
+          "bot.refusal.enabled",
+          "bot.refusal.fallbacks",
+          "bot.refusal.extra_phrases",
+          "bot.refusal.replace_phrases",
+        ],
       },
       { id: "rest", name: "Everything else", rest: true },
     ],
@@ -277,9 +342,11 @@ export const TABS: Tab[] = [
     owns: ["services", "notifications"],
     subs: [
       {
+        // One switch a platform: each is drawn over both of its keys
+        // (services.X.enabled and X.enabled), which both had to be on.
         id: "services",
         name: "What runs",
-        blurb: "Both switches for a platform have to be on for it to start.",
+        blurb: "What starts with the app, and where the WebUI is served.",
         keys: [
           "services.discord.enabled",
           "discord.enabled",
@@ -287,27 +354,30 @@ export const TABS: Tab[] = [
           "snapchat.enabled",
           "services.telegram.enabled",
           "services.webui.enabled",
+          "services.webui.port",
+          "services.webui.bind",
         ],
       },
       {
-        id: "panel",
-        name: "webui",
-        blurb: "This page, and who can reach it.",
-        keys: ["services.webui.port", "services.webui.bind"],
-      },
-      {
+        // Its own panel (TelegramPanel.svelte): connecting the bot step by
+        // step, checking it, and what it can do. Two env values in boxes was
+        // all there was, with the template's placeholder text in them. Its
+        // alerts are here too, below the panel, since only it sends them.
         id: "telegram",
         name: "Telegram",
         blurb: "An optional second way to drive the bot, from your phone.",
-        panel: "env",
-        env: { sections: ["Telegram control bot"] },
+        panel: "telegram",
+        keys: [
+          "notifications.telegram_error_notifications",
+          "notifications.telegram_crash_alerts",
+          "notifications.telegram_quiet",
+        ],
       },
       {
         id: "alerts",
         name: "Error alerts",
-        blurb: "Being told when something breaks.",
+        blurb: "Being told when something breaks, on a Discord webhook.",
         keys: [
-          "notifications.telegram_error_notifications",
           "notifications.error_webhook",
           "notifications.ratelimit_notifications",
         ],
@@ -317,6 +387,8 @@ export const TABS: Tab[] = [
         name: "Stored profiles",
         blurb: "Names, avatars and bios kept on this machine.",
         panel: "profiles",
+        // Drawn by the panel; named here so it is not listed again elsewhere.
+        keys: ["bot.profile_cache.enabled"],
       },
       {
         id: "env",
@@ -382,25 +454,30 @@ export function restHomeOf(key: string): string | undefined {
  */
 const ALIASES: Record<string, string> = {
   // Current, written as words.
-  "discord tokens": "discord/tokens",
   "groq keys": "groq/keys",
   "groq api keys": "groq/keys",
   "groq models": "groq/models",
+  "models": "groq/models",
+  "ai provider": "groq/models",
+  "providers": "groq/keys",
+  "this computer": "groq/local",
   "local ai": "groq/local",
   "local models": "groq/local",
+  usage: "groq/usage",
+  "model usage": "groq/usage",
+  "rate limits": "groq/usage",
   "snapchat setup": "snapchat/setup",
-  "snapchat logins": "snapchat/logins",
   telegram: "app/telegram",
   services: "app/services",
-  "webui": "app/panel",
-  "control panel": "app/panel",
+  "webui": "app/services",
+  "control panel": "app/services",
   "error alerts": "app/alerts",
   // The old flat category names.
   general: "discord/triggers",
   behaviour: "discord/replies",
-  humanization: "ai/human",
+  humanization: "ai/style",
   conversation: "ai/followups",
-  mood: "ai/human",
+  mood: "ai/style",
   status: "discord/presence",
   notifications: "app/alerts",
   snapchat: "snapchat/setup",

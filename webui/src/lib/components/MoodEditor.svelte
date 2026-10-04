@@ -7,12 +7,17 @@
    * name to instruction is not something anyone should edit as JSON. Each mood
    * here is a name and a sentence, added, renamed, rewritten or removed.
    */
+  import { autowidth } from "../autowidth";
   import { onMount } from "svelte";
   import { api } from "../api";
+  import { usePersona } from "../personas/context";
   import { toast } from "../stores";
   import Button from "./Button.svelte";
   import Toggle from "./Toggle.svelte";
   import Icon from "./Icon.svelte";
+
+  /** The persona this edits (the page gives it): its own settings, on everyone's. "" is everyone's. */
+  const persona = usePersona();
 
   type Mood = { name: string; prompt: string };
 
@@ -94,7 +99,7 @@
 
   async function load() {
     try {
-      const cfg = await api.config();
+      const cfg = await api.config(persona);
       const mood = (cfg?.bot?.mood ?? {}) as any;
       enabled = mood.enabled !== false;
       minMinutes = Math.round((mood.shift_interval_min ?? 1800) / 60);
@@ -149,10 +154,10 @@
     try {
       const table: Record<string, string> = {};
       for (const m of clean) table[m.name] = m.prompt;
-      await api.configField("bot.mood.moods", table);
-      await api.configField("bot.mood.enabled", enabled);
-      await api.configField("bot.mood.shift_interval_min", minMinutes * 60);
-      await api.configField("bot.mood.shift_interval_max", maxMinutes * 60);
+      await api.configField("bot.mood.moods", table, { persona });
+      await api.configField("bot.mood.enabled", enabled, { persona });
+      await api.configField("bot.mood.shift_interval_min", minMinutes * 60, { persona });
+      await api.configField("bot.mood.shift_interval_max", maxMinutes * 60, { persona });
       moods = clean;
       stored = JSON.stringify({ moods, enabled, minMinutes, maxMinutes });
       toast("Moods saved.", "ok");
@@ -187,12 +192,14 @@
       <span class="text-[12px] text-muted">Change mood every</span>
       <input
         type="number" min="1" max="1440" bind:value={minMinutes}
-        class="field w-20 text-center font-mono text-[12px]"
+        class="field text-center font-mono text-[12px]"
+        use:autowidth={{ value: minMinutes }}
       />
       <span class="text-[12px] text-muted">to</span>
       <input
         type="number" min="1" max="1440" bind:value={maxMinutes}
-        class="field w-20 text-center font-mono text-[12px]"
+        class="field text-center font-mono text-[12px]"
+        use:autowidth={{ value: maxMinutes }}
       />
       <span class="text-[12px] text-muted">minutes</span>
     </div>

@@ -1,19 +1,4 @@
-"""
-utils/session.py - REST sessions aligned to the gateway's client profile.
-
-Two goals:
-  1. Every raw REST call (friend requests, voice, profile edits) presents the
-     SAME fingerprint as the gateway connection, so Discord never sees two
-     different "clients" on one account.
-  2. Optional desktop-client spoof: instead of the web client profile
-     (browser: Chrome), identify as the Discord desktop app
-     (browser: "Discord Client") on both gateway and REST.
-
-The gateway (discord.py-self) builds its live Headers once at startup. The
-runner hands that object to set_gateway_headers() (web mode) or swaps in a
-desktop profile via build_desktop_headers() and hands THAT in. make_chrome_headers()
-then derives everything from the gateway object so the two sides can't drift.
-"""
+"""REST sessions aligned to the gateway's client profile. Two goals: every raw REST call (friend requests, voice, profile edits) presents the SAME fingerprint as the gateway connection, so Discord never sees two different "clients" on one account, and optional desktop-client spoof identifies as the Discord desktop app (browser: "Discord Client") on both gateway and REST instead of the web client profile. The gateway (discord.py-self) builds its live Headers once at startup; the runner hands that object to set_gateway_headers() (web mode) or swaps in a desktop profile via build_desktop_headers(), and make_chrome_headers() then derives everything from the gateway object so the two sides can't drift."""
 
 import base64
 import json
@@ -22,10 +7,7 @@ import time as _time
 
 from curl_cffi.requests import AsyncSession, impersonate
 
-# curl_cffi 0.14+: DEFAULT_CHROME is a concrete target (e.g. "chrome142").
-# The gateway itself impersonates exactly this target for its websocket TLS,
-# so REST should use the same one - a random older target (110-124) was a
-# visible mismatch with the gateway's UA.
+# curl_cffi 0.14+: DEFAULT_CHROME is a concrete target (e.g. "chrome142"). The gateway itself impersonates exactly this target for its websocket TLS, so REST should use the same one, a random older target (110-124) was a visible mismatch with the gateway's UA.
 _TLS_TARGET = getattr(impersonate, "DEFAULT_CHROME", "chrome124")
 _TLS_MAJOR = int(re.search(r"(\d+)", _TLS_TARGET).group(1)) if re.search(r"(\d+)", _TLS_TARGET) else 124
 
@@ -36,22 +18,17 @@ _CHROMIUM_TO_ELECTRON = {
     144: "40", 146: "41", 148: "42", 150: "43",
 }
 
-# Cached desktop-client version (discord/x.y.z). Fetched live once per process;
-# this is the value shipped in the desktop UA.
+# Cached desktop-client version (discord/x.y.z). Fetched live once per process; this is the value shipped in the desktop UA.
 _DESKTOP_VERSION = None
 _DEFAULT_DESKTOP_VERSION = "1.0.9256"
 
-# Fallback desktop build number. Cosmetic: Discord does not gate requests on
-# it (discord.py-self itself falls back to a hardcoded value when its fetch
-# fails). Override with bot.desktop.build_number in config.yaml.
+# Fallback desktop build number. Cosmetic: Discord does not gate requests on it (discord.py-self itself falls back to a hardcoded value when its fetch fails). Override with bot.desktop.build_number in config.yaml.
 _DEFAULT_DESKTOP_BUILD = 407894
 
-# The live gateway Headers object (discord.utils.Headers), if the runner has
-# synced it yet. None until login (calls before that use static defaults).
+# The live gateway Headers object (discord.utils.Headers), if the runner has synced it yet. None until login (calls before that use static defaults).
 _gateway_headers = None
 
-# Proxy shared by gateway and every REST call, so one account never appears
-# from two different IPs. Set by the runner from the account token config.
+# Proxy shared by gateway and every REST call, so one account never appears from two different IPs. Set by the runner from the account token config.
 _default_proxy = None
 
 
@@ -120,18 +97,7 @@ _BUILD_TTL = 24 * 3600
 
 
 async def _fetch_build_number() -> int | None:
-    """Discord's current stable client build number, or None.
-
-    Discord does not publish this anywhere official. The web app carries it in
-    one of its script bundles, which is how it is found in practice: load the
-    app shell, then read the number out of the scripts it references.
-
-    That makes it inherently fragile - Discord renames and reshuffles those
-    bundles whenever it likes - so every failure path here returns None and the
-    caller keeps using the configured number. A wrong build number is cosmetic
-    (discord.py-self ships a hardcoded one of its own), so this is never worth
-    failing a login over.
-    """
+    """Discord's current stable client build number, or None. Discord does not publish this anywhere official: the web app carries it in one of its script bundles, which is how it is found in practice, load the app shell, then read the number out of the scripts it references. That makes it inherently fragile, Discord renames and reshuffles those bundles whenever it likes, so every failure path here returns None and the caller keeps using the configured number. A wrong build number is cosmetic (discord.py-self ships a hardcoded one of its own), so this is never worth failing a login over."""
     global _BUILD_NUMBER, _BUILD_FETCHED_AT
     now = _time.time()
     if _BUILD_NUMBER and now - _BUILD_FETCHED_AT < _BUILD_TTL:
@@ -141,8 +107,7 @@ async def _fetch_build_number() -> int | None:
             shell = await s.get("https://discord.com/app")
             html = shell.text or ""
             scripts = re.findall(r'src="(/assets/[^"]+\.js)"', html)
-            # Newest last in the document, and the build info sits in the
-            # later chunks, so walk from the end and stop at the first hit.
+            # Newest last in the document, and the build info sits in the later chunks, so walk from the end and stop at the first hit.
             for path in reversed(scripts[-6:]):
                 try:
                     js = (await s.get("https://discord.com" + path)).text or ""
@@ -159,12 +124,7 @@ async def _fetch_build_number() -> int | None:
 
 
 async def resolve_build_number(desktop_cfg: dict) -> int:
-    """The build number to present, honouring the automatic/custom choice.
-
-    Automatic falls back to the configured number, and then to the built-in
-    one, so a failed fetch degrades to exactly the old behaviour rather than
-    to something invalid.
-    """
+    """The build number to present, honouring the automatic/custom choice. Automatic falls back to the configured number, and then to the built-in one, so a failed fetch degrades to exactly the old behaviour rather than to something invalid."""
     configured = int(desktop_cfg.get("build_number", _DEFAULT_DESKTOP_BUILD))
     if str(desktop_cfg.get("build_source", "custom")).lower() != "auto":
         return configured
@@ -185,17 +145,7 @@ def desktop_ua(discord_version: str, chrome_major: int) -> str:
 
 
 async def build_desktop_headers(config: dict = None, web_headers=None):
-    """Build a discord.utils.Headers instance that identifies as the desktop
-    client. Reuses the lib's own class so client-hint greasing and the
-    gateway_properties flow stay exactly consistent with it.
-
-    Fidelity: the real desktop client's IDENTIFY properties contain ONLY
-    os/browser/release_channel/client_build_number/client_event_source. Any
-    web-style extras (device, browser_version, referrer, browser_user_agent)
-    would mark the session as a browser, so they stay out of the properties.
-    The desktop UA is used for the websocket/HTTP User-Agent header, which is
-    where it belongs (pre-seeded into the cached property so it never leaks
-    into super_properties)."""
+    """Build a discord.utils.Headers instance that identifies as the desktop client. Reuses the lib's own class so client-hint greasing and the gateway_properties flow stay exactly consistent with it. Fidelity: the real desktop client's IDENTIFY properties contain ONLY os/browser/release_channel/client_build_number/client_event_source, any web-style extras (device, browser_version, referrer, browser_user_agent) would mark the session as a browser, so they stay out of the properties; the desktop UA is used for the websocket/HTTP User-Agent header, pre-seeded into the cached property so it never leaks into super_properties."""
     import discord  # heavy import, only when desktop profile is used
 
     config = config or {}
@@ -230,16 +180,12 @@ async def build_desktop_headers(config: dict = None, web_headers=None):
         encoded_super_properties=encoded,
         extra_gateway_properties=extra,
     )
-    # functools.cached_property reads instance __dict__ first, so this pins
-    # the desktop UA for headers without putting it into super_properties.
+    # functools.cached_property reads instance __dict__ first, so this pins the desktop UA for headers without putting it into super_properties.
     hdr.__dict__["user_agent"] = ua
     return hdr
 
 
-# One default for each, used whether or not the config can be read. Two
-# different fallbacks meant the timezone header flipped between them depending
-# on whether load_config happened to throw, which is exactly the drift this
-# module exists to prevent.
+# One default for each, used whether or not the config can be read. Two different fallbacks meant the timezone header flipped between them depending on whether load_config happened to throw, which is exactly the drift this module exists to prevent.
 _DEFAULT_LOCALE = "en-US"
 _DEFAULT_TIMEZONE = "Europe/Paris"
 
@@ -310,14 +256,7 @@ def make_chrome_headers(token: str, extra: dict = None) -> dict:
 
 
 def build_session(token: str, extra_headers: dict = None, proxy: str = None) -> AsyncSession:
-    """
-    Return a curl_cffi AsyncSession impersonating the same Chrome target as
-    the gateway (realistic JA3/TLS fingerprint). If no proxy is passed, the
-    account-wide default set by the runner is used so gateway and REST never
-    leave from different IPs.
-
-    Use as an async context manager:  async with build_session(token) as s: ...
-    """
+    """Return a curl_cffi AsyncSession impersonating the same Chrome target as the gateway (realistic JA3/TLS fingerprint). If no proxy is passed, the account-wide default set by the runner is used so gateway and REST never leave from different IPs. Use as an async context manager:  async with build_session(token) as s: ..."""
     effective_proxy = proxy or _default_proxy
     kwargs = {"impersonate": _TLS_TARGET}
     if effective_proxy:

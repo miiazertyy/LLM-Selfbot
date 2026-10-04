@@ -1,12 +1,12 @@
 <script lang="ts">
-  let { kind = "primary", loading = false, onclick, children, disabled = false, size = "md" } = $props<{
+  let { kind = "primary", loading = false, onclick, children, disabled = false, size = "md" }: {
     kind?: "primary" | "ghost" | "danger" | "good";
     size?: "sm" | "md";
     loading?: boolean;
     disabled?: boolean;
-    onclick?: () => void;
+    onclick?: (e: MouseEvent) => void;
     children?: any;
-  }>();
+  } = $props();
 
   const styles = {
     primary: "bg-accent text-bg hover:bg-accent/90 shadow-[0_6px_20px_-8px] shadow-accent/60",

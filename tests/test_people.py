@@ -135,7 +135,8 @@ check("there is a helper that records an author", "def _cache_author(" in src)
 # the ones the bot decides to answer. The bot sees far more people than it
 # answers, and the ones it ignores are exactly the ones you want to look up.
 handler = src.index("async def on_message(message):")
-head = src[handler:handler + 1200]
+# Everything before the bot decides whether to answer, however long the own-message handling at the top grows.
+head = src[handler:src.index("is_trigger_message(message)", handler)]
 check("on_message records the author", "_cache_author(message.author)" in head, head[:200])
 
 # Someone already in the database predates the cache, so waiting for them to

@@ -6,12 +6,15 @@
  * through pywebview's JS bridge. In a plain browser (remote access over
  * Tailscale, say) `available` is false and the chrome hides itself.
  */
+import { api } from "./api";
+import { inPhoneApp } from "./device";
 
 type PyApi = {
   minimize?: () => Promise<void>;
   close_window?: () => Promise<void>;
   set_size?: (w: number, h: number) => Promise<void>;
   get_size?: () => Promise<[number, number]>;
+  set_fullscreen?: (on: boolean) => Promise<boolean>;
 };
 
 declare global {
@@ -61,6 +64,36 @@ export async function closeWindow(): Promise<void> {
   } catch {
     /* ignore */
   }
+}
+
+/**
+ * The whole screen, for Big Picture Mode, or back to how it was. In the app,
+ * the window itself goes fullscreen; in a browser, the page asks for it (which
+ * only works from a click or a key press, which is how Big Picture opens).
+ */
+/** Into or out of fullscreen. True when the window actually changed, and so is about to resize. */
+export async function setFullscreen(on: boolean): Promise<boolean> {
+  if (isDesktop()) {
+    try {
+      return !!(await window.pywebview?.api?.set_fullscreen?.(on));
+    } catch {
+      /* bridge went away: it stays a full-window view, which is still usable */
+      return false;
+    }
+  }
+  try {
+    if (on && !document.fullscreenElement) {
+      await document.documentElement.requestFullscreen();
+      return true;
+    }
+    if (!on && document.fullscreenElement) {
+      await document.exitFullscreen();
+      return true;
+    }
+  } catch {
+    /* refused (no gesture, or an iframe): the view still fills the page */
+  }
+  return false;
 }
 
 /** Resize the window to an exact size (pocket <-> desk toggle). */
@@ -154,6 +187,49 @@ export async function saveTextFile(filename: string, content: string): Promise<s
 }
 
 /** A folder chosen by the user. Desktop only; "" elsewhere or when cancelled. */
+const EXT: Record<string, string> = {
+  "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif", "image/avif": "avif",
+  "video/mp4": "mp4", "video/webm": "webm", "video/quicktime": "mov",
+};
+
+/**
+ * Save the file at a URL (a picture, from the right-click menu) where the
+ * person chooses. In the desktop app that is its real Save dialog: an anchor
+ * with a download attribute does nothing there, the same as it did for the
+ * Logs download. A browser downloads it. The name gets the extension the file
+ * actually has. Returns where it went, "" when the dialog was cancelled.
+ */
+export async function saveUrlAs(url: string, name: string): Promise<string> {
+  const res = await fetch(url, { referrerPolicy: "no-referrer" });
+  if (!res.ok) throw new Error(`Could not fetch it (${res.status})`);
+  const blob = await res.blob();
+  const ext = EXT[blob.type] ?? "";
+  const base = (name || "picture").replace(/[\\/:*?"<>|]+/g, "_").slice(0, 80);
+  const filename = ext && !base.toLowerCase().endsWith("." + ext) ? `${base}.${ext}` : base;
+
+  const api = (window as any).pywebview?.api;
+  if (api?.save_binary_file) {
+    const b64 = await new Promise<string>((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(String(r.result).split(",", 2)[1] ?? "");
+      r.onerror = () => reject(new Error("Could not read it"));
+      r.readAsDataURL(blob);
+    });
+    const result = await api.save_binary_file(filename, b64);
+    if (typeof result === "string" && result.startsWith("error:")) throw new Error(result.slice(6).trim());
+    return result || "";
+  }
+  const href = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = href;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(href), 4000);
+  return filename;
+}
+
 export async function pickFolder(): Promise<string> {
   const api = (window as any).pywebview?.api;
   if (!api?.pick_folder) return "";
@@ -179,6 +255,7 @@ export async function pickFile(extensions?: string[]): Promise<string> {
  * Tailscale, the browser opens its own link and the host is not involved.
  */
 export async function openExternal(name: string, url: string): Promise<void> {
+  if (inPhoneApp()) return openUrl(url);
   if (isDesktop()) {
     try {
       await fetch("/api/system/link", {
@@ -189,6 +266,24 @@ export async function openExternal(name: string, url: string): Promise<void> {
       return;
     } catch {
       /* fall through and try the window, which is better than nothing */
+    }
+  }
+  window.open(url, "_blank", "noopener");
+}
+
+/**
+ * Open any web address outside the panel. In the phone apps that is the
+ * phone's browser, through the app (a web view has no tab to open it in); in
+ * a browser, a new tab. Not for the desktop shell, which opens only the named
+ * links above.
+ */
+export async function openUrl(url: string): Promise<void> {
+  if (inPhoneApp()) {
+    try {
+      await api.openUrl(url);
+      return;
+    } catch {
+      /* fall through */
     }
   }
   window.open(url, "_blank", "noopener");

@@ -81,7 +81,7 @@ print("\n== a blank install reports the real blockers ==")
 clear_env()
 h = health()
 titles = [i["title"] for i in h["issues"]]
-check("flags the missing Groq key", any("Groq" in t for t in titles), str(titles))
+check("flags that nothing can write replies", any("Nothing can write replies" in t for t in titles), str(titles))
 check("flags having no accounts", any("No accounts" in t for t in titles), str(titles))
 check("both are errors, not warnings", h["errors"] >= 2, str(h))
 

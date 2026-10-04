@@ -1,0 +1,15 @@
+# A stand-in for jiter, for the phone apps (see jiter/__init__.py). Numbered
+# above every real release, so pip picks it over the real one, which would
+# need a Rust build for the phone.
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jiter"
+version = "0.99.0"
+description = "Pure-Python stand-in for jiter in the LLMSelfbot phone apps"
+requires-python = ">=3.9"
+
+[tool.setuptools]
+packages = ["jiter"]

@@ -15,6 +15,7 @@
   import { toast } from "../stores";
   import Button from "./Button.svelte";
   import Icon from "./Icon.svelte";
+  import FootNote from "./FootNote.svelte";
 
   let { name, hint = "" } = $props<{ name: string; hint?: string }>();
 
@@ -208,10 +209,9 @@
         {/each}
       </div>
     {/if}
-    <p class="mt-2 text-[11px] text-faint">
+    <FootNote class="mt-2">
       Stored as numbered entries and always renumbered to stay consecutive,
-      because the loader stops at the first gap. Each one gets its own IPC
-      channel, so they run as separate accounts.
-    </p>
+      because the loader stops at the first gap. Each one runs as its own account.
+    </FootNote>
   {/if}
 </section>

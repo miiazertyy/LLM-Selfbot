@@ -20,6 +20,7 @@
  * data sets `refreshing`, which is a hint, not a wall.
  */
 import { get, writable, type Readable } from "svelte/store";
+import { begin, RESOURCE_ROUTES } from "./busy";
 
 export type ResourceState<T> = {
   data: T;
@@ -33,7 +34,9 @@ export type ResourceState<T> = {
 };
 
 export type Resource<T> = Readable<ResourceState<T>> & {
-  refresh(options?: { maxAge?: number; force?: boolean }): Promise<T | null>;
+  /** `quiet` keeps a load out of the sidebar's busy spinner: for background
+   *  warm-ups nobody asked for. */
+  refresh(options?: { maxAge?: number; force?: boolean; quiet?: boolean }): Promise<T | null>;
   /** Change the held value without a round trip, after an edit. */
   set(data: T): void;
   update(fn: (data: T) => T): void;
@@ -61,8 +64,8 @@ export function resource<T>(
   // background pass is mid-flight should join it, not start a second.
   let inflight: Promise<T | null> | null = null;
 
-  async function refresh(options: { maxAge?: number; force?: boolean } = {}) {
-    const { maxAge = 0, force = false } = options;
+  async function refresh(options: { maxAge?: number; force?: boolean; quiet?: boolean } = {}) {
+    const { maxAge = 0, force = false, quiet = false } = options;
     const current = get(store);
 
     if (inflight) return inflight;
@@ -72,6 +75,12 @@ export function resource<T>(
 
     const cold = current.fetched === 0;
     store.update((s) => ({ ...s, loading: cold, refreshing: !cold }));
+
+    // A page loading its own data counts as that page being busy, which is
+    // what puts a spinner beside it in the sidebar if you leave mid-load.
+    // One persona's ("pictures:nova") counts for its page as Default's does.
+    const route = RESOURCE_ROUTES[key.split(":")[0]];
+    const done = !quiet && route ? begin(route) : null;
 
     inflight = (async () => {
       try {
@@ -96,6 +105,7 @@ export function resource<T>(
         return null;
       } finally {
         inflight = null;
+        done?.();
       }
     })();
 

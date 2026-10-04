@@ -1,18 +1,4 @@
-"""
-app/utils/groqmodels.py - which models Groq actually has today.
-
-Model names are typed into config.yaml by hand, and Groq retires them without
-warning. When that happens every reply fails with a 404 that says
-"model_decommissioned", which looks exactly like the bot being broken.
-
-Groq publishes the live list, so there is no reason to guess:
-
-    GET https://api.groq.com/openai/v1/models
-
-The answer is cached on disk as well as in memory, so the panel still has
-something to show when the network is down or every key is rate limited, and
-so a dropdown does not cost a request every time it opens.
-"""
+"""Which models Groq actually has today. Model names are typed into config.yaml by hand, and Groq retires them without warning, when that happens every reply fails with a 404 that says "model_decommissioned", which looks exactly like the bot being broken. Groq publishes the live list (GET https://api.groq.com/openai/v1/models), so there is no reason to guess; the answer is cached on disk as well as in memory, so the panel still has something to show when the network is down or every key is rate limited, and a dropdown does not cost a request every time it opens."""
 
 import json
 import os
@@ -20,28 +6,12 @@ import time
 
 MODELS_URL = "https://api.groq.com/openai/v1/models"
 
-# Long enough that opening Settings repeatedly costs nothing, short enough that
-# a retirement shows up the same day.
+# Long enough that opening Settings repeatedly costs nothing, short enough that a retirement shows up the same day.
 TTL_SECONDS = 6 * 3600
-# A failed fetch with no disk cache stores an empty list, and an empty list is
-# falsy - so the memory guard in available() never hit and every caller re-ran
-# fetch(), an 8-second HTTP call, on every health refresh (~every 15 seconds)
-# for as long as Groq was unreachable. Negative results are cached too, just
-# for much less time, so it still recovers promptly once the network is back.
+# A failed fetch with no disk cache stores an empty list, and an empty list is falsy, so the memory guard in available() never hit and every caller re-ran fetch(), an 8-second HTTP call, on every health refresh (~every 15 seconds) for as long as Groq was unreachable. Negative results are cached too, just for much less time, so it still recovers promptly once the network is back.
 NEGATIVE_TTL_SECONDS = 120
 
-# What each model is actually for.
-#
-# This was guessed from the name, which got it wrong in the way that mattered
-# most: qwen3.6-27b and qwen3.8-27b are multimodal and accept images, but
-# neither has "vision" or "vl" anywhere in the id, so the image model picker
-# offered no vision models at all while the one in use was a vision model.
-#
-# Capabilities per Groq's own documentation. A model can do several things:
-# the qwen 3.x models are chat models AND vision models, so they belong in both
-# the reply list and the image describer.
-#   https://console.groq.com/docs/models
-#   https://console.groq.com/docs/vision
+# What each model is actually for. This was guessed from the name, which got it wrong in the way that mattered most: qwen3.6-27b and qwen3.8-27b are multimodal and accept images, but neither has "vision" or "vl" anywhere in the id, so the image model picker offered no vision models at all while the one in use was a vision model. Capabilities per Groq's own documentation, and a model can do several things: the qwen 3.x models are chat models AND vision models, so they belong in both the reply list and the image describer (console.groq.com/docs/models, console.groq.com/docs/vision).
 CAPABILITIES = {
     # Text and chat
     "llama-3.1-8b-instant": {"chat"},
@@ -70,10 +40,7 @@ CAPABILITIES = {
     "openai/gpt-oss-safeguard-20b": {"moderation"},
 }
 
-# Groq adds models faster than any table can be maintained, so anything not
-# listed above is placed by name. Deliberately generous towards "chat": a new
-# text model wrongly hidden from the picker is worse than one wrongly offered,
-# because the second is merely a bad suggestion and the first is unusable.
+# Groq adds models faster than any table can be maintained, so anything not listed above is placed by name. Deliberately generous towards "chat": a new text model wrongly hidden from the picker is worse than one wrongly offered, because the second is merely a bad suggestion and the first is unusable.
 _NAME_RULES = (
     ({"whisper", "distil-whisper"}, {"stt"}),
     ({"orpheus", "tts", "playai", "speech"}, {"tts"}),
@@ -219,21 +186,14 @@ def available(force: bool = False) -> dict:
 
 
 def check_configured(config: dict) -> list:
-    """Which configured models Groq no longer offers.
-
-    Returns one entry per problem, empty when everything is fine or when the
-    list could not be fetched. Silence on failure is deliberate: not being able
-    to check is not evidence that anything is wrong.
-    """
+    """Which configured models Groq no longer offers. Returns one entry per problem, empty when everything is fine or when the list could not be fetched. Silence on failure is deliberate: not being able to check is not evidence that anything is wrong."""
     data = available()
     if not data["models"]:
         return []
     known = {m["id"] for m in data["models"]}
     retired = {m["id"] for m in data["models"] if not m["active"]}
 
-    # Which capability each setting needs. Using a speech model to write
-    # replies, or a text model to read an image, fails on every request with an
-    # error that does not obviously say the model was the wrong choice.
+    # Which capability each setting needs. Using a speech model to write replies, or a text model to read an image, fails on every request with an error that does not obviously say the model was the wrong choice.
     NEEDS = {
         "groq_models": "chat",
         "groq_small_model": "chat",

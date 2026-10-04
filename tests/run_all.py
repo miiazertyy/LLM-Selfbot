@@ -11,16 +11,21 @@ total_pass = total_fail = 0
 
 for path in sorted(HERE.glob("test_*.py")):
     print(f"\n{'=' * 60}\n  {path.name}\n{'=' * 60}")
+    # Read back as the UTF-8 each module is told to write: Windows' own code page has no character for some bytes of
+    # an emoji, and one in a check's name stopped the whole run.
     proc = subprocess.run(
         [sys.executable, str(path)], cwd=REPO,
         env={**__import__("os").environ, "PYTHONIOENCODING": "utf-8"},
-        capture_output=True, text=True,
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
     )
     out = proc.stdout + proc.stderr
     for line in out.splitlines():
         if line.startswith(("  PASS", "  FAIL", "==")) or "passed," in line:
             print(line)
-    summary = next((l for l in out.splitlines() if "passed," in l), "")
+    # The LAST one: a module that runs a Node test first prints that test's
+    # count before its own, and taking the first counted the sub-test instead
+    # of the module, so the grand total came out lower than the real one.
+    summary = next((l for l in reversed(out.splitlines()) if "passed," in l), "")
     if summary:
         p, f = summary.split(" passed, ")
         total_pass += int(p)

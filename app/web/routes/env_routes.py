@@ -1,20 +1,4 @@
-"""
-app/web/routes/env_routes.py - edit every value in config/.env from the app.
-
-Two sources are merged so the editor shows the whole surface, not just what
-happens to be set already:
-
-  * keys present in config/.env
-  * keys documented in resources/example.env, including commented-out ones,
-    with the comment block above each carried through as help text
-
-That means an option the user has never set (SNAP_QUIET_HOURS, say) is still
-listed, described, and one click away from being filled in.
-
-Secret values are masked on read and only written when actually changed; the
-account tokens have their own dedicated editor (see account_routes) but remain
-visible here as masked entries so nothing in the file is hidden from the owner.
-"""
+"""app/web/routes/env_routes.py - edit every value in config/.env from the app. Two sources are merged so the editor shows the whole surface, not just what happens to be set already: keys present in config/.env, and keys documented in resources/example.env (including commented-out ones, with the comment block above each carried through as help text). That means an option the user has never set (SNAP_QUIET_HOURS, say) is still listed, described, and one click away from being filled in. Secret values are masked on read and only written when actually changed; the account tokens have their own dedicated editor (see account_routes) but remain visible here as masked entries so nothing in the file is hidden from the owner."""
 
 import re
 
@@ -27,8 +11,7 @@ router = APIRouter(tags=["env"])
 
 TEMPLATE = APP_DIR / "resources" / "example.env"
 
-# Keys the account editor owns. Still listed (masked) so the file is fully
-# visible, but flagged so the UI can point at the better tool for them.
+# Keys the account editor owns. Still listed (masked) so the file is fully visible, but flagged so the UI can point at the better tool for them.
 _ACCOUNT_KEY = re.compile(
     r"^(DISCORD_TOKEN|DISCORD_PROXY|SNAP_USERNAME|SNAP_PASSWORD)(_\d+)?$")
 
@@ -36,24 +19,14 @@ _VALID_KEY = re.compile(r"^[A-Z_][A-Z0-9_]*$", re.IGNORECASE)
 
 
 def _strip_trailing_comment(value: str) -> str:
-    """Drop an aligned trailing comment from a template example.
-
-    "9000       # min ms between sends" is documentation, not part of the
-    value. Only a comment set off by whitespace counts, so a value that
-    legitimately contains '#' survives.
-    """
+    """Drop an aligned trailing comment from a template example. "9000       # min ms between sends" is documentation, not part of the value. Only a comment set off by whitespace counts, so a value that legitimately contains '#' survives."""
     text = value.strip()
     cut = re.search(r"\s+#", text)
     return text[:cut.start()].strip() if cut else text
 
 
 def _template() -> dict:
-    """Parse resources/example.env into {key: {"help", "example", "section"}}.
-
-    The template is well commented, and those comments are the only
-    documentation these settings have, so they become the field help rather
-    than being thrown away.
-    """
+    """Parse resources/example.env into {key: {"help", "example", "section"}}. The template is well commented, and those comments are the only documentation these settings have, so they become the field help rather than being thrown away."""
     out: dict[str, dict] = {}
     if not TEMPLATE.exists():
         return out
@@ -68,9 +41,7 @@ def _template() -> dict:
             body = line.lstrip("#").strip()
             if not body:
                 continue
-            # A rule made of dashes or box characters either names a section
-            # ("── Discord ──────") or is pure decoration ("═════════"), which
-            # must not be swept up as help text for the next option.
+            # A rule made of dashes or box characters either names a section ("── Discord ──────") or is pure decoration ("═════════"), which must not be swept up as help text for the next option.
             stripped = body.strip("-─═ ").strip()
             if body.strip("-─═ ") != body or set(body) <= set("-─═ "):
                 if stripped and any(body.count(c) >= 3 for c in "-─═"):
@@ -120,14 +91,7 @@ def _rows() -> list:
     return rows
 
 
-# ── Numbered key families ────────────────────────────────────────────────────
-# NAME_1, NAME_2, ... are read in order and must stay contiguous: the loaders
-# stop at the first gap, so deleting #2 of 3 has to renumber #3 down to #2 or
-# the last key silently stops being used.
-# A family is a numbered credential, optionally with fields that belong to the
-# same slot: a Discord token has a proxy, a Snapchat username has a password.
-# Those extras must renumber together with the main value, or deleting account
-# #2 of 3 would leave #3's password attached to #2.
+# ── Numbered key families ── NAME_1, NAME_2, ... are read in order and must stay contiguous: the loaders stop at the first gap, so deleting #2 of 3 has to renumber #3 down to #2 or the last key silently stops being used. A family is a numbered credential, optionally with fields that belong to the same slot (a Discord token has a proxy, a Snapchat username has a password), and those extras must renumber together with the main value, or deleting account #2 of 3 would leave #3's password attached to #2.
 KEY_FAMILIES = {
     "groq": {
         "prefix": "GROQ_API_KEY",
@@ -188,12 +152,7 @@ def _write_family(values: dict, prefix: str, keys: list) -> dict:
 
 
 def _write_slots(values: dict, fam: dict, slots: list) -> dict:
-    """Rewrite a whole family, extras included, keeping the slots aligned.
-
-    Every field of a slot is renumbered from the same index, so a slot can be
-    removed from the middle without its proxy or password ending up attached to
-    somebody else's account.
-    """
+    """Rewrite a whole family, extras included, keeping the slots aligned. Every field of a slot is renumbered from the same index, so a slot can be removed from the middle without its proxy or password ending up attached to somebody else's account."""
     _write_family(values, fam["prefix"], [s["value"] for s in slots])
     for extra in fam.get("extras", []):
         _clear_numbered(values, extra["prefix"])
@@ -278,8 +237,7 @@ async def replace_key(request: Request, name: str, index: int):
     keys = _family_values(values, fam["prefix"])
     if not 1 <= index <= len(keys):
         raise HTTPException(status_code=404, detail="no such key")
-    # Editing only a proxy or a password should not mean retyping the token
-    # above it, which is masked and cannot be read back.
+    # Editing only a proxy or a password should not mean retyping the token above it, which is masked and cannot be read back.
     keep = bool(body.get("keep")) and not value
     if not value and not keep:
         raise HTTPException(status_code=400, detail="a value is required")
@@ -296,7 +254,7 @@ async def replace_key(request: Request, name: str, index: int):
 
 
 @router.delete("/api/env/keys/{name}/{index}")
-async def delete_key(request: Request, name: str, index: int):
+def delete_key(request: Request, name: str, index: int):
     fam = _family(name)
     values = read_env()
     keys = _family_values(values, fam["prefix"])
@@ -329,8 +287,7 @@ async def post_env(request: Request):
         if not _VALID_KEY.match(str(key)):
             raise HTTPException(status_code=400, detail=f"invalid key: {key}")
         text = "" if value is None else str(value)
-        # A masked value came straight back from a GET untouched, writing it
-        # would replace the real secret with literal bullet characters.
+        # A masked value came straight back from a GET untouched, writing it would replace the real secret with literal bullet characters.
         if SECRET_KEYS.match(key) and ("…" in text or set(text.strip()) == {"•"}):
             continue
         values[str(key)] = text.strip()

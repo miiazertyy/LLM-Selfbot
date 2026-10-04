@@ -6,8 +6,10 @@ every worker becomes a supervisor that spawns more workers. These tests pin the
 three independent guards that prevent it.
 """
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -55,11 +57,15 @@ check("run_supervisor() exits non-zero when LLMSELFBOT_CHILD=1", r.returncode ==
 check("and says why", "worker process" in (r.stdout + r.stderr), (r.stdout + r.stderr)[-200:])
 
 print("\n== guard 3: only one supervisor can hold the lock ==")
+# The lock file lives in the temp folder. A private one, so a copy of the app
+# that is open on this machine is not the "other instance" these two meet.
+LOCK_TMP = tempfile.mkdtemp(prefix="llmbot_lock_")
+LOCK_ENV = dict(os.environ, PYTHONIOENCODING="utf-8", TMP=LOCK_TMP, TEMP=LOCK_TMP, TMPDIR=LOCK_TMP)
 holder = subprocess.Popen(
     [sys.executable, "-c",
      "import sys,time; sys.path.insert(0, r'%s'); from app import cli;"
      "cli.acquire_single_instance(); print('HELD', flush=True); time.sleep(30)" % REPO],
-    env=dict(os.environ, PYTHONIOENCODING="utf-8"),
+    env=LOCK_ENV,
     stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, cwd=REPO)
 try:
     line = holder.stdout.readline()
@@ -68,7 +74,7 @@ try:
         [sys.executable, "-c",
          "import sys; sys.path.insert(0, r'%s'); from app import cli; cli.acquire_single_instance();"
          "print('ALSO HELD')" % REPO],
-        env=dict(os.environ, PYTHONIOENCODING="utf-8"),
+        env=LOCK_ENV,
         capture_output=True, text=True, timeout=60, cwd=REPO)
     check("second instance is refused", second.returncode == 1 and "ALSO HELD" not in second.stdout,
           f"exit {second.returncode}: {second.stdout.strip()}")
@@ -79,6 +85,7 @@ finally:
         holder.wait(timeout=10)
     except Exception:
         holder.kill()
+    shutil.rmtree(LOCK_TMP, ignore_errors=True)
 
 print("\n== guard 1: desktop entry dispatches instead of opening a window ==")
 # --role telegram with no token configured returns immediately; the point is

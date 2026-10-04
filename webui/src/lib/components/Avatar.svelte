@@ -16,6 +16,10 @@
    *    one query parameter away.
    */
   import Icon from "./Icon.svelte";
+  import { openMenuAt } from "../contextmenu";
+  import { saveUrlAs } from "../window";
+  import { copyImageFrom } from "../imagecopy";
+  import { toast } from "../stores";
 
   let {
     src = "",
@@ -26,17 +30,26 @@
     ring = "ring-1 ring-edge",
     /** Off where a click already means something else, e.g. inside a button. */
     zoom = true,
+    /**
+     * With no picture: Snapchat's own empty silhouette, a grey figure on a
+     * pale disc, instead of the generic glyph. For a Snapchat account the
+     * runner has read and found no photo or Bitmoji on: it is what Snapchat
+     * itself shows for it.
+     */
+    silhouette = false,
   }: {
     src?: string;
     name?: string;
     size?: number;
     ring?: string;
     zoom?: boolean;
+    silhouette?: boolean;
   } = $props();
 
   let broken = $state(false);
   let open = $state(false);
   let bigBroken = $state(false);
+  /** Right-click menu over the opened picture: where it was clicked, or null. */
 
   // A new person in the same slot deserves a fresh attempt at their picture.
   let lastSrc = $state("");
@@ -77,6 +90,18 @@
     document.body.appendChild(node);
     return { destroy: () => node.remove() };
   }
+
+  /** The picture actually on screen: the large one, unless only the small one loaded. */
+  const shownBig = $derived(bigBroken ? src : big);
+
+  async function copyIt() {
+    try {
+      await copyImageFrom(shownBig);
+      toast("Copied the picture.", "ok");
+    } catch (e: any) {
+      toast(e?.message || "Could not copy it", "err");
+    }
+  }
 </script>
 
 {#if clickable}
@@ -105,6 +130,10 @@
     class="shrink-0 rounded-full object-cover {ring}"
     style="height:{size}px;width:{size}px"
   />
+{:else if silhouette}
+  <span class="avatar-silhouette shrink-0 rounded-full {ring}" style="height:{size}px;width:{size}px" aria-hidden="true">
+    <svg viewBox="0 0 90 90"><path d="M45 15.5a16 16 0 1 1 0 32a16 16 0 0 1 0-32zM12 92c0-19 14.5-32 33-32s33 13 33 32z" /></svg>
+  </span>
 {:else}
   <span
     class="flex shrink-0 items-center justify-center rounded-full bg-white/[0.06] text-muted {ring}"
@@ -126,6 +155,15 @@
     aria-label={name ? `${name}'s picture` : "Profile picture"}
     tabindex="-1"
     onclick={() => (open = false)}
+    oncontextmenu={(e) => openMenuAt(e, [
+      name && { title: name },
+      { label: "Copy image", icon: "copy", run: copyIt },
+      // Its real Save dialog in the desktop app: the download link this was did nothing there.
+      { label: "Save as…", icon: "download",
+        run: () => saveUrlAs(shownBig, name || "picture").then((w) => w && toast("Saved.", "ok")) },
+      "sep",
+      { label: "Close", icon: "close", keys: "Esc", run: () => (open = false) },
+    ])}
     onkeydown={(e) => e.key === "Escape" && (open = false)}
   >
     <figure class="pop flex max-h-full flex-col items-center gap-3">
@@ -136,7 +174,7 @@
           src={src}
           alt=""
           referrerpolicy="no-referrer"
-          class="max-h-[70vh] w-auto max-w-[min(420px,86vw)] rounded-2xl object-contain ring-1 ring-edge"
+          class="avatar-big max-h-[70vh] w-auto max-w-[min(420px,86vw)] rounded-2xl object-contain"
         />
       {:else}
         <img
@@ -144,18 +182,31 @@
           alt=""
           referrerpolicy="no-referrer"
           onerror={() => (bigBroken = true)}
-          class="max-h-[70vh] w-auto max-w-[min(420px,86vw)] rounded-2xl object-contain ring-1 ring-edge"
+          class="avatar-big max-h-[70vh] w-auto max-w-[min(420px,86vw)] rounded-2xl object-contain"
         />
       {/if}
       {#if name}
         <figcaption class="text-[13px] text-ink/80">{name}</figcaption>
       {/if}
-      <span class="text-[11px] text-faint">Click anywhere, or press Escape, to close</span>
+      <span class="text-[11px] text-faint">Click anywhere, or press Escape, to close. Right click to copy it.</span>
     </figure>
   </div>
 {/if}
 
 <style>
+  .avatar-silhouette {
+    display: grid;
+    overflow: hidden;
+    place-items: end center;
+    background: linear-gradient(180deg, #f3f4f7, #e2e4ea);
+  }
+  .avatar-silhouette svg { width: 100%; height: 100%; fill: #a3a7b1; }
+  /* The edge is on the picture, so it follows the picture: a ring on the box
+     stood away from a tall or wide one on two sides. */
+  .avatar-big {
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-edge) 90%, transparent),
+                0 30px 80px -30px rgb(0 0 0 / 0.8);
+  }
   .avatar-zoom {
     animation: avatar-fade 0.18s ease-out both;
   }

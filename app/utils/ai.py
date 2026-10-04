@@ -1,25 +1,24 @@
+import re
 import sys
 import json
+import time
 
 from groq import AsyncGroq, RateLimitError
 from os import getenv
 from dotenv import load_dotenv
 from app.utils.helpers import get_env_path, load_config
 from app.utils.error_notifications import webhook_log, print_error
-from app.utils.logger import log_model_fallback, log_system
+from app.utils.logger import log_model_fallback, log_system, log_thinking
 
 # Active Groq clients, one per API key
 _groq_clients = []   # list of {"client": AsyncGroq, "label": str}
 _client_index = 0    # which key is currently active
 
-# The local server, when one is configured. It speaks the same API as Groq, so
-# it is the same object shape and every call below works unchanged.
+# the local server, when any job uses it: same API shape as Groq, so the calls below work unchanged
 _local_client = None
 _local_model = ""
 _local_vision = False
-# Per-capability models. Empty means "this server does not do that job", and the
-# call falls through to Groq exactly as it always did. Naming a model is the
-# opt-in: a server that has no /audio/speech route simply never gets one set.
+# per-capability local models, kept for the code and the logs that still ask about them; where each job actually runs is providers.plan()
 _local_vision_model = ""
 _local_stt_model = ""
 _local_tts_model = ""
@@ -31,17 +30,16 @@ model = None
 groq_models = []
 current_model_index = 0
 
-# A local server raises openai's RateLimitError, Groq raises its own, and they
-# are different classes even though one SDK is built on the other. Catching only
-# one of them meant a local server under load fell through to the generic
-# handler and looked like a crash.
-#
-# openai is NOT imported here to widen the tuple. It is a heavy import - around
-# 620ms on top of groq, measured, and paid by every worker process on every
-# launch - and it is only ever needed when a local server is configured.
-# init_ai() adds the class when it builds the local client, by which point
-# openai is being imported anyway. Every `except RATE_LIMITED` re-reads this
-# global, so extending it later covers the handlers that already exist.
+# Set by init_ai. The old "not _groq_clients and _local_client is None" test for "not set up yet" stayed true forever for someone who only uses OpenAI or Gemini, and re-ran init_ai on every call.
+_initialised = False
+# OpenAI-compatible clients for every provider other than Groq, built on first use: (provider, base_url, key) -> client
+_provider_clients: dict = {}
+# (provider, model) -> unix time. A reply chain entry that was just rate limited or down is tried last until then, rather than first on every single reply.
+_resting: dict = {}
+# who wrote the last reply, "Groq · openai/gpt-oss-120b", for the logs
+last_reply_model = ""
+
+# a local server raises openai's RateLimitError, Groq raises its own, different classes: catching only one meant a loaded local server fell into the generic handler and looked like a crash. openai isn't imported here (heavy, ~620ms on every worker launch); the first OpenAI-compatible client adds the class. every `except RATE_LIMITED` re-reads this global, so extending it later covers old handlers.
 RATE_LIMITED = (RateLimitError,)
 
 
@@ -50,19 +48,21 @@ def _active_client():
     return _groq_clients[_client_index]["client"]
 
 
+def _plan_job(name: str) -> dict:
+    from app.utils import providers
+    return providers.job(load_config(), name)
+
+
 def local_active() -> bool:
-    """True when replies are being generated on this machine."""
-    return _local_client is not None
+    """True when replies are written on this machine first."""
+    from app.utils import providers
+    chain = providers.reply_chain(load_config())
+    return bool(chain) and chain[0]["provider"] == "local"
 
 
 def groq_key_count() -> int:
-    """How many Groq keys are loaded.
-
-    Callers that can spread independent work across keys use this to decide how
-    many to run at once. Rate limits are per key, so two keys really are two
-    separate allowances rather than one shared faster one.
-    """
-    if not _groq_clients and _local_client is None:
+    """How many Groq keys are loaded: rate limits are per key, so two keys really are two separate allowances."""
+    if not _initialised:
         init_ai()
     return len(_groq_clients)
 
@@ -75,47 +75,88 @@ def groq_key_label(index: int) -> str:
 
 
 def vision_is_local() -> bool:
-    """Whether pictures are read by the local server rather than by Groq."""
-    return _local_client is not None and bool(_local_vision_model)
+    """Whether pictures are read somewhere other than Groq, so Groq's keys do not limit them."""
+    return _plan_job("vision")["provider"] != "groq"
 
 
 def stt_is_local() -> bool:
-    """Whether voice messages are transcribed here rather than by Groq."""
-    return _local_client is not None and bool(_local_stt_model)
+    """Whether voice messages are transcribed somewhere other than Groq."""
+    return _plan_job("stt")["provider"] != "groq"
 
 
 def local_tts() -> dict:
-    """What tts.py needs to talk to the local server, or {} if it cannot.
-
-    Speech lives in its own module with its own client, so rather than export
-    four globals it gets the one dict it would otherwise have to assemble.
-    """
-    if not _groq_clients and _local_client is None:
+    """What tts.py needs to speak through a provider other than Groq, or {} to use Groq. The name is from when the only other place was this computer; OpenAI's /audio/speech is the same call."""
+    if not _initialised:
         init_ai()
-    if _local_client is None or not _local_tts_model:
+    from app.utils import providers
+    config = load_config()
+    chosen = providers.job(config, "tts")
+    if chosen["provider"] == "groq":
         return {}
-    return {
-        "base_url": _local_base_url,
-        "api_key": _local_api_key,
-        "model": _local_tts_model,
-        "voice": _local_tts_voice,
-    }
+    url = providers.base_url(chosen["provider"], config)
+    if chosen["provider"] == "local":
+        key = providers.local_settings(config)["api_key"]
+    else:
+        keys = providers.keys_for(chosen["provider"])
+        key = keys[0] if keys else ""
+    if not url or not key:
+        return {}
+    return {"base_url": url, "api_key": key, "model": chosen["model"],
+            "voice": chosen.get("voice", ""), "provider": chosen["provider"]}
 
 
-def _chat_client():
-    """Whoever is writing the replies: the local server, or Groq.
+def tts_targets() -> list:
+    """Every non-Groq speaker in the speaking chain, in order, with what tts.py needs for each.
+    Groq comes after all of them, in tts.py."""
+    if not _initialised:
+        init_ai()
+    from app.utils import providers
+    config = load_config()
+    out = []
+    for e in providers.job_chain(config, "tts"):
+        if e["provider"] == "groq":
+            continue
+        url = providers.base_url(e["provider"], config)
+        if e["provider"] == "local":
+            key = providers.local_settings(config)["api_key"]
+        else:
+            keys = providers.keys_for(e["provider"])
+            key = keys[0] if keys else ""
+        if url and key:
+            out.append({"base_url": url, "api_key": key, "model": e["model"],
+                        "voice": e.get("voice", ""), "provider": e["provider"]})
+    return out
 
-    Each capability moves on its own. Chat follows the local server whenever one
-    is configured; images, transcription and speech follow it only once a model
-    has been named for that job, because most servers do not offer all four and
-    silently losing voice messages would be worse than a request going out to an
-    API. Name all four and no Groq key is needed at all.
-    """
-    return _local_client if _local_client is not None else _active_client()
 
-
-def _chat_model() -> str:
-    return _local_model if _local_client is not None else model
+def _openai_client(pid: str, config: dict):
+    """The OpenAI-compatible client for a provider other than Groq, or None when it has no key."""
+    global RATE_LIMITED, _local_client
+    from app.utils import providers
+    url = providers.base_url(pid, config)
+    if pid == "local":
+        key = providers.local_settings(config)["api_key"]
+    else:
+        keys = providers.keys_for(pid)
+        key = keys[0] if keys else ""
+    if not url or not key:
+        return None
+    cache_key = (pid, url, key)
+    client = _provider_clients.get(cache_key)
+    if client is None:
+        from openai import AsyncOpenAI
+        from openai import RateLimitError as _OpenAIRateLimit
+        if _OpenAIRateLimit not in RATE_LIMITED:
+            RATE_LIMITED = (*RATE_LIMITED, _OpenAIRateLimit)
+        # explicit timeouts: the SDK default is ten minutes. a local server may be loading a model into memory, so it gets longer; four minutes is already useless, this is a backstop not a target
+        from app.utils import usage
+        client = AsyncOpenAI(base_url=url, api_key=key,
+                             timeout=240.0 if pid == "local" else 90.0,
+                             max_retries=1 if pid == "local" else 0,
+                             http_client=usage.http_client(pid))
+        _provider_clients[cache_key] = client
+        if pid == "local":
+            _local_client = client
+    return client
 
 
 def init_ai():
@@ -123,51 +164,33 @@ def init_ai():
     global _local_client, _local_model, _local_vision
     global _local_vision_model, _local_stt_model, _local_tts_model
     global _local_tts_voice, _local_base_url, _local_api_key
-    global RATE_LIMITED
+    global _initialised
     env_path = get_env_path()
     config = load_config()
     load_dotenv(dotenv_path=env_path, override=True)
 
-    # ── The local server, if one is set up ────────────────────────────────────
-    from app.utils import localai
+    from app.utils import localai, providers
+    plan = providers.plan(config)
+    chain = plan["replies"]
+
+    # ── This computer, when any job runs there ───────────────────────────────
     _local_client, _local_model, _local_vision = None, "", False
     _local_vision_model = _local_stt_model = _local_tts_model = ""
     _local_tts_voice = _local_base_url = _local_api_key = ""
-    if localai.active(config):
-        from openai import AsyncOpenAI
-        # openai is loaded now regardless, so this is the moment to teach the
-        # rate-limit check about its RateLimitError.
-        from openai import RateLimitError as _OpenAIRateLimit
-        if _OpenAIRateLimit not in RATE_LIMITED:
-            RATE_LIMITED = (*RATE_LIMITED, _OpenAIRateLimit)
+    uses_local = any(e["provider"] == "local" for e in chain) or \
+        any(plan[j]["provider"] == "local" for j in providers.JOBS)
+    if uses_local:
         cfg = localai.settings(config)
-        # An explicit timeout, because the SDK's default is ten minutes and a
-        # local server that accepts the connection and then never answers (one
-        # that is loading a model, or wedged) would hold a reply open for all of
-        # it. A reply that takes four minutes is already useless to a
-        # conversation, so this is a backstop rather than a target.
-        _local_client = AsyncOpenAI(base_url=cfg["base_url"], api_key=cfg["api_key"],
-                                    timeout=240.0, max_retries=1)
-        _local_model = cfg["model"]
-        _local_vision = cfg["vision"]
-        _local_base_url = cfg["base_url"]
-        _local_api_key = cfg["api_key"]
-        # A separate vision model wins; otherwise the old "use it for images
-        # too" switch means the chat model does both, which is how this worked
-        # before there was anywhere to name a second one.
-        _local_vision_model = cfg["vision_model"] or (_local_model if _local_vision else "")
-        _local_stt_model = cfg["stt_model"]
-        _local_tts_model = cfg["tts_model"]
-        _local_tts_voice = cfg["tts_voice"]
-        log_system(f"Replies run locally on {_local_model} via {cfg['base_url']}")
-        extra = [n for n, m in (("images", _local_vision_model),
-                                ("transcription", _local_stt_model),
-                                ("speech", _local_tts_model)) if m]
-        if extra:
-            log_system(f"Local server also handles {', '.join(extra)}")
+        _local_client = _openai_client("local", config)
+        _local_base_url, _local_api_key = cfg["base_url"], cfg["api_key"]
+        _local_model = next((e["model"] for e in chain if e["provider"] == "local"), "")
+        _local_vision_model = plan["vision"]["model"] if plan["vision"]["provider"] == "local" else ""
+        _local_stt_model = plan["stt"]["model"] if plan["stt"]["provider"] == "local" else ""
+        _local_tts_model = plan["tts"]["model"] if plan["tts"]["provider"] == "local" else ""
+        _local_tts_voice = plan["tts"].get("voice", "") if _local_tts_model else ""
+        _local_vision = bool(_local_vision_model)
 
-    # Load keys: GROQ_API_KEY_1, GROQ_API_KEY_2, ...
-    # Falls back to legacy GROQ_API_KEY if no numbered keys are set.
+    # load GROQ_API_KEY_1, _2, ... and fall back to the legacy GROQ_API_KEY
     keys = []
     i = 1
     while True:
@@ -181,38 +204,44 @@ def init_ai():
         if legacy:
             keys.append(("GROQ_API_KEY", legacy))
 
-    # Running locally is a complete answer to "where do replies come from", so
-    # a missing Groq key is only fatal when nothing else can write them.
-    if not keys and _local_client is None:
-        print("No GROQ_API_KEY found in .env, exiting.")
+    # a missing Groq key is only fatal when nothing else can write replies
+    others = [e for e in chain if e["provider"] != "groq" and providers.usable(e["provider"], config)]
+    if not keys and not others:
+        print("No model can write replies: no GROQ_API_KEY in .env, and no other provider set up "
+              "under Settings > Models. Exiting.")
         sys.exit(1)
 
+    from app.utils import usage
     _groq_clients = [
-        {"client": AsyncGroq(api_key=key), "label": label}
+        {"client": AsyncGroq(api_key=key, http_client=usage.http_client("groq", label, sdk="groq")), "label": label}
         for label, key in keys
     ]
     _client_index = 0
 
-    raw = config["bot"]["groq_models"]
+    raw = config["bot"].get("groq_models") or []
     if isinstance(raw, str):
         groq_models = [m.strip() for m in raw.split(",") if m.strip()]
     else:
         groq_models = list(raw)
     current_model_index = 0
-    model = groq_models[0]
+    model = chain[0]["model"] if chain else (groq_models[0] if groq_models else "")
+    _initialised = True
 
-    key_count = len(_groq_clients)
-    if key_count:
-        log_system(f"Loaded {key_count} Groq API key(s), {len(groq_models)} model(s).")
-    elif _local_client is not None:
-        missing = [n for n, m in (("pictures", _local_vision_model),
-                                  ("voice messages", _local_stt_model),
-                                  ("speaking", _local_tts_model)) if not m]
+    if len(chain) > 1 or (chain and chain[0]["provider"] != "groq"):
+        log_system("Replies: " + " → ".join(providers.label(e) for e in chain))
+    moved = [f"{n} on {providers.label(plan[j])}" for j, n in
+             (("small", "background work"), ("vision", "pictures"),
+              ("stt", "voice messages"), ("tts", "speaking")) if plan[j]["provider"] != "groq"]
+    if moved:
+        log_system("Also: " + ", ".join(moved))
+    if keys:
+        log_system(f"Loaded {len(keys)} Groq API key(s), {len(groq_models)} Groq model(s).")
+    else:
+        missing = [n for j, n in (("vision", "pictures"), ("stt", "voice messages"), ("tts", "speaking"))
+                   if plan[j]["provider"] == "groq"]
         if missing:
-            log_system("No Groq key set. Replies are local; "
-                       f"{', '.join(missing)} are off.")
-        else:
-            log_system("No Groq key set, and none needed: everything is local.")
+            log_system(f"No Groq key set, so {', '.join(missing)} are off. "
+                       "Pick another provider for them under Settings > Models.")
 
 
 def _fallback_client():
@@ -234,43 +263,45 @@ def reset_client_index():
     """Reset key rotation back to the first key, called after a timed wait."""
     global _client_index
     _client_index = 0
+    _resting.clear()
 
 
 class RequestTooLarge(Exception):
-    """One request needs more tokens than the plan allows per minute.
-
-    Not a rate limit in the useful sense: waiting does not help, and neither
-    does another key or another model, because the cap is on the organisation.
-    The only fix is to send less, so this is raised rather than retried. It was
-    being treated as a rate limit, which meant every key and every model was
-    tried against a request that could never fit, three times a second.
-    """
+    """One request needs more tokens than the plan allows per minute: not a rate limit, waiting/rotating doesn't help, the cap is on the organisation. Raised, not retried."""
 
 
 _TOO_LARGE_MARKERS = ("request too large", "reduce your message size",
-                      "please reduce the length")
+                      "please reduce the length",
+                      # A model's context window, which is what a local server
+                      # runs out of: llama.cpp and Ollama, OpenAI, Anthropic.
+                      "exceeds the available context size", "exceed_context_size",
+                      "context_length_exceeded", "maximum context length",
+                      "prompt is too long", "context window")
 
-# The same 429 arrives for two completely different problems, and they need
-# opposite fixes:
-#
-#   input  - the conversation sent is too big. Send fewer messages.
-#   output - the reply the model is *expected* to produce is too big. Groq
-#            enforces this before generating anything, against max_tokens, or
-#            against the model's full default when max_tokens is not set.
-#
-# Trimming history for an output limit does nothing at all, which is exactly
-# what it looked like: "retrying with the last 7 / 4 / 2 messages" and the same
-# refusal each time, because the history was never the problem.
+
+def context_numbers(error) -> tuple:
+    """(needed, available) tokens from a context-size error, or (0, 0)."""
+    m = re.search(r"request \((\d+) tokens\) exceeds the available context size \((\d+) tokens\)", str(error))
+    if m:
+        return int(m.group(1)), int(m.group(2))
+    m = re.search(r"maximum context length is (\d+) tokens.*?(\d+) tokens", str(error), re.S)
+    return (int(m.group(2)), int(m.group(1))) if m else (0, 0)
+
+
+def explain_too_large(error) -> str:
+    """What to tell a person about a request the model had no room for."""
+    need, have = context_numbers(error)
+    if need and have:
+        return (f"The model only has room for {have} tokens and this reply needs {need}: your persona, "
+                "memory and the conversation. On this computer, Models > This computer sets how much room "
+                "Ollama gives it (the app starts it with 16,384); a shorter persona helps too.")
+    return "The request was too big for the model. Older messages are trimmed and it is tried again."
+
+# same 429, two opposite fixes: input = conversation too big (send fewer messages), output = the expected reply is too big (Groq checks max_tokens, or the model default, before generating). trimming history for an output limit does nothing, hence "retrying with the last 7/4/2 messages" and the same refusal.
 _OUTPUT_LIMIT_MARKERS = ("output tokens per minute", "otpm", "reduce max_tokens",
                          "expected output")
 
-# A cap on the reply, so Groq is asked for something that fits.
-#
-# Without one, the expected output is whatever the model can produce - on a
-# reasoning model that includes its thinking - and a free tier allowing 1000
-# output tokens a minute refuses a short chat reply for wanting 1324. Replies
-# here are cut to a few hundred characters before sending anyway, so a cap is
-# not giving anything up.
+# cap the reply so Groq is asked for something that fits: without it, expected output includes a reasoning model's thinking, and a 1000/min tier refuses a short reply for wanting 1324. replies get cut to a few hundred chars anyway, so the cap loses nothing
 DEFAULT_MAX_REPLY_TOKENS = 320
 MIN_MAX_REPLY_TOKENS = 96
 
@@ -303,10 +334,7 @@ def fallback_model():
     old_model = model
     current_model_index += 1
     if current_model_index >= len(groq_models):
-        # Every model has been tried. Go back to the first one so the NEXT
-        # request starts from the top: leaving `model` on the last one while
-        # resetting only the index meant the next rotation logged
-        # "gpt-oss-20b -> gpt-oss-20b" and retried the same model for ever.
+        # all models tried: go back to the first so the next request starts from the top, otherwise the rotation logs "x -> x" and retries the same model forever
         current_model_index = 0
         model = groq_models[0]
         _client_index = 0
@@ -317,106 +345,353 @@ def fallback_model():
     return True
 
 
+def _is_rate_limit(e) -> bool:
+    text = str(e).lower()
+    return isinstance(e, RATE_LIMITED) or "429" in text or "rate limit" in text or "rate_limit" in text
+
+
+def _retry_after(e) -> float:
+    """How long a rate limited entry rests, from the error when it says ("try again in 1m2.5s")."""
+    m = re.search(r"try again in (?:(\d+)m\s*)?(?:(\d+(?:\.\d+)?)s)?", str(e))
+    if m and (m.group(1) or m.group(2)):
+        secs = int(m.group(1) or 0) * 60 + float(m.group(2) or 0)
+        return max(5.0, min(600.0, secs + 1))
+    return 20.0
+
+
+# Providers that turned out not to take the sampling settings; asked once, then
+# left alone for the rest of the run rather than failing a reply every time.
+_no_sampling: set = set()
+# What "I do not know that field" looks like coming back from one.
+_SAMPLING_WORDS = ("frequency_penalty", "presence_penalty", "top_p", "temperature",
+                   "unknown parameter", "unsupported parameter", "unrecognized",
+                   "extra fields not permitted", "unexpected keyword")
+
+
+def _rejects_sampling(exc) -> bool:
+    """Whether this failure is the provider refusing a sampling setting, rather than something that would fail again without them."""
+    text = str(exc).lower()
+    if not any(w in text for w in _SAMPLING_WORDS):
+        return False
+    status = getattr(exc, "status_code", None) or getattr(getattr(exc, "response", None), "status_code", None)
+    # A 400/422 names a bad field; a 429 or a 500 mentioning one is about something else.
+    return status in (400, 422, None) or isinstance(exc, TypeError)
+
+
+async def _groq_chat(model_id, messages, max_tokens, sampling=None):
+    """One Groq model, every key in turn before giving up on it."""
+    global _client_index
+    last = None
+    sampling = sampling or {}
+    for attempt in range(max(1, len(_groq_clients))):
+        try:
+            return await _active_client().chat.completions.create(
+                model=model_id, messages=messages, max_tokens=max_tokens, **sampling)
+        except Exception as e:
+            # a too-big request can't be rotated around: same organisation, same cap, on every key and model
+            if is_request_too_large(e):
+                from app.utils import apihealth
+                apihealth.record("rate_limit", str(e), model=model_id)
+                raise RequestTooLarge(str(e)) from e
+            last = e
+            if not _is_rate_limit(e):
+                print(f"[AI] {type(e).__name__} on {model_id}: {e}")
+            if len(_groq_clients) > 1 and attempt < len(_groq_clients) - 1:
+                old = _groq_clients[_client_index]["label"]
+                _client_index = (_client_index + 1) % len(_groq_clients)
+                log_system(f"{'Rate limited' if _is_rate_limit(e) else 'Failed'} on {old} → "
+                           f"switching to {_groq_clients[_client_index]['label']}")
+    raise last
+
+
+# How many replies are being written right now. Used to spread concurrent
+# replies across the chain instead of starting all of them on the same model.
+_inflight_replies = 0
+
+
+class ModelWontLoad(RuntimeError):
+    """A local model the server cannot load ("error loading model ..."): asking again a minute later fails the same
+    way, a few seconds each, so it is left alone for a while (app/utils/localfix.py), and said once, in words."""
+
+
+# (provider, model): (until when it is left alone, why).
+_wont_load: dict = {}
+# What was last said, and when: the same failure is not logged on every message.
+_said: dict = {}
+
+
+def _first_time(text: str, within: float) -> bool:
+    now = time.time()
+    if now - _said.get(text, 0.0) < within:
+        return False
+    _said[text] = now
+    return True
+
+
+def _left_alone(entry: dict):
+    """The ModelWontLoad for an entry that would not load a moment ago, or None."""
+    until, why = _wont_load.get((entry["provider"], entry["model"]), (0.0, ""))
+    if until <= time.time():
+        return None
+    from app.utils import providers
+    return ModelWontLoad(f"{providers.label(entry)} will not load: {why}")
+
+
+def unavailable_now(config: dict | None = None) -> str:
+    """Why no model can write a reply right now, or "" when one can: every model in the reply chain is being left
+    alone because it will not load (see _wont_load_now). Asking anyway fails the same way, a few seconds each, and
+    each failure was logged again for every message waiting: the log filled with the same error."""
+    from app.utils import providers
+    try:
+        chain = providers.reply_chain(config or load_config())
+    except Exception:
+        return ""
+    first = ""
+    for entry in chain:
+        skipped = _left_alone(entry)
+        if skipped is None:
+            return ""
+        first = first or str(skipped)
+    return first
+
+
+def say_once(text: str, within: float = 600.0) -> bool:
+    """True the first time this is to be said in `within` seconds: for a line that would otherwise repeat."""
+    return _first_time(text, within)
+
+
+def _wont_load_now(entry: dict, config: dict, error) -> "ModelWontLoad | None":
+    """A local model that failed to load: left alone, handed to the panel to look into, and said once. None for any
+    other error."""
+    from app.utils import localfix, providers
+    if entry["provider"] != "local" or not localfix.load_failure(error):
+        return None
+    why = localfix.reason(error)
+    _wont_load[(entry["provider"], entry["model"])] = (time.time() + localfix.REST, why)
+    localfix.note_failure(entry["model"], providers.base_url("local", config), error)
+    if _first_time(f"wont-load {entry['model']}", localfix.REST):
+        log_system(f"{providers.label(entry)} will not load: {why}. Left alone for ten minutes while the panel "
+                   f"looks into it.")
+    return ModelWontLoad(f"{providers.label(entry)} will not load: {why}")
+
+
 async def _create_completion(messages, max_tokens=None):
-    """Attempt completion with automatic key + model fallback on rate limit.
+    """A reply: see _create_completion_inner. Counted as the replies job (app/utils/usage.py)."""
+    global _inflight_replies
+    from app.utils import usage
+    token = usage.JOB.set("replies")
+    _inflight_replies += 1
+    try:
+        return await _create_completion_inner(messages, max_tokens)
+    finally:
+        _inflight_replies -= 1
+        usage.JOB.reset(token)
 
-    max_tokens caps the reply. It is always sent: Groq checks the *expected*
-    output against the per-minute output allowance before generating anything,
-    and with no cap the expectation is the model's full default.
-    """
-    if not _groq_clients and _local_client is None:
+
+async def _create_completion_inner(messages, max_tokens=None):
+    """A reply, from the first model in the chain that answers. Each entry is tried in order; one that is rate limited, down or refusing its key hands over to the next, and rests for a while so the next reply does not start with it again. max_tokens is always sent since Groq checks the expected output against the per-minute allowance before generating.
+
+    Several conversations are answered at once (discord.py runs each on_message as
+    its own task), and they used to all start at the same entry: three replies
+    being written together meant three calls to one model, which rate limited it,
+    rested it, and pushed every one of them down the chain in lockstep. Replies
+    already in flight step the starting point along instead, so concurrent
+    replies spread across the models that are set up rather than queueing behind
+    one. Order is otherwise unchanged, so a single reply still uses the first."""
+    global model, last_reply_model
+    if not _initialised:
         init_ai()
+    from app.utils import providers, apihealth
+    config = load_config()
+    chain = providers.reply_chain(config)
+    cap = max_tokens or _reply_token_cap()
+    now = time.time()
+    # Resting entries go last, not away: if everything is resting the first is still worth a try.
+    order = sorted(range(len(chain)),
+                   key=lambda i: (_resting.get((chain[i]["provider"], chain[i]["model"]), 0) > now, i))
+    # This reply is counted in _inflight_replies already, so the first one shifts
+    # by nothing and takes the chain as it is; each further one running at the
+    # same time starts a step along and wraps around.
+    others = max(0, _inflight_replies - 1)
+    if others and len(order) > 1:
+        shift = others % len(order)
+        order = order[shift:] + order[:shift]
 
-    # A local server has no keys to rotate and one model to rotate to, so none
-    # of the fallback machinery below means anything: a failure is a failure.
-    #
-    # It deliberately does not fall back to Groq either. Turning this on is a
-    # decision that these conversations do not leave the machine, and quietly
-    # sending them to an API the moment the server stops would be the one
-    # outcome nobody asked for. It is recorded instead, so the red mark in the
-    # logs says what happened.
-    if _local_client is not None:
+    last_error, too_large, prev, prev_error = None, None, None, None
+    for i in order:
+        entry = chain[i]
+        pid, mid = entry["provider"], entry["model"]
+        # Would not load a moment ago: asking again only spends seconds on the same failure.
+        skipped = _left_alone(entry)
+        if skipped is not None:
+            last_error = last_error or skipped
+            continue
+        if pid == "groq":
+            if not _groq_clients:
+                continue
+            client = None
+        else:
+            client = _openai_client(pid, config)
+            if client is None:
+                continue
+        if prev is not None:
+            log_model_fallback(providers.label(prev), providers.label(entry), _why_passed_over(prev_error))
+        prev = entry
+        prev_error = None
+        sampling = {} if pid in _no_sampling else providers.sampling_args(pid, config)
         try:
-            return await _local_client.chat.completions.create(
-                model=_local_model,
-                messages=messages,
-                max_tokens=max_tokens or _reply_token_cap(),
-            )
-        except Exception as e:
-            from app.utils import apihealth
-            kind = "rate_limit" if isinstance(e, RATE_LIMITED) else "error"
-            apihealth.record(kind, f"local server: {e}", model=_local_model)
-            raise
-
-    while True:
-        try:
-            response = await _active_client().chat.completions.create(
-                model=model,
-                messages=messages,
-                max_tokens=max_tokens or _reply_token_cap(),
-            )
+            try:
+                if pid == "groq":
+                    response = await _groq_chat(mid, messages, cap, sampling)
+                else:
+                    response = await client.chat.completions.create(
+                        model=mid, messages=messages, max_tokens=cap, **sampling)
+            except Exception as e:
+                # A provider that does not take one of these answers 400 for the
+                # whole request. Rather than lose the reply over a setting, send
+                # it again plainly and stop offering them to this one this run.
+                if not sampling or not _rejects_sampling(e):
+                    raise
+                log_system(f"{providers.label(entry)} does not take those sampling settings; sending without them")
+                _no_sampling.add(pid)
+                if pid == "groq":
+                    response = await _groq_chat(mid, messages, cap, {})
+                else:
+                    response = await client.chat.completions.create(
+                        model=mid, messages=messages, max_tokens=cap)
+            model = mid
+            last_reply_model = providers.label(entry)
+            _resting.pop((pid, mid), None)
             return response
-        except RateLimitError as e:
-            # A request that is simply too big cannot be rotated around: same
-            # organisation, same cap, on every key and every model.
-            if is_request_too_large(e):
-                from app.utils import apihealth
-                apihealth.record("rate_limit", str(e), model=model)
-                raise RequestTooLarge(str(e)) from e
-            if _fallback_client():
-                continue
-            if fallback_model():
-                continue
-            raise
+        except RequestTooLarge as e:
+            too_large = prev_error = e
         except Exception as e:
+            prev_error = e
             if is_request_too_large(e):
-                from app.utils import apihealth
-                apihealth.record("rate_limit", str(e), model=model)
-                raise RequestTooLarge(str(e)) from e
-            if "rate" not in str(e).lower() and "429" not in str(e):
-                print(f"[AI] {type(e).__name__} on {model}: {e}")
-            if _fallback_client():
+                too_large = RequestTooLarge(str(e))
                 continue
-            if fallback_model():
+            wont = _wont_load_now(entry, config, e)
+            if wont is not None:
+                last_error = prev_error = wont
+                apihealth.record("error", str(wont), model=mid)
                 continue
-            raise
+            last_error = e
+            limited = _is_rate_limit(e)
+            _resting[(pid, mid)] = time.time() + (_retry_after(e) if limited else 60.0)
+            if pid != "groq":
+                apihealth.record("rate_limit" if limited else "error",
+                                 f"{providers.label(entry)}: {e}", model=mid)
+    # too large wins: generate_response answers it by sending less, which helps at least that entry
+    if too_large is not None:
+        raise too_large
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("No model is set up to write replies. Add one under Settings > Models.")
+
+
+def _why_passed_over(e) -> str:
+    """Why a model was passed over for the next, in a few words, for the log line that says so."""
+    if e is None:
+        return ""
+    if isinstance(e, ModelWontLoad):
+        return "it will not load"
+    if isinstance(e, RequestTooLarge) or is_request_too_large(e):
+        return "the conversation was too long for it"
+    if _is_rate_limit(e):
+        return "rate limited"
+    name = type(e).__name__.lower()
+    text = str(e).lower()
+    if "timeout" in name or "timed out" in text:
+        return "it took too long to answer"
+    if "connect" in name or "refused" in text or "connection" in text:
+        return "it could not be reached"
+    status = getattr(e, "status_code", None) or getattr(getattr(e, "response", None), "status_code", None)
+    if status:
+        return f"it answered {status}"
+    return type(e).__name__
+
+
+async def _job_call(name: str, call, groq_call):
+    """One of the smaller jobs: see _job_call_inner. Counted under its own name (app/utils/usage.py)."""
+    from app.utils import usage
+    job_token, model_token = usage.JOB.set(name), usage.MODEL.set("")
+    try:
+        return await _job_call_inner(name, call, groq_call)
+    finally:
+        usage.JOB.reset(job_token)
+        usage.MODEL.reset(model_token)
+
+
+async def _job_call_inner(name: str, call, groq_call):
+    """Run one of the smaller jobs where it is set to run, falling back to Groq. `call(client, model)` does the work on an OpenAI-compatible provider, `groq_call(model)` on Groq. Leaving a job unset keeps it on Groq exactly as before; a named one that fails hands over to Groq too, when there is a Groq key, so a flaky local server costs a slower answer rather than none."""
+    from app.utils import providers, apihealth
+    config = load_config()
+    chain = providers.job_chain(config, name)
+    last_error = None
+    tried_groq = set()
+    from app.utils import usage
+    for i, entry in enumerate(chain):
+        # Would not load a moment ago (see _wont_load_now): straight on to the next.
+        skipped = _left_alone(entry)
+        if skipped is not None:
+            last_error = skipped
+            continue
+        if i and last_error is not None:
+            log_system(f"{providers.label(chain[i - 1])} failed ({type(last_error).__name__}), "
+                       f"trying {providers.label(entry)}")
+        # a voice note goes up as a file, so its request does not say which model; this does
+        usage.MODEL.set(entry["model"])
+        try:
+            if entry["provider"] == "groq":
+                if not _groq_clients:
+                    continue
+                tried_groq.add(entry["model"])
+                return await groq_call(entry["model"])
+            client = _openai_client(entry["provider"], config)
+            if client is None:
+                continue
+            return await call(client, entry["model"])
+        except Exception as e:
+            last_error = _wont_load_now(entry, config, e) or e
+            if entry["provider"] != "groq":
+                apihealth.record("rate_limit" if _is_rate_limit(e) else "error",
+                                 f"{providers.label(entry)}: {e}", model=entry["model"])
+    # Everything picked failed or could not be asked: Groq's own model for the job, last.
+    fallback = providers.groq_fallback(config, name)["model"]
+    if _groq_clients and fallback not in tried_groq:
+        if last_error is not None:
+            log_system(f"{providers.label(chain[-1])} failed ({type(last_error).__name__}), using Groq instead")
+        usage.MODEL.set(fallback)
+        return await groq_call(fallback)
+    if last_error is not None:
+        raise last_error
+    names = ", ".join(sorted({providers.BY_ID[e["provider"]]["name"] for e in chain}))
+    raise RuntimeError(f"{names} cannot be asked (no key), and there is no Groq key to fall back to.")
 
 
 async def _create_image_completion(image_model, messages, client_index=None, **extra):
-    """Image description call with key fallback (no model fallback, image model is fixed).
-
-    `extra` carries optional parameters such as max_tokens and reasoning_effort.
-    Not every model accepts every one of them, so a rejection of the parameters
-    themselves is retried without them rather than failing the whole call.
-
-    `client_index` pins the call to one specific Groq key instead of using
-    whichever is currently active. That is for callers running several of these
-    at once - describing a folder of pictures, say - where each worker wants its
-    own key and its own rate-limit allowance. A pinned call does not rotate on
-    failure: rotating would land it on a key another worker is already using,
-    and the caller is the one that knows how to back off. Left as None it
-    behaves exactly as it always did.
-    """
-    if not _groq_clients and _local_client is None:
+    """Image call, where pictures are set to be read; on Groq with key fallback (model fixed). `extra` holds optional params and a rejection of the params alone is retried without them. `client_index` pins a worker to its own key: no rotation, the caller does the backoff; None behaves like always."""
+    if not _initialised:
         init_ai()
-    params = dict(extra)
 
-    # Only when the local model was told it can read images. Most cannot, and a
-    # text model handed a picture does not say so, it describes something it
-    # never saw.
-    if _local_client is not None and _local_vision_model:
+    async def elsewhere(client, mid):
         try:
-            return await _local_client.chat.completions.create(
-                model=_local_vision_model, messages=messages, **params
-            )
+            return await client.chat.completions.create(model=mid, messages=messages, **extra)
         except Exception as e:
-            from app.utils import apihealth
-            apihealth.record("error", f"local vision: {e}", model=_local_vision_model)
+            if extra and any(w in str(e).lower() for w in ("unrecognized", "unknown", "unsupported", "does not support")):
+                return await client.chat.completions.create(model=mid, messages=messages)
             raise
+
+    return await _job_call("vision", elsewhere,
+                           lambda mid: _groq_image_completion(mid or image_model, messages, client_index, **extra))
+
+
+async def _groq_image_completion(image_model, messages, client_index=None, **extra):
+    params = dict(extra)
     if not _groq_clients:
         raise RuntimeError(
-            "Reading images needs a Groq key, or a local vision model set under "
-            "Local AI.")
+            "Reading images needs a Groq key, or another provider picked for pictures "
+            "under Settings > Models.")
 
     pinned = client_index is not None
     if pinned:
@@ -438,8 +713,7 @@ async def _create_image_completion(image_model, messages, client_index=None, **e
             raise
         except Exception as e:
             text = str(e)
-            # An unknown parameter is a 400 about the argument, not about the
-            # image. Drop the optional ones once and try again.
+            # an unknown parameter is a 400 about the argument, not the image: drop the optional ones once and retry
             if params and ("unrecognized" in text.lower() or "unknown" in text.lower()
                            or "unsupported" in text.lower() or "does not support" in text.lower()):
                 print(f"[AI] {image_model} rejected {list(params)}, retrying without")
@@ -458,26 +732,29 @@ async def _create_image_completion(image_model, messages, client_index=None, **e
 
 
 async def _create_transcription(whisper_model, audio_file):
-    """Whisper transcription call with key fallback."""
-    if not _groq_clients and _local_client is None:
+    """Transcription, where voice messages are set to be heard; on Groq with key fallback."""
+    if not _initialised:
         init_ai()
-    # An OpenAI-compatible server with a whisper model loaded answers the same
-    # /audio/transcriptions route Groq does, so the call below is identical.
-    # Only servers that implement it get a model named here.
-    if _local_client is not None and _local_stt_model:
+
+    async def elsewhere(client, mid):
+        return await client.audio.transcriptions.create(model=mid, file=audio_file)
+
+    async def on_groq(mid):
+        # the same file object, read once already if another provider failed first
         try:
-            return await _local_client.audio.transcriptions.create(
-                model=_local_stt_model, file=audio_file,
-            )
-        except Exception as e:
-            from app.utils import apihealth
-            apihealth.record("error", f"local transcription: {e}",
-                             model=_local_stt_model)
-            raise
+            audio_file.seek(0)
+        except Exception:
+            pass
+        return await _groq_transcription(mid or whisper_model, audio_file)
+
+    return await _job_call("stt", elsewhere, on_groq)
+
+
+async def _groq_transcription(whisper_model, audio_file):
     if not _groq_clients:
         raise RuntimeError(
-            "Transcribing a voice message needs a Groq key, or a local speech "
-            "to text model set under Local AI.")
+            "Transcribing a voice message needs a Groq key, or another provider picked "
+            "for voice messages under Settings > Models.")
     while True:
         try:
             transcription = await _active_client().audio.transcriptions.create(
@@ -498,11 +775,7 @@ async def _create_transcription(whisper_model, audio_file):
 
 
 def _small_model_name() -> str:
-    """The dedicated model for utility calls (memory, language, summaries).
-
-    Falls back to the last configured chat model when no small model is set,
-    so existing configs keep working.
-    """
+    """The Groq model for utility calls (memory, language, summaries); falls back to the last configured chat model."""
     try:
         from app.utils.helpers import load_config
         bcfg = load_config().get("bot") or {}
@@ -518,49 +791,84 @@ def _small_model_name() -> str:
 
 
 async def _create_small_completion(messages, **kwargs):
-    """Utility completion (memory, language, summaries) with key fallback.
-
-    Runs on the small model when one is available (these calls are frequent
-    and don't need a 120B model), and falls back to the main chat model if
-    the small one is rate limited or unavailable.
-    """
-    if not _groq_clients and _local_client is None:
+    """Utility completion (memory, language, summaries): wherever background work is set to run, a small Groq model by default (frequent calls don't need a 120B), else the main chat model."""
+    if not _initialised:
         init_ai()
-    # Locally there is one model, so the "cheap model for background work"
-    # split does not apply: it is the same model either way.
-    if _local_client is not None:
-        return await _local_client.chat.completions.create(
-            model=_local_model, messages=messages, **kwargs
-        )
-    small = _small_model_name()
-    targets = [small] if small == model else [small, model]
-    while True:
-        try:
-            return await _active_client().chat.completions.create(
-                model=targets[0], messages=messages, **kwargs
-            )
-        except RateLimitError:
-            if _fallback_client():
-                continue
-            if len(targets) > 1:
-                targets.pop(0)
-                continue
-            raise
-        except Exception:
-            if len(targets) > 1:
-                targets.pop(0)
-                continue
-            raise
+    from app.utils import providers
+    config = load_config()
+
+    # No Groq key and background work left on Groq: it would fail every time, so it goes to whatever writes the replies instead.
+    if not _groq_clients and providers.job(config, "small")["provider"] == "groq":
+        for entry in providers.reply_chain(config):
+            client = _openai_client(entry["provider"], config) if entry["provider"] != "groq" else None
+            if client is not None:
+                return await client.chat.completions.create(model=entry["model"], messages=messages, **kwargs)
+        raise RuntimeError("No model is set up for background work.")
+
+    async def elsewhere(client, mid):
+        return await client.chat.completions.create(model=mid, messages=messages, **kwargs)
+
+    async def on_groq(small):
+        small = small or _small_model_name()
+        main = next((e["model"] for e in providers.reply_chain(config) if e["provider"] == "groq"), small)
+        targets = [small] if small == main else [small, main]
+        while True:
+            try:
+                return await _active_client().chat.completions.create(
+                    model=targets[0], messages=messages, **kwargs
+                )
+            except RateLimitError:
+                if _fallback_client():
+                    continue
+                if len(targets) > 1:
+                    targets.pop(0)
+                    continue
+                raise
+            except Exception:
+                if len(targets) > 1:
+                    targets.pop(0)
+                    continue
+                raise
+
+    return await _job_call("small", elsewhere, on_groq)
+
+
+def _reasoning_of(response) -> str:
+    """A reasoning model's thinking, when the provider sent it back.
+
+    Groq puts it in `reasoning`, DeepSeek and vLLM in `reasoning_content`, and
+    some models (qwen3, deepseek-r1 served raw) write it into the answer inside
+    <think> tags. The Logs page shows it, folded, next to the reply.
+    """
+    try:
+        msg = response.choices[0].message
+    except Exception:
+        return ""
+    text = getattr(msg, "reasoning", None) or getattr(msg, "reasoning_content", None)
+    if not text:
+        extra = getattr(msg, "model_extra", None) or {}
+        text = extra.get("reasoning") or extra.get("reasoning_content")
+    if not text:
+        m = re.search(r"<think>(.*?)</think>", msg.content or "", re.S)
+        text = m.group(1) if m else ""
+    return (text or "").strip()
+
+
+def _answer_of(response) -> str:
+    """The reply text, with any <think> block taken out of it."""
+    content = response.choices[0].message.content or ""
+    return re.sub(r"<think>.*?</think>\s*", "", content, flags=re.S)
+
+
+def _show_thinking(response):
+    thought = _reasoning_of(response)
+    if thought:
+        log_thinking(thought, last_reply_model)
 
 
 async def generate_response(prompt, instructions, history=None):
-    """Send a completion request to Groq and return the response text.
-
-    history: list of {"role", "content"} dicts. When provided, the caller MUST
-    have already appended the current user turn as the last entry, `prompt`
-    is NOT appended again. When omitted, `prompt` is the sole user message.
-    """
-    if not _groq_clients and _local_client is None:
+    """Completion request returning the response text; if history is passed the caller already appended the user turn as the last entry and prompt is NOT added again, otherwise prompt is the sole user message."""
+    if not _initialised:
         init_ai()
     try:
         messages = [{"role": "system", "content": instructions}]
@@ -573,9 +881,7 @@ async def generate_response(prompt, instructions, history=None):
         try:
             response = await _create_completion(messages, max_tokens=cap)
         except RequestTooLarge as first:
-            # Two different problems arrive as the same 429, and they need
-            # opposite fixes. Asking for the wrong one is why this used to
-            # trim the history three times and get refused three times.
+            # same 429, two opposite fixes; asking for the wrong one is why this used to trim history three times and get refused three times
             if is_output_limit(first):
                 # The allowance is on the reply. Ask for a shorter one.
                 for _ in range(3):
@@ -590,10 +896,7 @@ async def generate_response(prompt, instructions, history=None):
                 else:
                     raise
             else:
-                # The conversation has grown past what one request may spend.
-                # The cap is per organisation, so no key or model can take it:
-                # the only way through is to send less. Older turns matter
-                # least, so they go first, and the system prompt is always kept.
+                # conversation outgrew one request: the cap is per organisation so no key/model can take it, send less; oldest turns go first, system prompt always kept
                 trimmed = messages
                 for _ in range(3):
                     head = [m for m in trimmed if m.get("role") == "system"]
@@ -611,9 +914,16 @@ async def generate_response(prompt, instructions, history=None):
                         continue
                 else:
                     raise
-        return response.choices[0].message.content
+        _show_thinking(response)
+        return _answer_of(response)
     except Exception as e:
-        # Rate-limit errors are handled and logged by the retry loop in main.py
+        # Rate-limit errors are handled and logged by the retry loop in main.py,
+        # and a request too big for the model is explained there, in words.
+        if isinstance(e, RequestTooLarge) or is_request_too_large(e):
+            raise
+        # A model that will not load is said once while it is left alone, not on every message.
+        if isinstance(e, ModelWontLoad) and not _first_time(f"error {e}", 600.0):
+            raise
         if "429" not in str(e) and "rate_limit_exceeded" not in str(e) and "Rate limit" not in str(e):
             print_error("AI Error", e)
             await webhook_log(None, e)
@@ -623,8 +933,7 @@ async def generate_response(prompt, instructions, history=None):
 GROQ_IMAGE_SIZE_LIMIT = 20 * 1024 * 1024  # 20MB
 
 
-# One aiohttp session for image fetches, instead of building and tearing one
-# down per image - each of which meant a fresh TCP connection and TLS handshake.
+# one aiohttp session for image fetches, instead of a fresh TCP connection and TLS handshake per image
 _image_http_session = None
 
 
@@ -637,14 +946,35 @@ async def _image_session():
     return _image_http_session
 
 
-def _shrink_to_limit(data: bytes) -> bytes:
-    """Compress an image until it fits Groq's limit. Blocking; call on a thread."""
+def _to_static_jpeg(data: bytes) -> bytes:
+    """One frame of any image, as a plain JPEG under Groq's size limit.
+
+    The vision model only accepts a still image it can decode. A GIF, an
+    animated WebP, an APNG or a Discord sticker handed over as its raw bytes
+    came back "invalid image data" (seen repeatedly in the log). Opening it
+    with Pillow and saving the first frame as JPEG makes every one of those a
+    valid still - and re-encoding a normal photo costs almost nothing.
+
+    Blocking (Pillow), so it is always called on a thread.
+    """
     import io
     from PIL import Image
 
     img = Image.open(io.BytesIO(data))
+    try:
+        img.seek(0)          # first frame of an animated image
+    except (EOFError, ValueError):
+        pass
     if img.mode not in ("RGB", "L"):
-        img = img.convert("RGB")
+        # Flatten transparency onto white so a sticker's cutout does not turn
+        # into a black block.
+        if img.mode in ("RGBA", "LA", "P"):
+            img = img.convert("RGBA")
+            bg = Image.new("RGB", img.size, (255, 255, 255))
+            bg.paste(img, mask=img.split()[-1])
+            img = bg
+        else:
+            img = img.convert("RGB")
 
     # Progressively reduce quality/size until under limit
     for quality in (85, 70, 55, 40):
@@ -656,19 +986,12 @@ def _shrink_to_limit(data: bytes) -> bytes:
         img = img.resize(
             (max(1, img.width // 2), max(1, img.height // 2)), Image.LANCZOS
         )
-    else:
-        raise Exception("Image still over Groq's size limit after compression")
-
     buf.seek(0)
     return buf.read()
 
 
 async def _prepare_image_url(image_url: str) -> str:
-    """Fetch the image, encode as base64 (compress if over Groq's 20MB limit).
-
-    Always returns a base64 data URL, Discord CDN links are authenticated and
-    expiring, so Groq's servers can't fetch them directly.
-    """
+    """Fetch the image and return a base64 data URL (compressing if over the 20MB limit); Discord CDN links are authenticated and expiring, so Groq can't fetch them directly."""
     import io
     import base64
 
@@ -687,23 +1010,22 @@ async def _prepare_image_url(image_url: str) -> str:
                 content_type = resp.content_type or "image/jpeg"
                 data = await resp.read()
 
-        if len(data) <= GROQ_IMAGE_SIZE_LIMIT:
-            # Always encode as base64, raw Discord URLs are inaccessible from Groq
+        # Always normalise to a still JPEG rather than forwarding the raw bytes:
+        # that is what makes stickers, GIFs and animated images work instead of
+        # coming back "invalid image data". A data: URL that is already a plain
+        # JPEG or PNG under the limit is passed straight through.
+        if (image_url.startswith("data:") and content_type in ("image/jpeg", "image/png")
+                and len(data) <= GROQ_IMAGE_SIZE_LIMIT):
             b64 = base64.b64encode(data).decode()
             return f"data:{content_type};base64,{b64}"
-
-        # Need to compress, use Pillow
         try:
-            from PIL import Image
+            from PIL import Image  # noqa: F401
         except ImportError:
             return image_url  # Pillow not installed, fall back to original
-
-        # Decode, resample and re-encode on a worker thread. These are
-        # CPU-bound and were running straight on the event loop, so compressing
-        # one large photo stalled every other conversation on the account for
-        # as long as it took.
+        # decode/first-frame/re-encode on a worker thread: it is CPU-bound, and
+        # one large photo on the event loop stalled every other conversation.
         import asyncio
-        jpeg = await asyncio.to_thread(_shrink_to_limit, data)
+        jpeg = await asyncio.to_thread(_to_static_jpeg, data)
         b64 = base64.b64encode(jpeg).decode()
         return f"data:image/jpeg;base64,{b64}"
 
@@ -712,7 +1034,7 @@ async def _prepare_image_url(image_url: str) -> str:
 
 
 async def generate_response_image(prompt, instructions, image_url, history=None):
-    if not _groq_clients and _local_client is None:
+    if not _initialised:
         init_ai()
     try:
         _cfg = load_config()
@@ -746,8 +1068,7 @@ async def generate_response_image(prompt, instructions, image_url, history=None)
         prompt_with_image = f"{prompt} [Image of {_image_desc}]"
 
         if history:
-            # The caller already appended the plain user message to history, 
-            # update that last entry in-place with the image-enriched version.
+            # caller already appended the plain user message to history, swap the last entry for the image-enriched version
             if history[-1].get("role") == "user":
                 history[-1] = {"role": "user", "content": prompt_with_image}
             else:
@@ -767,10 +1088,12 @@ async def generate_response_image(prompt, instructions, image_url, history=None)
             ]
 
         response = await _create_completion(messages)
+        _show_thinking(response)
+        answer = _answer_of(response)
         # Append the assistant turn only when history was created locally.
         if len(history) == 1 and history[0].get("content") == prompt_with_image:
-            history.append({"role": "assistant", "content": response.choices[0].message.content})
-        return response.choices[0].message.content
+            history.append({"role": "assistant", "content": answer})
+        return answer
     except Exception as e:
         print_error("AI image Error", e)
         raise
@@ -778,7 +1101,7 @@ async def generate_response_image(prompt, instructions, image_url, history=None)
 
 async def extract_memory(user_message: str, assistant_reply: str, existing_memory: dict = None) -> dict:
     """Ask the LLM to decide what's worth remembering, free-form key/value."""
-    if not _groq_clients and _local_client is None:
+    if not _initialised:
         init_ai()
 
     existing_block = ""
@@ -851,7 +1174,7 @@ async def extract_memory(user_message: str, assistant_reply: str, existing_memor
 
 async def detect_memory_deletion(user_message: str, current_memory: dict) -> list:
     """Ask the LLM to detect if the user is retracting, correcting, or joking about a stored fact."""
-    if not _groq_clients and _local_client is None:
+    if not _initialised:
         init_ai()
     if not current_memory:
         return []
@@ -902,7 +1225,7 @@ async def detect_memory_deletion(user_message: str, current_memory: dict) -> lis
 
 async def transcribe_voice(audio_bytes: bytes, filename: str = "voice.ogg") -> str:
     """Transcribe a voice message using Groq Whisper."""
-    if not _groq_clients and _local_client is None:
+    if not _initialised:
         init_ai()
 
     try:
@@ -919,12 +1242,8 @@ async def transcribe_voice(audio_bytes: bytes, filename: str = "voice.ogg") -> s
 
 
 async def detect_language(history: list, current_message: str) -> str:
-    """LLM-detected language of the user from recent history.
-
-    Looks at the last few user turns so gradual language drift is caught.
-    Returns a BCP-47 tag like 'fr', 'en', 'es'. Falls back to 'en' on error.
-    """
-    if not _groq_clients and _local_client is None:
+    """Detect the user's language from recent history (last few turns, catches drift); returns a BCP-47 tag like 'fr' or '' on failure."""
+    if not _initialised:
         init_ai()
 
     # Compact view of recent user messages so the LLM can see drift
@@ -968,7 +1287,7 @@ async def detect_language(history: list, current_message: str) -> str:
 
 async def summarize_history(history: list, instructions: str) -> list:
     """Compress long history into summary + recent messages to save tokens."""
-    if not _groq_clients and _local_client is None:
+    if not _initialised:
         init_ai()
 
     KEEP_RECENT = 6
@@ -1010,15 +1329,81 @@ async def summarize_history(history: list, instructions: str) -> list:
         return history
 
 
-async def generate_nudge(original_message: str, days_elapsed: float, instructions: str) -> str:
-    """Generate a natural nudge message for a conversation the bot never replied to.
+# Memory-page summary lengths: how many points go under the headline, and the output allowance that fits them with room to spare (a model that reasons spends some of it thinking)
+SUMMARY_LENGTHS = {
+    "short": ("two points", 200),
+    "medium": ("three or four points", 380),
+    "detailed": ("five or six points", 600),
+}
 
-    The tone shifts based on how many days have passed:
-    - < 1.5 days : brief acknowledgement that we missed it
-    - 1.5–3 days : casual brush-over, might or might not acknowledge the gap
-    - 3+ days    : just resume conversation naturally, no acknowledgement at all
-    """
-    if not _groq_clients and _local_client is None:
+_LANGUAGE_NAMES = {
+    "en": "English", "fr": "French", "es": "Spanish", "de": "German",
+    "pt": "Portuguese", "it": "Italian", "ar": "Arabic", "nl": "Dutch",
+}
+
+
+def summary_instructions(their_name: str, length: str = "medium",
+                         language: str = "auto") -> str:
+    """The system prompt for a Memory-page summary: deliberately not the persona, it describes the conversation for the account owner rather than taking part in it. The shape is fixed, a bold headline and a few short labelled points, because it is read at a glance (the Memory page, Big Picture) rather than studied: a paragraph of prose was a wall nobody read. webui/src/lib/summarymd.ts draws exactly this shape."""
+    points = SUMMARY_LENGTHS.get(length, SUMMARY_LENGTHS["medium"])[0]
+    if language and language != "auto":
+        lang = f"Write it in {_LANGUAGE_NAMES.get(language, language)}, labels included."
+    else:
+        lang = "Write it in the language the conversation is mostly in, labels included."
+    return (
+        "You summarise a chat conversation for the person who owns the account. "
+        f"Lines marked 'Me' were sent by that account; the others are from {their_name}. "
+        "Reply with exactly this shape and nothing else:\n"
+        "**<what the conversation is mainly about, at most 10 words>**\n"
+        "- **<Label>:** <one short line, at most 14 words>\n"
+        f"Under the headline, write {points}, one per line, each starting with '- '. "
+        "A label is one to three words, like Topics, Vibe, Plans, Mood, Inside jokes or Waiting on. "
+        f"Use Waiting on for anything left open: a question {their_name} is still waiting on, "
+        "a plan, a promise. Say each thing once, in plain words. "
+        "No other headings, no intro, no closing line, no quotes of whole messages. "
+        "Refer to them by name and to the account as 'you'. "
+        "Stick to what the messages actually say; do not guess at anything else. "
+        + lang
+    )
+
+
+def _tidy_summary(text: str) -> str:
+    """A summary as the Memory page draws it: a model's thinking, a code fence round the whole reply and its own preamble ("Here is the summary:") taken out, blank lines between points closed up, and "*" or "•" bullets made "-"."""
+    text = re.sub(r"<think>.*?</think>", "", text or "", flags=re.DOTALL).strip()
+    text = re.sub(r"^```[a-zA-Z]*\s*|\s*```$", "", text).strip()
+    lines = []
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if not lines and re.match(r"(?i)^(here'?s|here is|summary)\b[^:\n]{0,40}:$", line):
+            continue
+        lines.append(re.sub(r"^[*•]\s+", "- ", line))
+    return "\n".join(lines)
+
+
+async def summarize_conversation(lines: list, their_name: str,
+                                 length: str = "medium", language: str = "auto") -> str:
+    """Summarise (speaker, text) pairs oldest-first, "" on failure; runs on the small model like the history compressor."""
+    if not lines:
+        return ""
+    transcript = "\n".join(f"{who}: {text}" for who, text in lines)
+    cap = SUMMARY_LENGTHS.get(length, SUMMARY_LENGTHS["medium"])[1]
+    response = await _create_small_completion(
+        [
+            {"role": "system", "content": summary_instructions(their_name, length, language)},
+            {"role": "user", "content": "The conversation, oldest first:\n\n" + transcript},
+        ],
+        max_tokens=cap,
+        temperature=0.3,
+    )
+    # A reasoning model can leave its thinking in the reply; _tidy_summary takes it out with the rest.
+    return _tidy_summary(response.choices[0].message.content or "")
+
+
+async def generate_nudge(original_message: str, days_elapsed: float, instructions: str) -> str:
+    """Nudge for a conversation the bot never replied to; tone shifts with the gap: <1.5 days brief ack, 1.5-3 days casual brush-over, 3+ days just resume naturally."""
+    if not _initialised:
         init_ai()
 
     if days_elapsed < 1.5:

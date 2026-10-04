@@ -95,6 +95,8 @@ print("== and it all comes back ==")
 shutil.rmtree(DATA / "config")
 restored = asyncio.run(system_routes.import_everything(Req({"path": result["path"]})))
 check("files were restored", restored["files"] >= 6, str(restored))
+# A restore is staged and put in place at the next start, before anything opens the files.
+check("the next start puts them in place", paths.apply_pending_restore() >= 6)
 check("the token survived",
       (DATA / "config" / ".env").read_text(encoding="utf-8").strip() == "DISCORD_TOKEN_1=a-real-token")
 check("the persona survived",

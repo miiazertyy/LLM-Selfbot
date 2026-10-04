@@ -10,6 +10,8 @@ export type Issue = {
   where?: string;
   /** Settings category holding the control, so the link can open it. */
   section?: string;
+  /** A button that fixes it on the spot, e.g. starting Ollama. */
+  fix?: { label: string; call: string; models?: string[] };
 };
 
 /** Populated by a poll in App.svelte; drives the nav dots and the Dashboard list. */
@@ -26,6 +28,19 @@ export const health = writable<{ issues: Issue[]; routes: Record<string, string>
  * this on mount.
  */
 export const settingsSection = writable<string>("");
+
+/**
+ * The settings Settings opens on: one persona's own ("Change settings for
+ * Juniper" on the Personas page), or "" for everyone's. Settings reads and
+ * clears it on mount, like settingsSection.
+ */
+export const settingsScope = writable<string>("");
+
+/**
+ * A log source another page asked to see on its own, e.g. "Its log" on an
+ * account card. Logs shows only that source when it opens, and clears this.
+ */
+export const logsFocus = writable<string>("");
 
 export const toasts = writable<{ id: number; text: string; kind: "ok" | "err" | "info" }[]>([]);
 
@@ -133,6 +148,9 @@ export const logoLinkOff = persisted<boolean>("logoLinkOff", false);
 
 export const snowEnabled = persisted<boolean>("snow", true, true);
 
+/** A mouse wheel's notches glide rather than jump (lib/smoothscroll.ts). Settings, Appearance, Interface. */
+export const smoothScroll = persisted<boolean>("smoothScroll", true, true);
+
 /**
  * Order of the Dashboard sections, top to bottom.
  *
@@ -149,12 +167,92 @@ export const dashOrder = persisted<string[]>("dashOrder", [
 ], true);
 
 /**
+ * Whether the Pictures tab opens with its pictures blurred.
+ *
+ * Opening the tab put the first two pictures on screen at full size straight
+ * away, which is not always what you want on a shared screen or with someone
+ * beside you. On by default; hovering one still shows it, and "Show pictures"
+ * shows the lot until you leave the tab.
+ */
+export const picturesBlur = persisted<boolean>("picturesBlur", true, true);
+
+/**
+ * The persona the Personas, Pictures and Memory pages show (lib/personas): one
+ * picked on any of them stays picked on the others, and across visits.
+ */
+export const viewPersona = persisted<string>("viewPersona", "default");
+
+/** One widget placed on the Dashboard. See lib/dashboard/widgets.ts. */
+export type WidgetInstance = {
+  /** Unique per placement, so two "Time of day" widgets can differ. */
+  id: string;
+  type: string;
+  collapsed?: boolean;
+  size?: "half" | "full";
+  options?: Record<string, string | number | boolean>;
+};
+
+/**
+ * The Dashboard's widgets, in order, with how each is set up.
+ *
+ * Replaces dashOrder, which could only reorder a fixed five. null until the
+ * first load, when widgets.ts builds it - from dashOrder if there is one, so a
+ * layout someone already arranged comes across intact.
+ */
+export const dashLayout = persisted<WidgetInstance[] | null>("dashLayout", null, true);
+
+/**
  * Animations are a product feature here, not decoration, so the OS
  * prefers-reduced-motion setting picks the DEFAULT rather than overriding the
  * user. Windows reports "reduce" whenever "Animation effects" is off, which was
  * silently disabling the whole jello UI and the snow.
  */
 export const motionEnabled = persisted<boolean>("motion", true, true);
+
+/** Big Picture Mode is open: the whole-screen, watch-it-live view (lib/bigpicture). */
+export const bigPicture = writable<boolean>(false);
+/**
+ * Set while Big Picture is closing. Its inner animations read it and finish at
+ * once, so leaving is the one quick fade: the avatar's flight between the queue
+ * and the stage kept the whole view on screen for over a second after Esc.
+ */
+export const bigPictureExit = { on: false };
+/**
+ * Set while Big Picture covers the whole window: the app underneath is then
+ * not drawn at all (App.svelte). It went on laying out and animating behind a
+ * view that hid every pixel of it, which cost Big Picture its frames, and
+ * every resize in and out of fullscreen laid out the whole app for nothing.
+ */
+export const bigPictureCovering = writable<boolean>(false);
+/** Set while Big Picture fades in over the app, which fades out under it, before it covers it. */
+export const bigPictureArriving = writable<boolean>(false);
+/**
+ * How Big Picture closes itself, set while it is open: out of fullscreen
+ * first, while it still covers everything, and only then away, so the app is
+ * laid out once at the size it ends up rather than at fullscreen and again
+ * after. Every close comes through setBigPicture, so the hotkey takes the same
+ * way out as Esc.
+ */
+export const bigPictureCloser: { fn: (() => void) | null } = { fn: null };
+/** Open or close Big Picture; the only way either should happen. */
+export function setBigPicture(on: boolean) {
+  if (!on && bigPictureCloser.fn) {
+    const close = bigPictureCloser.fn;
+    bigPictureCloser.fn = null;
+    close();
+    return;
+  }
+  bigPictureExit.on = !on;
+  bigPictureArriving.set(on);
+  if (!on) bigPictureCovering.set(false);
+  bigPicture.set(on);
+}
+/** Its soft sounds. Off until someone turns them on, then remembered. */
+export const bigPictureSound = persisted<boolean>("bigPictureSound", false, true);
+/** The app's own sounds (lib/uisound.ts): clicks, ticks and chimes. The speaker at the top right; off silences Big Picture's too. */
+export const uiSound = persisted<boolean>("uiSound", true, true);
+/** How loud the app's sounds are, 0 to 2: 1 is as they were made, the mark in the middle of the speaker's slider. */
+export const uiVolume = persisted<number>("uiVolume", 1);
 
 /** Colour theme id, see lib/themes.ts. */
 export const fontId = persisted<string>("font", "mikhak", true);

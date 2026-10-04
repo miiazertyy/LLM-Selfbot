@@ -24,6 +24,12 @@ from app.utils.db import (
     get_leaderboard,
 )
 from app.utils.memory import set_persona, clear_persona, get_persona
+from app.utils import configstore, personas
+
+
+def _my_persona() -> str:
+    """The persona this account speaks as (app/utils/personas.py)."""
+    return personas.current() or personas.DEFAULT
 
 
 def _my_account_index() -> int:
@@ -43,10 +49,8 @@ class Management(commands.Cog):
         if ctx.author.id != self.bot.owner_id:
             await asyncio.sleep(random.uniform(0.8, 2.5))
 
-    def save_config(self, new_config):
-        config_path = resource_path("config/config.yaml")
-        with open(config_path, "w", encoding="utf-8") as file:
-            yaml.dump(new_config, file, default_flow_style=False, allow_unicode=True)
+    # No save_config any more: the settings this account runs with are its persona's on everyone's, and writing them
+    # back whole would put its persona's values into everyone's. Changes go through app/utils/configstore.py.
 
     @commands.command(name="pause", description="Pause the bot from producing AI responses.")
     async def pause(self, ctx):
@@ -86,11 +90,7 @@ class Management(commands.Cog):
         ),
     )
     async def persona(self, ctx, user: discord.User, *, args: str = None):
-        """Attach a custom tone/personality instruction to a specific user.
-
-        ,persona @jake "Be very formal and call him 'sir'"
-        ,persona @sara off  |  ,persona @jake show
-        """
+        """Attach a custom tone/personality to a user: ,persona @jake "be very formal" | ,persona @sara off | ,persona @jake show"""
         if ctx.author.id != self.bot.owner_id:
             return
 
@@ -119,31 +119,27 @@ class Management(commands.Cog):
             f"The bot will use these instructions when replying to them from now on."
         )
 
+    # Written where the value came from (app/utils/configstore.py): this persona's own stays its own, everyone's
+    # stays everyone's.
     @commands.command(name="toggledm", description="Toggle DM for chatting")
     async def toggledm(self, ctx):
         if ctx.author.id == self.bot.owner_id:
             self.bot.allow_dm = not self.bot.allow_dm
-            config = load_config()
-            config["bot"]["allow_dm"] = self.bot.allow_dm
-            self.save_config(config)
+            configstore.set_effective("bot.allow_dm", self.bot.allow_dm)
             await ctx.send(f"DMs are now {'allowed' if self.bot.allow_dm else 'disallowed'} for active channels.")
 
     @commands.command(name="togglegc", description="Toggle chatting in group chats.")
     async def togglegc(self, ctx):
         if ctx.author.id == self.bot.owner_id:
             self.bot.allow_gc = not self.bot.allow_gc
-            config = load_config()
-            config["bot"]["allow_gc"] = self.bot.allow_gc
-            self.save_config(config)
+            configstore.set_effective("bot.allow_gc", self.bot.allow_gc)
             await ctx.send(f"Group chats are now {'allowed' if self.bot.allow_gc else 'disallowed'} for active channels.")
 
     @commands.command(name="toggleserver", description="Toggle responding to mentions/replies in servers.")
     async def toggleserver(self, ctx):
         if ctx.author.id == self.bot.owner_id:
             self.bot.allow_server = not getattr(self.bot, 'allow_server', True)
-            config = load_config()
-            config["bot"]["allow_server"] = self.bot.allow_server
-            self.save_config(config)
+            configstore.set_effective("bot.allow_server", self.bot.allow_server)
             await ctx.send(f"Server responses are now {'enabled' if self.bot.allow_server else 'disabled'}.")
 
     @commands.command()
@@ -317,8 +313,7 @@ class Management(commands.Cog):
             import atexit
             msg = await ctx.send("Restarting...")
             print("Restarting bot...")
-            # Register relaunch BEFORE closing, fires after the lock is released.
-            # Route through the role launcher so it also works frozen.
+            # register the relaunch before closing (fires after the lock releases); via the role launcher so it works frozen too
             def _relaunch():
                 from app.core.launcher import spawn_role
                 spawn_role("discord", _my_account_index(), capture=False)
@@ -377,8 +372,7 @@ class Management(commands.Cog):
 
         repo_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
 
-        # Write a sentinel flag file instead of the JSON IPC channel (avoids
-        # conflicts with the Telegram controller's polling loop).
+        # sentinel flag file instead of the JSON IPC channel, avoids clashing with the Telegram controller's poll loop
         flag_path = os.path.join(repo_dir, "config", "update.flag")
         try:
             os.makedirs(os.path.dirname(flag_path), exist_ok=True)
@@ -434,16 +428,16 @@ class Management(commands.Cog):
         except UnicodeDecodeError:
             await ctx.send("Could not read file, make sure it's valid UTF-8.", delete_after=10)
             return
+        # This account's persona's text: every account on that persona speaks with it from its next reply.
+        personas.save_text(_my_persona(), text)
         self.bot.instructions = text
-        with open(resource_path("config/instructions.txt"), "w", encoding="utf-8") as f:
-            f.write(text)
         await ctx.send("Instructions updated from file!", delete_after=10)
 
     @commands.command(name="getinstructions", description="Sends the current instructions.txt file.", aliases=["gi"])
     async def getinstructions(self, ctx):
         if ctx.author.id != self.bot.owner_id:
             return
-        instructions_path = resource_path("config/instructions.txt")
+        instructions_path = str(personas.instructions_path(_my_persona()))
         if not os.path.exists(instructions_path):
             await ctx.send("No instructions file found.", delete_after=10)
             return
@@ -454,16 +448,15 @@ class Management(commands.Cog):
         if ctx.author.id != self.bot.owner_id:
             return
         if text is None:
-            await ctx.send(f"Current prompt:\n{f'```{self.bot.instructions}```' if self.bot.instructions != '' else 'No prompt is currently set.'}")
+            current = load_instructions()
+            await ctx.send(f"Current prompt:\n{f'```{current}```' if current != '' else 'No prompt is currently set.'}")
         elif text.lower() == "clear":
+            personas.save_text(_my_persona(), "")
             self.bot.instructions = ""
-            with open(resource_path("config/instructions.txt"), "w", encoding="utf-8") as f:
-                f.write("")
             await ctx.send("Cleared prompt.")
         else:
+            personas.save_text(_my_persona(), text)
             self.bot.instructions = text
-            with open(resource_path("config/instructions.txt"), "w", encoding="utf-8") as f:
-                f.write(text)
             await ctx.send(f"Updated prompt to:\n```{text}```")
 
     @commands.command(name="getdb", description="Sends the bot_data.db file to Discord.")
@@ -567,9 +560,7 @@ class Management(commands.Cog):
             user_id, channel_id = key.split("-")
             if _is_server_channel(channel_id):
                 continue
-            # Never carry a conversation we cannot send to across a restart:
-            # it would be retried, fail with the same 403, and be written out
-            # again on the next shutdown, for ever.
+            # never carry unsendable conversations across a restart: retried, 403'd, saved again on every shutdown, forever
             if _is_blocked(user_id):
                 continue
 
@@ -593,8 +584,7 @@ class Management(commands.Cog):
                 "last_message_id": last_message_id,
             }
 
-        # 2. Messages sitting in the queue (not yet responded to)
-        # NOTE: message_queues keys are "user_id-channel_id" strings.
+        # 2. messages sitting in the queue (not yet responded to); note: message_queues keys are "user_id-channel_id" strings
         for batch_key, queue in self.bot.message_queues.items():
             # Extract the channel_id portion from the composite key
             try:
@@ -746,11 +736,7 @@ class Management(commands.Cog):
         return False, "couldn't send the message (user may have DMs closed)"
 
     async def _get_unreplied_users(self):
-        """Return list of (user, snippet, msg_count) for all unreplied chats.
-
-        Pass 1: in-memory history (fast, mid-session). Pass 2: live DM scan
-        (catches post-restart gaps). Works even when message_history is empty.
-        """
+        """Return (user, snippet, msg_count) for unreplied chats: pass 1 in-memory history, pass 2 live DM scan for post-restart gaps."""
         results = []
         seen_user_ids = set()
 
@@ -778,9 +764,7 @@ class Management(commands.Cog):
             except Exception:
                 pass
 
-        # --- Pass 2: live DM scan (catches anything missed after restart) ---
-        # Use Discord's cached last_message_id to pre-filter channels with zero
-        # API calls, then only fetch history for the ones that look unreplied.
+        # pass 2: live DM scan (catches anything missed after restart); pre-filter with cached last_message_id (zero API calls), only fetch history for ones that look unreplied
         try:
             selfbot_id = getattr(self.bot, "selfbot_id", None) or self.bot.user.id
             for channel in self.bot.private_channels:
@@ -1031,7 +1015,8 @@ class Management(commands.Cog):
             notif = config.get("notifications") or {}
 
             wait_times = bot_cfg.get("batch_wait_times") or []
-            wt_str = "  ".join(f"{w['time']}s({w['weight']})" for w in wait_times)
+            # A range reads 20s-60s(30): any time between the two, picked 30 times in the weights.
+            wt_str = "  ".join(f"{w['time']}s" + (f"-{w['to']}s" if w.get('to') and w['to'] > w['time'] else "") + f"({w['weight']})" for w in wait_times)
 
             mood_list = ", ".join(mood.get("moods", {}).keys())
 
@@ -1129,13 +1114,16 @@ class Management(commands.Cog):
             except ValueError: pass
             try: return float(v)
             except ValueError: pass
-            # Special handling for batch_wait_times: parse "15s(30) 30s(35) ..." format
+            # Special handling for batch_wait_times: parse "15s(30) 30s-90s(35) ..." format, a range being any time between its two ends
             if keys[-1] == "batch_wait_times":
                 parsed = []
                 for token in v.split():
-                    m = re.fullmatch(r"(\d+)s\((\d+)\)", token.strip())
+                    m = re.fullmatch(r"(\d+)s(?:-(\d+)s)?\((\d+)\)", token.strip())
                     if m:
-                        parsed.append({"time": int(m.group(1)), "weight": int(m.group(2))})
+                        row = {"time": int(m.group(1)), "weight": int(m.group(3))}
+                        if m.group(2) and int(m.group(2)) > row["time"]:
+                            row["to"] = int(m.group(2))
+                        parsed.append(row)
                 if parsed:
                     return parsed
             # If the existing value is a list, parse comma-separated input back into a list
@@ -1147,6 +1135,7 @@ class Management(commands.Cog):
             # Try config["bot"] first, then config["notifications"] as fallback
             _sections = ["bot", "notifications"]
             node = None
+            dotted = ""
             for _section in _sections:
                 _candidate = config.get(_section, {})
                 _found = True
@@ -1157,6 +1146,7 @@ class Management(commands.Cog):
                     _candidate = _candidate[k]
                 if _found and keys[-1] in _candidate:
                     node = _candidate
+                    dotted = f"{_section}.{key}"
                     break
 
             if node is None:
@@ -1165,9 +1155,10 @@ class Management(commands.Cog):
 
             final_key = keys[-1]
             old_val = node[final_key]
-            node[final_key] = coerce(value, old_val)
-            self.save_config(config)
-            await ctx.send(f"`{key}` updated: `{old_val}` → `{node[final_key]}`", delete_after=15)
+            new_val = coerce(value, old_val)
+            # Where the old value came from: this account's persona's own, or everyone's.
+            configstore.set_effective(dotted, new_val)
+            await ctx.send(f"`{key}` updated: `{old_val}` → `{new_val}`", delete_after=15)
         except Exception as e:
             await ctx.send(f"Error: {e}", delete_after=10)
 
@@ -1215,8 +1206,7 @@ class Management(commands.Cog):
             _img_exts = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
             _ext = os.path.splitext(attachment.filename)[1].lower()
             _ct = attachment.content_type or ""
-            # Accept if content_type is image/* OR the extension is a known
-            # image type (Telegram sends attachments as generic documents)
+            # accept if content_type is image/* or the extension looks like an image (Telegram sends attachments as generic docs)
             if not (_ct.startswith("image/") or _ext in _img_exts):
                 await ctx.send("Please attach a valid image file (.jpg, .jpeg, .png, .gif, .webp).", delete_after=10)
                 return
@@ -1320,12 +1310,7 @@ class Management(commands.Cog):
 
 
     async def _connect_and_keep_alive(self, target: discord.VoiceChannel):
-        """Connect to a voice channel muted/deafened and keep alive.
-
-        Requires discord.py-self >= 2.1.0 + the `davey` package for DAVE E2EE
-        (Discord enforces DAVE since ~Mar 2026, without it you get close code
-        4017). Install: pip install -U discord.py-self davey
-        """
+        """Connect muted/deafened and keep alive; needs discord.py-self >= 2.1.0 + davey for DAVE E2EE (Discord enforces it since ~Mar 2026, close code 4017 without): pip install -U discord.py-self davey"""
         # Close any existing connection on this guild first
         existing = target.guild.voice_client
         if existing:
@@ -1373,15 +1358,14 @@ class Management(commands.Cog):
                     voice_client._keep_alive_guard = False
                     break
 
-                # Non-fatal drop, reconnect with human-like backoff (never
-                # instantly; a real user takes time to notice and rejoin).
+                # non-fatal drop, reconnect with human-like backoff (never instantly, a real user takes time to notice)
                 consecutive_failures += 1
                 if consecutive_failures > 3:
                     log_error("Voice Keep-Alive", "Too many consecutive failures - giving up.")
                     voice_client._keep_alive_guard = False
                     break
 
-                # Wait 30–90s + exponential backoff per failure before rejoining
+                # wait 30-90s + exponential backoff per failure before rejoining
                 rejoin_wait = random.uniform(30, 90) + (30 * consecutive_failures)
                 log_system(f"Voice channel dropped, rejoining in {int(rejoin_wait)}s...")
                 await asyncio.sleep(rejoin_wait)
@@ -1458,8 +1442,7 @@ class Management(commands.Cog):
     async def _autojoin_on_startup(self):
         """Called after on_ready, reads autojoin_channel from config and joins if set."""
         await self.bot.wait_until_ready()
-        # Wait a human-like 2–5 min before joining, connecting 1 second after
-        # login is an obvious bot signal.
+        # wait a human-like 2-5 min before joining; connecting 1 second after login is an obvious bot signal
         await asyncio.sleep(random.uniform(120, 300))
         config = load_config()
         aj = config["bot"].get("autojoin_channel")
@@ -1496,11 +1479,8 @@ class Management(commands.Cog):
         except Exception:
             pass
 
-        config = load_config()
-
         if not args or args.strip().lower() == "off":
-            config["bot"]["autojoin_channel"] = None
-            self.save_config(config)
+            configstore.set_effective("bot.autojoin_channel", None)
             await ctx.send("Auto-join disabled.", delete_after=10)
             return
 
@@ -1534,8 +1514,7 @@ class Management(commands.Cog):
             await ctx.send("Channel not found or is not a voice channel.", delete_after=10)
             return
 
-        config["bot"]["autojoin_channel"] = {"guild_id": target.guild.id, "channel_id": target.id}
-        self.save_config(config)
+        configstore.set_effective("bot.autojoin_channel", {"guild_id": target.guild.id, "channel_id": target.id})
         await ctx.send(f"Auto-join set to **{target.name}** in **{target.guild.name}**. Will join on next startup.", delete_after=10)
 
     @commands.command(name="leave", description="Leave a voice channel. Usage: ,leave or ,leave <guild_id>")
@@ -1567,8 +1546,7 @@ class Management(commands.Cog):
         if ctx.author.id != self.bot.owner_id:
             return
 
-        # When called via alias (,imagels / ,imagedownload / ...), extract the
-        # subcommand from the invoked alias.
+        # called via alias (,imagels / ,imagedownload / ...), pull the subcommand from the invoked alias
         invoked = ctx.invoked_with.lower()
         if action is None:
             if invoked in ("imagels", "imagelist"):
@@ -1586,10 +1564,10 @@ class Management(commands.Cog):
             name = action
             action = "download" if invoked in ("imagedownload", "imagedl") else "delete"
 
-        from app.utils.helpers import resource_path
-        folder = resource_path("config/pictures")
+        # This account's persona's pictures; the database calls below default to the same persona.
+        folder = str(personas.pictures_dir(_my_persona()))
         os.makedirs(folder, exist_ok=True)
-        exts = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
+        exts = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".mp4"}
 
         if action in ("ls", "list"):
             files = sorted([f for f in os.listdir(folder) if os.path.splitext(f)[1].lower() in exts])
@@ -1693,8 +1671,7 @@ class Management(commands.Cog):
             results = []
             for att in ctx.message.attachments:
                 ext = os.path.splitext(att.filename)[1].lower()
-                # Telegram may send images as documents with no usable
-                # extension, derive it from content_type when needed.
+                # Telegram may send images as docs with no usable extension, derive it from content_type
                 if ext not in exts:
                     _ct = att.content_type or ""
                     _ct_ext_map = {
@@ -1716,26 +1693,16 @@ class Management(commands.Cog):
                     mime = mime_map.get(ext, "image/jpeg")
                     b64 = base64.b64encode(data).decode()
                     data_url = f"data:{mime};base64,{b64}"
+                    from app.utils.pictures import DESCRIBE_MAX_TOKENS, clean_description, describe_messages
                     vision_resp = await _create_image_completion(
                         _image_model,
-                        messages=[
-                            {
-                                "role": "user",
-                                "content": [
-                                    {
-                                        "type": "text",
-                                        "text": (
-                                            "Describe this image in full detail exactly as you see it. "
-                                            "Include all visible text, objects, people, colors, layout, and context."
-                                        ),
-                                    },
-                                    {"type": "image_url", "image_url": {"url": data_url}},
-                                ],
-                            }
-                        ],
+                        messages=describe_messages(data_url),
+                        max_tokens=DESCRIBE_MAX_TOKENS,
+                        reasoning_effort="none",
                     )
-                    description = vision_resp.choices[0].message.content.strip()
-                    add_picture_description(new_name, description)
+                    description = clean_description(vision_resp.choices[0].message.content or "")
+                    if description:
+                        add_picture_description(new_name, description)
                 except Exception as ve:
                     log_error("Vision on Upload", str(ve))
 
@@ -1915,12 +1882,10 @@ class Management(commands.Cog):
         deleted = 0
         failed = 0
         selfbot_id = getattr(self.bot, "selfbot_id", None) or self.bot.user.id
-        # Collect history BEFORE deleting the command message so Discord
-        # doesn't return stale/already-deleted entries.
+        # collect history before deleting the command message, so Discord doesn't return stale/already-deleted entries
         to_delete = []
         async for msg in ctx.channel.history(limit=limit):
-            # A user account can only delete its own messages, everything else
-            # would be a doomed API call, and a burst of them is a flag.
+            # a user account can only delete its own messages; anything else is a doomed API call and a burst of them is a flag
             if msg.author.id == selfbot_id:
                 to_delete.append(msg)
         # Delete the command message itself (captured above if present)

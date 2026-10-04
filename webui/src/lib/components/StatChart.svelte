@@ -15,6 +15,9 @@
    * floor), so two-series colour would be unreadable for some people on most
    * themes. Anything that needs a second series is drawn as a second chart.
    */
+  import { onMount } from "svelte";
+  import { growIn, staggerFor } from "../growin";
+
   let {
     values = [],
     labels = [],
@@ -61,6 +64,27 @@
 
   const uid = `sc${Math.random().toString(36).slice(2, 8)}`;
   const total = $derived(values.reduce((a, b) => a + b, 0));
+
+  /*
+   * Arriving as its tab opens (lib/growin.ts): bars grow up one after another,
+   * each a note pitched by its height; a line is drawn from left to right, a
+   * dry tick at each point it reaches, higher the higher the point.
+   */
+  const DRAW_MS = 900;
+  let box: HTMLElement | null = $state(null);
+  let grown = $state(false);
+  let growing = $state(false);
+  const barGap = $derived(staggerFor(values.length, 45, 520));
+  const drawGap = $derived(DRAW_MS * (stepX / W));
+  onMount(() => {
+    let t = 0;
+    growIn(box, () => values, (moving) => {
+      growing = moving;
+      grown = true;
+      t = window.setTimeout(() => (growing = false), DRAW_MS + values.length * barGap + 700);
+    }, kind === "bars" ? barGap : drawGap, kind === "bars" ? 1 : 0.8, kind === "bars" ? "pluck" : "wind");
+    return () => clearTimeout(t);
+  });
 
   let hover = $state(-1);
   let svgEl: SVGSVGElement | null = $state(null);
@@ -115,7 +139,7 @@
     Nothing recorded in this window
   </div>
 {:else}
-  <div class="relative">
+  <div class="relative" bind:this={box}>
     <svg
       bind:this={svgEl}
       viewBox="0 0 {W} {height}"
@@ -145,6 +169,7 @@
           {@const bw = Math.max(1, slotW - 2)}
           {@const bh = Math.max(v ? 2 : 0, height - PAD_B - y(v))}
           <rect
+            class="sc-bar"
             x={PAD_X + i * slotW + 1}
             y={y(v)}
             width={bw}
@@ -152,13 +177,16 @@
             rx={Math.min(4, bw / 2, bh / 2)}
             fill="var(--color-accent)"
             opacity={hover === i ? 1 : v ? (markPeak && i === peak ? 0.95 : 0.7) : 0.12}
+            style="transform: scaleY({grown ? 1 : 0}); transition-delay: {growing ? i * barGap : 0}ms"
           />
         {/each}
       {:else}
-        <path d={area} fill="url(#{uid})" />
-        <path d={line} fill="none" stroke="var(--color-accent)" stroke-width="2"
-              stroke-linecap="round" stroke-linejoin="round"
-              vector-effect="non-scaling-stroke" />
+        <g class="sc-draw" style="clip-path: inset(0 {grown ? 0 : 100}% 0 0); transition-duration: {growing ? DRAW_MS : 0}ms">
+          <path d={area} fill="url(#{uid})" />
+          <path d={line} fill="none" stroke="var(--color-accent)" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round"
+                vector-effect="non-scaling-stroke" />
+        </g>
       {/if}
 
       {#if hover >= 0}
@@ -205,3 +233,19 @@
     </div>
   {/if}
 {/if}
+
+<style>
+  /* Up from the baseline, with a spring, each from its own foot. */
+  .sc-bar {
+    transform-box: fill-box;
+    transform-origin: 50% 100%;
+    transition: transform 0.55s var(--spring);
+  }
+  /* Drawn at the pace of a pen: steady, so each point's tick lands as the line reaches it. */
+  .sc-draw {
+    transition-property: clip-path;
+    transition-timing-function: linear;
+  }
+  :global(:root[data-motion="off"]) .sc-bar,
+  :global(:root[data-motion="off"]) .sc-draw { transition: none; }
+</style>

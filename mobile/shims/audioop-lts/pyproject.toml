@@ -1,0 +1,15 @@
+# A stand-in for audioop-lts, for the Android app (see audioop.py). Numbered
+# above every real release, so pip picks it over the real one, a C extension
+# with no phone builds.
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "audioop-lts"
+version = "0.99.0"
+description = "Pure-Python stand-in for audioop in the LLMSelfbot phone apps"
+requires-python = ">=3.9"
+
+[tool.setuptools]
+py-modules = ["audioop"]

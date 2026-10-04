@@ -78,7 +78,10 @@ check("the extras are described for the UI",
 print()
 print("== removing one keeps the rest paired ==")
 reset()
-asyncio.run(env_routes.delete_key(Req(), "discord", 2))
+# A plain function now (FastAPI runs it on its threadpool): called straight, or run if it is ever a coroutine again.
+_res = env_routes.delete_key(Req(), "discord", 2)
+if asyncio.iscoroutine(_res):
+    asyncio.run(_res)
 text = env_text()
 check("account 2 is gone", "tokenBBBB" not in text)
 check("the third token moved down", "DISCORD_TOKEN_2=tokenCCCCCCCCCCCCCCCCCCCC" in text, text)

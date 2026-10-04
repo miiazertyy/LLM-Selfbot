@@ -3,8 +3,7 @@ from os import getenv
 from app.utils.helpers import load_config, get_env_path
 from dotenv import load_dotenv
 
-# The default. Configurable, because Groq offers more than one voice model and
-# the English one is no use to someone whose persona speaks Arabic.
+# The default. Configurable, because Groq offers more than one voice model and the English one is no use to someone whose persona speaks Arabic.
 TTS_MODEL = "canopylabs/orpheus-v1-english"
 
 
@@ -22,13 +21,7 @@ _local_key = None   # the settings the cached local client was built from
 
 
 def _get_local():
-    """The local speech backend, or None when none is configured.
-
-    Servers like LocalAI and Kokoro-FastAPI implement OpenAI's /audio/speech,
-    so once a model is named the call is byte-for-byte the one Groq gets. The
-    cache is keyed on the settings so editing them in the panel takes effect
-    without a restart.
-    """
+    """The local speech backend, or None when none is configured. Servers like LocalAI and Kokoro-FastAPI implement OpenAI's /audio/speech, so once a model is named the call is byte-for-byte the one Groq gets. The cache is keyed on the settings so editing them in the panel takes effect without a restart."""
     global _local_client, _local_key
     from app.utils import ai
     cfg = ai.local_tts()
@@ -38,9 +31,10 @@ def _get_local():
     key = (cfg["base_url"], cfg["api_key"], cfg["model"])
     if _local_client is None or _local_key != key:
         from openai import AsyncOpenAI
+        from app.utils import usage
         _local_client = AsyncOpenAI(base_url=cfg["base_url"],
                                     api_key=cfg["api_key"], timeout=180.0,
-                                    max_retries=1)
+                                    max_retries=1, http_client=usage.http_client("local"))
         _local_key = key
     return {"client": _local_client, "model": cfg["model"],
             "voice": cfg["voice"]}
@@ -59,14 +53,14 @@ def _get_client():
             api_key = getenv(f"GROQ_API_KEY_{i}")
             if api_key:
                 break
-    # Say which thing is missing, rather than building a client with
-    # api_key=None and failing somewhere inside the SDK.
+    # Say which thing is missing, rather than building a client with api_key=None and failing somewhere inside the SDK.
     if not api_key:
         raise RuntimeError(
-            "Voice messages need a Groq key, or a local speech model set under "
-            "Local AI.")
+            "Voice messages need a Groq key, or another provider picked for speaking "
+            "under Settings > Models.")
     from groq import AsyncGroq
-    _client = AsyncGroq(api_key=api_key)
+    from app.utils import usage
+    _client = AsyncGroq(api_key=api_key, http_client=usage.http_client("groq", sdk="groq"))
     return _client
 
 
@@ -88,10 +82,7 @@ def _clean_text_for_tts(text: str) -> str:
 
 
 def _chunk_text(text: str, max_chars: int = TTS_MAX_CHARS) -> list[str]:
-    """
-    Split text into chunks of max_chars, breaking on sentence boundaries
-    where possible so the audio sounds natural between chunks.
-    """
+    """Split text into chunks of max_chars, breaking on sentence boundaries where possible so the audio sounds natural between chunks."""
     if len(text) <= max_chars:
         return [text]
     chunks = []
@@ -122,39 +113,65 @@ def _chunk_text(text: str, max_chars: int = TTS_MAX_CHARS) -> list[str]:
 
 
 async def generate_voice_message(text: str) -> list[bytes] | None:
-    """
-    Generate voice message audio, on the local server when one has a speech
-    model set and on Groq Orpheus otherwise.
-    Returns a list of wav byte chunks (one per 180-char segment), or None on
-    failure. Orpheus has a 200-char limit, so long responses are split.
-    """
+    """A voice message: see _generate_voice_message. Counted as the speaking job (app/utils/usage.py)."""
+    from app.utils import usage
+    token = usage.JOB.set("tts")
+    try:
+        return await _generate_voice_message(text)
+    finally:
+        usage.JOB.reset(token)
+
+
+async def _generate_voice_message(text: str) -> list[bytes] | None:
+    """Generate voice message audio, on the local server when one has a speech model set and on Groq Orpheus otherwise. Returns a list of wav byte chunks (one per 180-char segment), or None on failure. Orpheus has a 200-char limit, so long responses are split."""
     config = load_config()
     tts_cfg = config["bot"].get("tts") or {}
 
     if not tts_cfg.get("enabled", True):
         return None
 
-    local = _get_local()
     voice = tts_cfg.get("voice", "autumn")
-    # The bracketed tones are Orpheus prompt syntax, not something the audio
-    # format carries. Any other engine has no idea and simply reads "casual
-    # warm" out loud before the message, so they only go to Groq.
+    # The bracketed tones are Orpheus prompt syntax, not something the audio format carries. Any other engine has no idea and simply reads "casual warm" out loud before the message, so they only go to Groq.
     tones = tts_cfg.get("tones", ["[casual]", "[warm]"])
-    tone_prefix = "" if local else " ".join(tones)
-    if local:
-        model = local["model"]
-        client = local["client"]
-        # Voice names are per-engine - Orpheus has "autumn", Kokoro has
-        # "af_sky" - so the local one is set alongside the local model.
-        voice = local["voice"] or voice
-    else:
-        model = _tts_model()
-        client = _get_client()
 
     cleaned = _clean_text_for_tts(text)
     if not cleaned:
         return None
 
+    # Each speaker picked under Models, in order, then Groq: a voice message
+    # from the second choice beats none at all.
+    from app.utils import ai
+    for target in ai.tts_targets():
+        client = _client_for(target)
+        # Voice names are per-engine, Orpheus has "autumn" and Kokoro has "af_sky", so each keeps its own.
+        result = await _speak(client, target["model"], target["voice"] or voice, "", cleaned)
+        if result:
+            return result
+        print(f"[TTS] {target['model']} on {target['provider']} failed, trying the next")
+    try:
+        groq = _get_client()
+    except RuntimeError:
+        return None
+    return await _speak(groq, _tts_model(), voice, " ".join(tones), cleaned)
+
+
+_tts_clients: dict = {}
+
+
+def _client_for(target: dict):
+    """One OpenAI-compatible client per speaker, kept, so a voice message does not open a new connection."""
+    key = (target["base_url"], target["api_key"])
+    client = _tts_clients.get(key)
+    if client is None:
+        from openai import AsyncOpenAI
+        from app.utils import usage
+        client = AsyncOpenAI(base_url=target["base_url"], api_key=target["api_key"], timeout=180.0, max_retries=1,
+                             http_client=usage.http_client(target.get("provider") or "openai"))
+        _tts_clients[key] = client
+    return client
+
+
+async def _speak(client, model: str, voice: str, tone_prefix: str, cleaned: str) -> list[bytes] | None:
     # Reserve space for tone prefix on every chunk so style is consistent throughout
     chunk_max = max(40, TTS_MAX_CHARS - len(tone_prefix) - 1)
     text_chunks = _chunk_text(cleaned, max_chars=chunk_max)

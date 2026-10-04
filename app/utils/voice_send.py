@@ -1,4 +1,5 @@
 import sys
+from app.utils.procs import quiet_kwargs
 import math
 import array
 import struct
@@ -17,15 +18,14 @@ def _wav_to_ogg_opus(wav_bytes: bytes) -> tuple:
     if not ffmpeg:
         raise Exception("ffmpeg not found, install it from the System page or add it to PATH")
 
-    # ffprobe ships with ffmpeg but isn't guaranteed to be present; the WAV
-    # header gives the same answer when it's missing.
+    # ffprobe ships with ffmpeg but isn't guaranteed to be present; the WAV header gives the same answer when it's missing.
     duration = _get_wav_duration(wav_bytes)
     ffprobe = binaries.find("ffprobe")
     if ffprobe:
         try:
             probe = subprocess.run(
                 [ffprobe, "-v", "quiet", "-print_format", "json", "-show_format", "-f", "wav", "-i", "pipe:0"],
-                input=wav_bytes, capture_output=True,
+                input=wav_bytes, capture_output=True, **quiet_kwargs(),
             )
             duration = float(json.loads(probe.stdout)["format"]["duration"])
         except Exception:
@@ -33,7 +33,7 @@ def _wav_to_ogg_opus(wav_bytes: bytes) -> tuple:
 
     result = subprocess.run(
         [ffmpeg, "-y", "-f", "wav", "-i", "pipe:0", "-c:a", "libopus", "-b:a", "64k", "-f", "ogg", "pipe:1"],
-        input=wav_bytes, capture_output=True,
+        input=wav_bytes, capture_output=True, **quiet_kwargs(),
     )
     if result.returncode != 0:
         raise Exception(f"ffmpeg conversion failed: {result.stderr.decode()}")
@@ -125,11 +125,7 @@ def _snowflake_now() -> int:
 
 
 async def send_voice_message(channel, wav_bytes: bytes, reply_to=None, mention_author=True):
-    """
-    Send audio as a proper Discord voice message bubble.
-    Converts WAV → OGG Opus via ffmpeg, then uses the Discord attachment upload
-    API with flags=1<<13, waveform and duration_secs (same as Vencord).
-    """
+    """Send audio as a proper Discord voice message bubble. Converts WAV to OGG Opus via ffmpeg, then uses the Discord attachment upload API with flags=1<<13, waveform and duration_secs (same as Vencord)."""
     loop = asyncio.get_running_loop()
     ogg_bytes, duration = await loop.run_in_executor(None, _wav_to_ogg_opus, wav_bytes)
     waveform = await loop.run_in_executor(None, _make_waveform, wav_bytes, duration)
