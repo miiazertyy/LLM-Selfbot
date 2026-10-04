@@ -6,7 +6,9 @@ python-dotenv
 pyYAML
 requests
 groq
-openai
+# 3 talks to the network through httpx2 and refuses the httpx client every model call is counted through
+# (app/utils/usage.py): every reply would fail.
+openai>=2.30,<3
 PyNaCl
 Pillow
 pillow-heif

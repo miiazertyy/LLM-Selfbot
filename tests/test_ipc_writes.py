@@ -105,18 +105,23 @@ bad_reads = [b for x in seen for b in x.get("bad", [])]
 check("four writers at once, with three other processes reading it all the while: no write refused", not errors, str(errors[:3]))
 check("and no reader ever saw half a file", not bad_reads and reads[0] > 0, f"{bad_reads[:2]} reads={reads[0]}")
 check("no temporary file is left behind", [p.name for p in target.parent.iterdir() if p.name.endswith(".tmp")] == [])
-held = open(target, "rb")
-t0 = time.time()
-try:
-    write_json_atomic(target, {"n": "never"})
-    landed = True
-except PermissionError:
-    landed = False
-finally:
-    held.close()
-waited = time.time() - t0
-check("a file held open the whole time: the write gives up after a few seconds, and says so, rather than hang",
-      not landed and 1.5 < waited < 6 and json.loads(target.read_text(encoding="utf-8"))["n"] != "never", f"{landed} {waited:.1f}s")
+# Only Windows refuses to replace a file another program has open; elsewhere the write simply lands.
+if os.name == "nt":
+    held = open(target, "rb")
+    t0 = time.time()
+    try:
+        write_json_atomic(target, {"n": "never"})
+        landed = True
+    except PermissionError:
+        landed = False
+    finally:
+        held.close()
+    waited = time.time() - t0
+    check("a file held open the whole time: the write gives up after a few seconds, and says so, rather than hang",
+          not landed and 1.5 < waited < 6 and json.loads(target.read_text(encoding="utf-8"))["n"] != "never",
+          f"{landed} {waited:.1f}s")
+else:
+    print("  SKIP  a file held open the whole time (only Windows refuses to replace an open file)")
 check("leaving its temporary file behind it no more than a good write does",
       [p.name for p in target.parent.iterdir() if p.name.endswith(".tmp")] == [])
 check("each write names its temporary file after the process and a random part, not just the file",

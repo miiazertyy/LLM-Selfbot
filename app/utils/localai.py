@@ -886,8 +886,10 @@ def _candidates(server_id: str) -> list:
 
 
 def is_llama_cli(exe: str) -> bool:
-    """The all-in-one `llama` (`llama serve`, `llama download`), not the older `llama-server`."""
-    return os.path.splitext(os.path.basename(exe or ""))[0].lower() == "llama"
+    """The all-in-one `llama` (`llama serve`, `llama download`), not the older `llama-server`. Its name read past
+    either kind of slash: a Windows path is the same program whatever system reads it."""
+    name = re.split(r"[\\/]", exe or "")[-1]
+    return os.path.splitext(name)[0].lower() == "llama"
 
 
 def app_models_dir():

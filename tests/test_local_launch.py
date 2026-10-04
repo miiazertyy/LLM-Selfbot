@@ -7,11 +7,19 @@ on it. Nothing here really starts a server: the process launch is faked.
 Also checked: Free / Paid on every provider, the notice card's Start button,
 and fetching a message behind an "[attachment]" row.
 """
+import os
 import sys
+import tempfile
 import types
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+# A data folder of its own, with the shipped config: run from a checkout the app reads config/ beside the code, which
+# only this computer has (a build machine has none, and the app exits for want of a config).
+TMP = Path(tempfile.mkdtemp(prefix="llm-launch-"))
+(TMP / "config").mkdir(parents=True, exist_ok=True)
+(TMP / "config" / "config.yaml").write_text((ROOT / "resources" / "config.yaml").read_text(encoding="utf-8"), encoding="utf-8")
+os.environ["LLMSELFBOT_DATA_DIR"] = str(TMP)
 sys.path.insert(0, str(ROOT))
 
 from app.utils import localai, providers

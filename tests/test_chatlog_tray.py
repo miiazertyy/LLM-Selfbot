@@ -251,22 +251,29 @@ check("red with one given up on, and it says so", snap_of([ok, {**ok, "id": "dis
       and "needs a look" in tray.snapshot()["headline"])
 check("grey with nothing running", snap_of([{**ok, "state": "stopped"}])["tone"] == "idle")
 check("the Telegram controller is not an account", snap_of([ok, {"id": "telegram", "role": "telegram", "state": "running"}])["headline"] == "1 running")
-import pystray  # noqa: E402
-tray._STATE["windows"] = {"show_main": lambda r: None, "toggle_panel": lambda: None, "open_data": lambda: None, "quit": lambda: None}
-tray._STATE["snapshot"] = snap_of([ok])
-menu = tray._menu(pystray)
-items = [i for i in menu.items if i is not pystray.Menu.SEPARATOR]
-default = [i for i in items if i.default]
-check("a left click opens the quick panel, which is not a line of the menu",
-      len(default) == 1 and default[0].text == "Quick panel" and not default[0].visible)
-texts = [i.text for i in items if i.visible]
-check("the menu starts with how things are", texts[0].startswith("LLMSelfbot") and "running" in texts[0] and not items[1].enabled)
-for want in ("Open LLMSelfbot", "Go to", "Accounts", "Pause all replies", "Restart all accounts", "Keep running when closed",
-             "Alerts on this computer", "Open data folder", "Quit LLMSelfbot"):
-    check(f"it has {want}", want in texts, str(texts))
-acct = next(i for i in items if i.text == "Accounts")._action.items[0]
-check("each account has its own pause, restart and stop", [i.text for i in acct._action.items] == ["Replying", "Restart", "Stop"])
-check("the icon carries a dot", tray._with_dot(tray._base_image(), "bad").getpixel((50, 50))[:3] == tray._TONES["bad"])
+# The tray's menu, built for real: only where there is a desktop to put an icon on (a Linux or macOS build machine has
+# none, and pystray cannot even be imported there). The desktop app with the tray is Windows'.
+try:
+    import pystray  # noqa: E402
+except Exception as _e:
+    pystray = None
+    print(f"  SKIP  the tray's menu: no desktop here ({type(_e).__name__})")
+if pystray is not None:
+    tray._STATE["windows"] = {"show_main": lambda r: None, "toggle_panel": lambda: None, "open_data": lambda: None, "quit": lambda: None}
+    tray._STATE["snapshot"] = snap_of([ok])
+    menu = tray._menu(pystray)
+    items = [i for i in menu.items if i is not pystray.Menu.SEPARATOR]
+    default = [i for i in items if i.default]
+    check("a left click opens the quick panel, which is not a line of the menu",
+          len(default) == 1 and default[0].text == "Quick panel" and not default[0].visible)
+    texts = [i.text for i in items if i.visible]
+    check("the menu starts with how things are", texts[0].startswith("LLMSelfbot") and "running" in texts[0] and not items[1].enabled)
+    for want in ("Open LLMSelfbot", "Go to", "Accounts", "Pause all replies", "Restart all accounts", "Keep running when closed",
+                 "Alerts on this computer", "Open data folder", "Quit LLMSelfbot"):
+        check(f"it has {want}", want in texts, str(texts))
+    acct = next(i for i in items if i.text == "Accounts")._action.items[0]
+    check("each account has its own pause, restart and stop", [i.text for i in acct._action.items] == ["Replying", "Restart", "Stop"])
+    check("the icon carries a dot", tray._with_dot(tray._base_image(), "bad").getpixel((50, 50))[:3] == tray._TONES["bad"])
 check("the switches default to keeping it running, with alerts", tray.prefs()["close_to_tray"] and tray.prefs()["alerts"])
 tray.set_pref("alerts", False)
 check("and are kept", tray.prefs()["alerts"] is False and (TMP / "config" / "desktop.json").exists())

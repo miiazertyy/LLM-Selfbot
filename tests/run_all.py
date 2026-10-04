@@ -6,6 +6,14 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
 
+# This runner prints what the modules print, emoji and all. Into a pipe on Windows (a CI log, a file) Python writes the
+# code page, which has no character for them, and the first one stopped the whole run with a UnicodeEncodeError.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
 failed = []
 total_pass = total_fail = 0
 
