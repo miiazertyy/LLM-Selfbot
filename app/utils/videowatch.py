@@ -194,8 +194,10 @@ def keep(key: str, w: dict) -> None:
     folder.mkdir(parents=True, exist_ok=True)
     tmp = folder / f".{key}.part"
     tmp.write_text(json.dumps(w, ensure_ascii=False), encoding="utf-8")
-    os.replace(tmp, folder / f"{key}.json")
-    files = sorted(folder.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+    mine = folder / f"{key}.json"
+    os.replace(tmp, mine)
+    # Newest first, the one just kept ahead of all: several kept within one tick of the file clock share its time.
+    files = sorted(folder.glob("*.json"), key=lambda p: (p == mine, p.stat().st_mtime_ns), reverse=True)
     now = time.time()
     for i, p in enumerate(files):
         try:

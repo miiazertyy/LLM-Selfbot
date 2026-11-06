@@ -216,7 +216,9 @@ def _keep_audio(rid: str, chunks: list) -> list:
         name = f"demo_{rid}_{i}.wav"
         (folder / name).write_bytes(wav)
         names.append(name)
-    old = sorted(folder.glob("demo_*.wav"), key=lambda p: p.stat().st_mtime, reverse=True)[48:]
+    # The ones just saved ahead of all: files written within one tick of the file clock share its time.
+    fresh = set(names)
+    old = sorted(folder.glob("demo_*.wav"), key=lambda p: (p.name in fresh, p.stat().st_mtime_ns), reverse=True)[48:]
     for p in old:
         try:
             p.unlink()

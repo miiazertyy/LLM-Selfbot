@@ -11,6 +11,7 @@ import http.server
 import io
 import json
 import os
+import platform
 import sys
 import tarfile
 import tempfile
@@ -123,7 +124,12 @@ server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Stand)
 threading.Thread(target=server.serve_forever, daemon=True).start()
 BASE = f"http://127.0.0.1:{server.server_address[1]}"
 onboard.PYPI = BASE + "/pypi"
-TAG = {"win32": "win_amd64", "darwin": "macosx_11_0_arm64"}.get(sys.platform, "manylinux_2_17_x86_64.manylinux2014_x86_64")
+# This computer's wheel, worked out as onboard._platform_fits does: the CPU as well as the system. Linux was taken to be
+# x86-64, and the build on the ARM runner (linux-aarch64) failed the run (v1.8.0).
+ARM = platform.machine().lower() in ("arm64", "aarch64")
+TAG = {"win32": "win_arm64" if ARM else "win_amd64",
+       "darwin": "macosx_11_0_arm64" if ARM else "macosx_10_15_x86_64"}.get(
+    sys.platform, "manylinux_2_17_aarch64.manylinux2014_aarch64" if ARM else "manylinux_2_17_x86_64.manylinux2014_x86_64")
 PY = f"cp{sys.version_info.major}{sys.version_info.minor}"
 
 
@@ -150,10 +156,13 @@ def wait():
 
 
 print("== which build ==")
+# One for every computer the app is built for, so whichever runs this finds its own among the others.
 files = [{"filename": f} for f in (
     "sherpa_onnx-2.0.1-cp311-cp311-win_amd64.whl", f"sherpa_onnx-2.0.1-{PY}-{PY}-win_amd64.whl",
+    f"sherpa_onnx-2.0.1-{PY}-{PY}-win_arm64.whl",
     f"sherpa_onnx-2.0.1-{PY}-{PY}-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
     f"sherpa_onnx-2.0.1-{PY}-{PY}-manylinux_2_17_aarch64.manylinux2014_aarch64.whl",
+    f"sherpa_onnx-2.0.1-{PY}-{PY}-macosx_10_15_x86_64.whl",
     f"sherpa_onnx-2.0.1-{PY}-{PY}-macosx_11_0_arm64.whl", "sherpa_onnx-2.0.1.tar.gz")]
 picked = onboard._wheel_for(files)
 check("this Python's, for this computer", picked and PY in picked["filename"] and TAG.split(".")[0] in picked["filename"],

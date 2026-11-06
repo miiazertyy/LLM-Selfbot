@@ -222,8 +222,11 @@ def keep(w: dict) -> None:
     folder.mkdir(parents=True, exist_ok=True)
     tmp = folder / f".{w['id']}.part"
     tmp.write_text(json.dumps(w, ensure_ascii=False), encoding="utf-8")
-    os.replace(tmp, folder / f"{w['id']}.json")
-    files = sorted(folder.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+    mine = folder / f"{w['id']}.json"
+    os.replace(tmp, mine)
+    # Newest first, and the one just kept ahead of all: the clock files are stamped with ticks every few milliseconds,
+    # so several kept in a row carry the very same time, and the newest was pruned as if it were the oldest.
+    files = sorted(folder.glob("*.json"), key=lambda p: (p == mine, p.stat().st_mtime_ns), reverse=True)
     now = time.time()
     for i, p in enumerate(files):
         try:
