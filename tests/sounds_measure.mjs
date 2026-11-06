@@ -55,7 +55,7 @@ async function main() {
     await new Promise((r) => setTimeout(r, 800));
     const expr = `(async () => {
       const names = ["tap", "up", "tick", "on", "off", "select", "open", "menu", "ok", "info", "err", "send", "receive", "delete", "undo",
-                     "wind", "slide", "rise", "done", "key", "land", "pluck", "zip", "seat", "medal", "settle", "glint", "grow",
+                     "wind", "slide", "rise", "done", "key", "land", "pluck", "zip", "seat", "medal", "settle", "glint", "grow", "dawn", "whoosh",
                      "lift", "slot", "drop", "grab", "release", "hover"];
       const out = {};
       for (const n of names) {

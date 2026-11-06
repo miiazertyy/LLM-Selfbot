@@ -55,8 +55,15 @@ check("bare background gets Search, Big Picture and Reload", '"Search"' in menu 
 check("and in Big Picture, the way out instead", '"Leave Big Picture"' in menu)
 
 print("\n== how it moves ==")
-check("it springs open from the pointer", "@keyframes gm-in" in menu and "var(--jelly)" in menu)
-check("the items settle in one after another", "animation-delay: calc(var(--i) * 16ms" in menu)
+# It slides out from under what it belongs to and settles: no scaling, one direction, an easing that is quick
+# at the start and comes to rest. Opening upwards, it slides the other way.
+check("it slides out from what opened it", "@keyframes gm-in" in menu
+      and "transform: translateY(-14px)" in menu and "cubic-bezier(0.22, 1, 0.36, 1)" in menu
+      and "scale(" not in menu.split("@keyframes gm-in {")[1][:200])
+check("and the other way when it opens upwards", "@keyframes gm-in-up" in menu
+      and "transform: translateY(14px)" in menu and "@keyframes gm-out-up" in menu)
+check("the items follow it down, one after another", "animation-delay: calc(var(--i) * 14ms" in menu
+      and "@keyframes gm-item-in-up" in menu)
 check("it fades closed, drawn until the fade ends", "gm-out" in menu and "LEAVE_MS" in menu)
 check("near an edge it opens the other way, from that corner", 'ox = "right"' in menu and 'oy = "bottom"' in menu)
 check("measured before it shows, so it never flashes in the wrong place", "visibility: hidden" in menu and "is-ready" in menu)
@@ -167,10 +174,17 @@ check("the number beside it is a pill that lights when it changes",
 print("\n== adding an account ==")
 acc = read("pages/Accounts.svelte")
 seg = read("lib/components/Segmented.svelte")
-check("the platform shows as itself: its mark on its colour", "DISCORD_MARK : SNAPCHAT_GHOST" in acc and "aa-mark" in acc)
+check("the platform shows as itself: its mark on its colour",
+      'editPlatform === "discord" ? DISCORD_MARK : editPlatform === "tiktok" ? TIKTOK_MARK' in acc
+      and 'editPlatform === "instagram" ? INSTAGRAM_MARK' in acc
+      and 'editPlatform === "minecraft" ? MINECRAFT_CUBE' in acc
+      and 'editPlatform === "imessage" ? IMESSAGE_BUBBLE' in acc
+      and 'editPlatform === "telegram" ? TELEGRAM_PLANE : SNAPCHAT_GHOST' in acc and "aa-mark" in acc)
 check("which springs in, and turns when the platform changes", "{#key editPlatform}" in acc and "@keyframes aa-mark-in" in acc)
 check("the choices are one control with a sliding pill", "<Segmented" in acc and "transform: translateX(calc(var(--at) * 100%))" in seg)
-check("each platform brings its colour to it", 'tone: "#5865f2"' in acc and 'tone: "#fffc00"' in acc)
+check("each platform brings its colour to it", 'tone: "#5865f2"' in acc and 'tone: "#fffc00"' in acc
+      and 'tone: "#fe2c55"' in acc and 'tone: "#e1306c"' in acc and 'tone: "#5b8731"' in acc
+      and 'tone: "#0a84ff"' in acc and 'tone: "#2aabee"' in acc)
 check("signing in shows its three steps, lit as they happen", "aa-steps" in acc and "loginState === 'waiting'" in acc)
 check("the proxy folds away until wanted", "showProxy" in acc and "aa-more" in acc)
 check("starting it straight away is a switch", '<Toggle size="sm" bind:checked={startNow}' in acc)
@@ -193,8 +207,9 @@ check("the list is drawn at the end of the page, where no row below can paint ov
       and "z-index: 1000;" in sel)
 check("placed under its box, and a click in it is still a click in the dropdown",
       "top: r.bottom + 6, bottom: window.innerHeight - r.top + 6" in sel and "menuEl.contains(t)" in sel)
-check("the glass of menus and lists filled enough to read over anything", "--float-fill: 74%;" in read("app.css")
-      and "--float-fill: 88%;" in read("app.css"))
+check("the glass of menus and lists filled enough to read over anything, blur or no blur",
+      "--float-fill: 95%;" in read("app.css") and "--float-fill: 97%;" in read("app.css")
+      and "filled enough to read WITHOUT the blur" in read("app.css"))
 
 print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
 sys.exit(1 if FAIL else 0)

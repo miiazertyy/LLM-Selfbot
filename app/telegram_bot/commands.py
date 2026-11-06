@@ -58,10 +58,24 @@ GROUPS = [
         ("pfp", "Change the profile picture"),
         ("banner", "Change the banner"),
     ]),
+    ("TikTok", [
+        ("visit", "TikTok: join someone's LIVE (/visit @name, /visit leave)"),
+        ("foryou", "TikTok: scroll For You for a few minutes"),
+    ]),
+    ("Instagram", [
+        ("reels", "Instagram: scroll Reels for a few minutes"),
+        ("story", "Instagram: watch someone's story, or answer it"),
+        ("note", "Instagram: set its Note"),
+    ]),
+    ("Minecraft", [
+        ("mc", "Minecraft: what it is doing; /mc say, /mc do, /mc go <server>, /mc home, /mc leave, /mc join"),
+    ]),
     ("Voice", [
         ("join", "Discord: join a voice channel"),
         ("leave", "Discord: leave voice"),
         ("autojoin", "Discord: join voice on start"),
+        ("call", "Discord: be in its channel, ready to talk"),
+        ("hangup", "Discord: end the call it is on"),
     ]),
     ("The app", [
         ("restart", "Restart the bot"),

@@ -9,7 +9,7 @@
    * job. Search runs across all of them. Providers that are not connected yet
    * sit at the bottom, free ones first, with their key box one click away.
    */
-  import { tick } from "svelte";
+  import { tick, untrack } from "svelte";
   import { settingsSection, toast } from "../stores";
   import { api } from "../api";
   import {
@@ -82,17 +82,22 @@
     };
   }
 
+  // Cleared only as it opens: a provider list asked for again while it is open must not wipe a search being typed.
   $effect(() => {
     if (!open) return;
-    query = "";
-    showAll = false;
-    more = {};
-    connecting = "";
-    active = 0;
-    place();
-    for (const p of connected) loadModels(p.id);
+    untrack(() => {
+      query = "";
+      showAll = false;
+      more = {};
+      connecting = "";
+      active = 0;
+      place();
+    });
     // Focused without the page scrolling to it: a scroll under it closes it (below).
     tick().then(() => focusStill(search));
+  });
+  $effect(() => {
+    if (open) for (const p of connected) loadModels(p.id);
   });
 
   // Closed by a click elsewhere, Escape, a resize, or the page scrolling under it.

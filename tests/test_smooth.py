@@ -13,6 +13,7 @@
     browser's view transition: a blob with a wobbling edge, a thump as it
     lands, stars as the edge passes, and no colour transitions while it plays
 """
+import re
 import sys
 from pathlib import Path
 
@@ -78,17 +79,23 @@ check("each in a box of its own", ".sd { contain: strict; }" in demo)
 check("starting a moment after its row lands", "start = performance.now() + 450;" in demo)
 
 print("\n== the theme ==")
-check("drawn by the browser's own view transition", "startViewTransition(" in sweep and "::view-transition-new(root)" in sweep)
+code = re.sub(r"/\*.*?\*/", "", sweep, flags=re.S)
+check("never a photograph of the page: that is a frozen frame by design", "startViewTransition" not in code
+      and "view-transition" not in css)
 check("from where the pointer went down: the swatch clicked", 'window.addEventListener("pointerdown"' in sweep and "lastX >= 0 ? lastX" in sweep)
-check("a blob with a wobbling edge, fast out of the gate", "function blob(" in sweep and "polygon(" in sweep and "[0.1, 0.16, 0.2]" in sweep)
-check("a thump as it lands: a touch too big, a touch too small, then still", 'scale(1.025)' in sweep and 'scale(0.991)' in sweep)
-check("the old theme sinks back as it is covered", "::view-transition-old(root)" in sweep and "scale(0.982)" in sweep)
+blob_css = css.split(".theme-sweep-blob {")[1].split("}")[0]
+check("one flat layer moved by the graphics card alone, so it keeps its pace whatever the page is doing",
+      "will-change: transform;" in blob_css and 'blob.animate(' in sweep and "clip-path" not in code)
+check("in the new theme's own colour", 'vars?.["--color-accent"]' in sweep and "byId(id).vars" in sweep)
+check("the colours change behind it once it covers the window, with nothing to see",
+      "pour.finished.then(async () => {" in sweep and "change();" in sweep.split("pour.finished.then")[1][:80])
+check("and it fades off the page, in its new colours", "wash.animate([{ opacity: 1 }, { opacity: 0 }]" in sweep)
+check("the page underneath can be used the whole time", "pointer-events: none;" in css.split(".theme-sweep {")[1].split("}")[0])
+check("never left up: a background tab runs no animations", "window.setTimeout(() => me.finish(), POUR + LIFT + 1800)" in sweep)
 check("stars pop as the edge passes, glowing without a filter", "function stars(" in sweep
       and "drop-shadow" not in css.split(".theme-sweep-star {")[1].split("}")[0])
 check("no colour transitions while it plays", "html.theme-switching *," in css and "transition: none !important;" in css
       and 'root.classList.add("theme-switching")' in sweep)
-check("the browser's own crossfade is off", "::view-transition-new(root) {\n  animation: none;" in css)
-check("with no view transitions, the wipe, lighter", "function wipe(" in sweep and "theme-sweep-spark" not in css)
 check("with Animations off, it simply changes", 'if (typeof document === "undefined" || !get(motionEnabled)) {\n    apply();' in sweep)
 
 print(f"\n{len(PASS)} passed, {len(FAIL)} failed")

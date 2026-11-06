@@ -114,7 +114,9 @@ async def post_config_raw(request: Request):
         raise HTTPException(status_code=400, detail="config must be an object")
     if "bot" not in new_config:
         raise HTTPException(status_code=400, detail="config is missing the required 'bot' section")
+    before = _socials_now()
     _write_config(new_config)
+    _apply_socials(request, before)
     return {"ok": True}
 
 
@@ -171,7 +173,9 @@ async def import_settings(request: Request):
         raise HTTPException(status_code=400, detail="None of those settings could be imported.")
     if "bot" not in cfg:
         raise HTTPException(status_code=400, detail="config is missing the required 'bot' section")
+    before = _socials_now()
     _write_config(cfg)
+    _apply_socials(request, before)
     bus.append("system", f"Imported {len(done)} setting{'' if len(done) == 1 else 's'} from a file", "system")
     return {"ok": True, "applied": len(done), "restart": [c["label"] for c in done if c["restart"]]}
 
@@ -185,7 +189,9 @@ async def post_config(request: Request):
     # Guard against a partial/empty save wiping the file, every reader assumes config["bot"] exists and the runners crash at import without it.
     if "bot" not in new_config:
         raise HTTPException(status_code=400, detail="config is missing the required 'bot' section")
+    before = _socials_now()
     await asyncio.to_thread(_dump, new_config)
+    _apply_socials(request, before)
     return {"ok": True}
 
 
@@ -236,7 +242,35 @@ async def set_field(request: Request):
     # Every switch and slider in Settings comes through here: written on a thread, not on the event loop.
     await asyncio.to_thread(_dump, base)
     await _live_apply(key, value, None, request)
+    from app.utils import socials
+    if key in socials.SWITCHES:
+        _apply_socials(request)
     return {"ok": True, "value": value, "scope": "everyone"}
+
+
+def _socials_now() -> dict:
+    from app.utils import socials
+    return socials.on()
+
+
+def _apply_socials(request: Request, before: dict | None = None):
+    """A social switched on or off: its accounts start or stop now (Supervisor.apply_socials). With `before`, only
+    when the switches did change. Behind the answer: stopping asks each one to log out first, which takes seconds a
+    save should not wait for."""
+    if before is not None and _socials_now() == before:
+        return
+    supervisor = getattr(request.app.state, "supervisor", None)
+    if supervisor is None or not hasattr(supervisor, "apply_socials"):
+        return
+    import threading
+
+    def run():
+        try:
+            supervisor.apply_socials()
+        except Exception as e:
+            from app.web.logbus import bus
+            bus.append("supervisor", f"Could not apply the socials switch: {e}", "error")
+    threading.Thread(target=run, daemon=True, name="apply-socials").start()
 
 
 # Curly quotes and the rest, straight, the way the engine compares refusals (_norm in app/core/engine.py).

@@ -11,6 +11,7 @@
  * name and picture instead of "discord_1".
  */
 import type { ChatAccount } from "./chats";
+import { ACCOUNT_ID, platformName } from "./platforms";
 
 export type LogLine = { time: string; source: string; text: string; level: string; ts?: number; id?: number };
 
@@ -47,16 +48,22 @@ const APP_SOURCES: Record<string, { name: string; icon: string }> = {
   updater: { name: "Updater", icon: "upload" },
   "ffmpeg-install": { name: "ffmpeg", icon: "upload" },
   "snapchat-install": { name: "Snapchat setup", icon: "snapchat" },
+  "minecraft-install": { name: "Minecraft setup", icon: "minecraft" },
+  "tiktok-install": { name: "TikTok setup", icon: "tiktok" },
+  "instagram-install": { name: "Instagram setup", icon: "instagram" },
+  "x-install": { name: "X setup", icon: "x" },
+  "reddit-install": { name: "Reddit setup", icon: "reddit" },
+  "whatsapp-install": { name: "WhatsApp setup", icon: "whatsapp" },
 };
 
 /** Who a line came from, by name: the account's own name and picture, or the part of the app. */
 export function sourceInfo(s: string, accounts: ChatAccount[]): { name: string; icon: string; avatar?: string } {
   if (APP_SOURCES[s]) return APP_SOURCES[s];
-  const m = s.match(/^(discord|snapchat)_(\d+)$/);
+  const m = s.match(ACCOUNT_ID);
   if (m) {
     const a = accounts.find((x) => x.id === s);
-    const slot = `${m[1] === "discord" ? "Discord" : "Snapchat"} #${m[2]}`;
-    return { name: a?.display_name || a?.username || slot, icon: m[1] === "discord" ? "accounts" : "snapchat",
+    const slot = `${platformName(m[1])} #${m[2]}`;
+    return { name: a?.display_name || a?.username || slot, icon: m[1] === "discord" ? "accounts" : m[1],
              avatar: a?.avatar };
   }
   return { name: s, icon: "logs" };

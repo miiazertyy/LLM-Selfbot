@@ -86,6 +86,12 @@ def req(path, method="GET", body=None, raw=None, ctype=None):
 
 
 # ── Boot ─────────────────────────────────────────────────────────────────────
+# The watchdog and the clean-up go by process name, so with the app itself open they closed it and its accounts
+# (2026-11-06). Nothing runs while one is up.
+if nprocs():
+    print("SKIP: LLMSelfbot is running, and this test would close it. Run it with the app closed.")
+    print("0 passed, 0 failed")
+    raise SystemExit(0)
 kill_all(); time.sleep(1)
 FAKE = Path(tempfile.mkdtemp(prefix="llmbot_parity_"))
 cfg = FAKE / "LLMSelfbot" / "config"
@@ -211,9 +217,10 @@ try:
     check("port check no longer false-negative", checks.get("port", {}).get("ok") is True,
           json.dumps([{k: v.get("ok")} for k, v in checks.items()]))
     # Every red row must carry something to do about it, which is the whole
-    # point of the doctor being clickable.
+    # point of the doctor being clickable: a fix, a button, or the settings
+    # it names as buttons (places, as the careful-mode rows have).
     unactionable = [k for k, c in checks.items()
-                    if not c.get("ok") and not (c.get("action") or c.get("fix"))]
+                    if not c.get("ok") and not (c.get("action") or c.get("fix") or c.get("places"))]
     check("failing checks all have a fix", not unactionable, str(unactionable))
     print("     doctor:", json.dumps({n: c.get("ok") for n, c in checks.items()}))
 

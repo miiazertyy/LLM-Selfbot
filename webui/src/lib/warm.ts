@@ -22,6 +22,7 @@
  */
 import { api } from "./api";
 import { resource } from "./resource";
+import { EMPTY_HOME } from "./community/logic";
 
 // `initial` has to match what the page passes for the same key. Whoever
 // registers first owns the entry, and that is this module - so getting it wrong
@@ -50,6 +51,13 @@ const WARM: Warm[] = [
   { key: "systemDoctor", run: () => api.doctor(), initial: { checks: [] } },
   { key: "systemNetwork", run: () => api.network(), initial: null },
   { key: "systemUpdate", run: () => api.updateCheck(), initial: null },
+  // The community: its catalog and stats from GitHub Pages (reading them never counts as a download), and what you
+  // shared. The badge on a profile with a newer version needs the catalog before Community is opened. Initial values
+  // must match lib/community/store.ts.
+  { key: "community", run: () => api.community(), initial: EMPTY_HOME },
+  { key: "communityStats", run: () => api.communityStats(), initial: { days: [], total: {}, profiles: {} } },
+  { key: "communityMine", run: () => api.communityMine(),
+    initial: { requests: [], profiles: [], author: "", signed_in: false } },
   // Local AI probes a server that is usually not there, so it waits out a
   // timeout. Last, and only because that wait is the whole problem.
   { key: "localStatus", run: () => api.localStatus(), initial: null },

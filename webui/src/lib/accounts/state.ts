@@ -55,7 +55,24 @@ export async function refreshDetails(id: string): Promise<Details | null> {
   }
 }
 
-const moodsPromises = new Map<string, Promise<string[]>>();
+const moodsPromises = new Map<string, Promise<Record<string, string>>>();
+
+/** Each mood, by its name, with what it tells the bot: read once per persona and shared. */
+function moodTable(force: boolean, persona: string): Promise<Record<string, string>> {
+  let promise = moodsPromises.get(persona);
+  if (!promise || force) {
+    promise = api
+      .config(persona)
+      .then((cfg: any) => Object.fromEntries(Object.entries(cfg?.bot?.mood?.moods ?? {})
+        .map(([name, says]) => [name, typeof says === "string" ? says : ""])))
+      .catch(() => {
+        moodsPromises.delete(persona);   // try again next time rather than caching a failure
+        return {};
+      });
+    moodsPromises.set(persona, promise);
+  }
+  return promise;
+}
 
 /**
  * The moods the bot can be put in, as configured.
@@ -68,18 +85,12 @@ const moodsPromises = new Map<string, Promise<string[]>>();
  * persona's. With none named, everyone's.
  */
 export function loadMoods(force = false, persona = ""): Promise<string[]> {
-  let promise = moodsPromises.get(persona);
-  if (!promise || force) {
-    promise = api
-      .config(persona)
-      .then((cfg: any) => Object.keys(cfg?.bot?.mood?.moods ?? {}))
-      .catch(() => {
-        moodsPromises.delete(persona);   // try again next time rather than caching a failure
-        return [];
-      });
-    moodsPromises.set(persona, promise);
-  }
-  return promise;
+  return moodTable(force, persona).then((t) => Object.keys(t));
+}
+
+/** The same moods with what each one tells it, for the line under its name in the picker. */
+export function loadMoodLines(force = false, persona = ""): Promise<Record<string, string>> {
+  return moodTable(force, persona);
 }
 
 const DONE: Record<string, string> = { start: "Starting", stop: "Stopped", restart: "Restarting" };

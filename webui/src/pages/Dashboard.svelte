@@ -20,7 +20,7 @@
   import WidgetFrame from "../lib/dashboard/WidgetFrame.svelte";
   import WidgetBody from "../lib/dashboard/WidgetBody.svelte";
   import AddWidget from "../lib/dashboard/AddWidget.svelte";
-  import { DEFAULT_TYPES, WIDGETS, initialLayout, makeInstance, normalise, placeOnSheet } from "../lib/dashboard/widgets";
+  import { DEFAULT_TYPES, WIDGETS, initialLayout, makeInstance, normalise, placeOnSheet, withNewOnes } from "../lib/dashboard/widgets";
 
   type Account = {
     id: string;
@@ -112,7 +112,10 @@
 
   // ── Derived figures for the tiles and charts ──────────────────────────────
   const running = $derived(children.filter((c) => c.state === "running").length);
-  const replies = $derived((stats?.total ?? 0) + (stats?.total_snapchat ?? 0));
+  // Every platform's, by its own total: one left out here is a platform whose replies silently do not count.
+  const replies = $derived(["", "_snapchat", "_tiktok", "_instagram", "_x", "_reddit", "_minecraft", "_imessage",
+                            "_telegram"]
+    .reduce((n, p) => n + ((stats as any)?.[`total${p}`] ?? 0), 0));
   const today = $derived(stats?.windows?.today ?? 0);
   const week = $derived(stats?.windows?.["7d"] ?? 0);
 
@@ -281,6 +284,7 @@
   onMount(() => {
     // First visit since widgets existed: build it, from the old order if any.
     if (!Array.isArray(get(dashLayout))) dashLayout.set(initialLayout());
+    dashLayout.set(withNewOnes(normalise(get(dashLayout))));
   });
 
   let arranging = $state(false);
@@ -513,47 +517,87 @@
   }
 
   /* The colour under everything: three soft washes of the theme's colours,
-     drifting slowly and never in step, so the sheet is never quite still. */
+     drifting slowly and never in step, so the sheet is never quite still.
+
+     Each was a disc blurred 70px as it moved, and the window redrew the blur at the screen's 143Hz: the panel
+     stuttered on the laptop's integrated graphics (app.css, Aurora, says how it was measured). Now the blur's own
+     falloff is drawn into a gradient, on a layer half as big again so the glow reaches as far, and nothing is
+     blurred as it moves; the drift steps about fifteen times a second. */
   .pool-blob {
     position: absolute;
     width: 62%;
     aspect-ratio: 1;
-    border-radius: 999px;
-    filter: blur(70px);
     opacity: 0.16;
     will-change: transform;
     transition: opacity 1.2s var(--swift);
   }
+  .pool-blob::before {
+    content: "";
+    position: absolute;
+    inset: -25%;
+    border-radius: 999px;
+    background: radial-gradient(circle closest-side,
+      var(--blob) 0%, var(--blob) 36%,
+      color-mix(in srgb, var(--blob) 84%, transparent) 51%,
+      color-mix(in srgb, var(--blob) 50%, transparent) 67%,
+      color-mix(in srgb, var(--blob) 16%, transparent) 82%,
+      color-mix(in srgb, var(--blob) 2%, transparent) 97%,
+      transparent 100%);
+  }
   .pool-blob.is-a {
     left: -16%;
     top: -18%;
-    background: var(--color-accent);
-    animation: pool-drift-a 28s ease-in-out infinite alternate;
+    --blob: var(--color-accent);
+    /* 28s each way: each eighth of it 3.5s, in 53 steps. */
+    animation: pool-drift-a 28s steps(53) infinite alternate;
   }
   .pool-blob.is-b {
     right: -22%;
     top: 18%;
-    background: var(--color-accent-2);
+    --blob: var(--color-accent-2);
     opacity: 0.13;
-    animation: pool-drift-b 34s ease-in-out infinite alternate;
+    animation: pool-drift-b 34s steps(64) infinite alternate;
   }
   .pool-blob.is-c {
     left: 18%;
     bottom: -26%;
-    background: var(--color-good);
+    --blob: var(--color-good);
     opacity: 0.07;
-    animation: pool-drift-c 40s ease-in-out infinite alternate;
+    animation: pool-drift-c 40s steps(75) infinite alternate;
   }
+  /* The same paths as before, each half eased in and out: the frames in between follow ease-in-out, so stepping
+     keeps the slow turn at the middle and the ends. */
   @keyframes pool-drift-a {
+    0% { transform: translate3d(0%, 0%, 0) scale(1); }
+    12.5% { transform: translate3d(4.91%, 2.84%, 0) scale(1.028); }
+    25% { transform: translate3d(19%, 11%, 0) scale(1.11); }
+    37.5% { transform: translate3d(33.09%, 19.16%, 0) scale(1.192); }
     50% { transform: translate3d(38%, 22%, 0) scale(1.22); }
+    62.5% { transform: translate3d(34.64%, 25.36%, 0) scale(1.181); }
+    75% { transform: translate3d(25%, 35%, 0) scale(1.07); }
+    87.5% { transform: translate3d(15.36%, 44.64%, 0) scale(0.959); }
     100% { transform: translate3d(12%, 48%, 0) scale(0.92); }
   }
   @keyframes pool-drift-b {
+    0% { transform: translate3d(0%, 0%, 0) scale(1); }
+    12.5% { transform: translate3d(-3.87%, 3.87%, 0) scale(0.987); }
+    25% { transform: translate3d(-15%, 15%, 0) scale(0.95); }
+    37.5% { transform: translate3d(-26.13%, 26.13%, 0) scale(0.913); }
     50% { transform: translate3d(-30%, 30%, 0) scale(0.9); }
+    62.5% { transform: translate3d(-27.68%, 23.54%, 0) scale(0.936); }
+    75% { transform: translate3d(-21%, 5%, 0) scale(1.04); }
+    87.5% { transform: translate3d(-14.32%, -13.54%, 0) scale(1.144); }
     100% { transform: translate3d(-12%, -20%, 0) scale(1.18); }
   }
   @keyframes pool-drift-c {
+    0% { transform: translate3d(0%, 0%, 0) scale(1); }
+    12.5% { transform: translate3d(3.87%, -3.1%, 0) scale(1.019); }
+    25% { transform: translate3d(15%, -12%, 0) scale(1.075); }
+    37.5% { transform: translate3d(26.13%, -20.9%, 0) scale(1.131); }
     50% { transform: translate3d(30%, -24%, 0) scale(1.15); }
+    62.5% { transform: translate3d(23.03%, -21.93%, 0) scale(1.131); }
+    75% { transform: translate3d(3%, -16%, 0) scale(1.075); }
+    87.5% { transform: translate3d(-17.03%, -10.07%, 0) scale(1.019); }
     100% { transform: translate3d(-24%, -8%, 0) scale(1); }
   }
   /* A reply going out warms the sheet; a message coming in cools it. */

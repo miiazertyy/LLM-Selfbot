@@ -235,6 +235,34 @@ check("'Its log' opens on that account",
 check("there is always a way to add another", "add-tile" in page)
 check("a first run gets a real start, not an empty list", "Connect your first account" in page)
 
+# ── Seven ways in, one shape ────────────────────────────────────────────────
+# Each platform wants something different of you: a token, a password, a window to sign in at, a code by text. They
+# used to say so in different places - three of them put their real button in the body of the dialog and left a
+# dead "Add account" underneath it. Now the bottom row is always the same two, and only the words change.
+print("\n== however it signs in, the dialog is the same shape ==")
+foot = page.split('<div class="aa-foot">')[1].split("</div>")[0]
+check("one button at the bottom, and one way out, for all eight",
+      foot.count("<Button") == 2 and "addAction.run" in foot and "addAction.leaveRun" in foot)
+check("the dialog's body holds fields and news, never a second button that adds the account",
+      "aa-foot" in page and 'onclick={signInTelegram}' not in page
+      and 'onclick={sendInstagramCode}' not in page.split('<div class="aa-foot">')[0].replace(
+          'onkeydown={(e) => { if (e.key === "Enter") sendInstagramCode(); }}', ""))
+act = page.split("const addAction = $derived.by")[1].split("\n  function")[0]
+for label in ('"Add account"', '"Sign in to Telegram"', '"Open Discord and sign in"', '"Open TikTok and sign in"',
+              '"Open Reddit and sign in"', '"Open X and sign in"', '"Open Instagram and sign in"',
+              '"Send the code"', '"Send the password"', '"Signing in"'):
+    check(f"  it says what is about to happen: {label}", label in act)
+check("while a window is open, the way out is to stop waiting for it, not to leave it open",
+      act.count('leave: "Stop waiting"') == 4 and 'leaveRun: cancelBrowserLogin' in act
+      and 'leaveRun: cancelMinecraft' in act and 'leaveRun: cancelWhatsapp' in act)
+check("and a half-finished sign-in can be started over",
+      'leave: "Start again"' in act and "async function cancelTelegram" in page)
+check("a sign-in that happens in steps shows the same three, lit as they happen",
+      page.count('class="aa-steps"') == 8 and page.count('<span class="aa-step-t">A window opens</span>') == 5
+      and "Telegram sends a code" in page and "Microsoft gives a code" in page
+      # WhatsApp's is the one sign-in where nothing opens here at all: the phone does it.
+      and "WhatsApp gives a code" in page)
+
 print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
 shutil.rmtree(SANDBOX, ignore_errors=True)
 sys.exit(1 if FAIL else 0)

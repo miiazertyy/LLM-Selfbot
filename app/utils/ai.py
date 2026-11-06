@@ -1,3 +1,4 @@
+import contextvars
 import re
 import sys
 import json
@@ -38,14 +39,24 @@ _provider_clients: dict = {}
 _resting: dict = {}
 # who wrote the last reply, "Groq · openai/gpt-oss-120b", for the logs
 last_reply_model = ""
+# What one call hears or thinks with, tried before the job's own chain: {"stt": entry, "replies": entry}. Set around
+# a call's own hearing and thinking (app/voice/session.py), so nothing else is touched by it.
+FIRST: contextvars.ContextVar = contextvars.ContextVar("llmselfbot_first", default={})
 
 # a local server raises openai's RateLimitError, Groq raises its own, different classes: catching only one meant a loaded local server fell into the generic handler and looked like a crash. openai isn't imported here (heavy, ~620ms on every worker launch); the first OpenAI-compatible client adds the class. every `except RATE_LIMITED` re-reads this global, so extending it later covers old handlers.
 RATE_LIMITED = (RateLimitError,)
 
 
+# Set for work that needs its answer now, a LIVE's line (app/utils/livecohost.py): a rate limit hands over to the next
+# key and model at once, rather than the SDK sleeping out the limit's retry-after on the same one (twice, by default:
+# a line on a LIVE came 50 seconds late, the viewer long gone, while the next model in the chain sat unused).
+REALTIME: contextvars.ContextVar = contextvars.ContextVar("llmselfbot_realtime", default=False)
+
+
 def _active_client():
-    """Return the currently active Groq client."""
-    return _groq_clients[_client_index]["client"]
+    """Return the currently active Groq client: one that never waits out a rate limit, for realtime work."""
+    client = _groq_clients[_client_index]["client"]
+    return client.with_options(max_retries=0, timeout=30.0) if REALTIME.get() else client
 
 
 def _plan_job(name: str) -> dict:
@@ -94,11 +105,7 @@ def local_tts() -> dict:
     if chosen["provider"] == "groq":
         return {}
     url = providers.base_url(chosen["provider"], config)
-    if chosen["provider"] == "local":
-        key = providers.local_settings(config)["api_key"]
-    else:
-        keys = providers.keys_for(chosen["provider"])
-        key = keys[0] if keys else ""
+    key = providers.local_settings(config)["api_key"] if chosen["provider"] == "local" else providers.key_now(chosen["provider"])
     if not url or not key:
         return {}
     return {"base_url": url, "api_key": key, "model": chosen["model"],
@@ -111,6 +118,7 @@ def tts_targets() -> list:
     if not _initialised:
         init_ai()
     from app.utils import providers
+    from app.voice import speech
     config = load_config()
     out = []
     for e in providers.job_chain(config, "tts"):
@@ -118,26 +126,30 @@ def tts_targets() -> list:
             continue
         url = providers.base_url(e["provider"], config)
         if e["provider"] == "local":
-            key = providers.local_settings(config)["api_key"]
+            keys = [providers.local_settings(config)["api_key"]]
+        elif speech.native("tts", e["provider"], e["model"]):
+            # Goes round its own keys as it speaks (app/voice/speech.py).
+            keys = providers.key_order(e["provider"])[:1]
         else:
-            keys = providers.keys_for(e["provider"])
-            key = keys[0] if keys else ""
-        if url and key:
-            out.append({"base_url": url, "api_key": key, "model": e["model"],
-                        "voice": e.get("voice", ""), "provider": e["provider"]})
+            # Each of its keys a speaker of its own, so the next is tried when one has run out.
+            keys = providers.key_order(e["provider"])
+        for key in keys:
+            if url and key:
+                out.append({"base_url": url, "api_key": key, "model": e["model"],
+                            "voice": e.get("voice", ""), "provider": e["provider"]})
     return out
 
 
-def _openai_client(pid: str, config: dict):
-    """The OpenAI-compatible client for a provider other than Groq, or None when it has no key."""
+def _openai_client(pid: str, config: dict, key: str = ""):
+    """The OpenAI-compatible client for a provider other than Groq, or None when it has no key. With no key named, its
+    first that is not resting."""
     global RATE_LIMITED, _local_client
     from app.utils import providers
     url = providers.base_url(pid, config)
     if pid == "local":
         key = providers.local_settings(config)["api_key"]
     else:
-        keys = providers.keys_for(pid)
-        key = keys[0] if keys else ""
+        key = key or providers.key_now(pid)
     if not url or not key:
         return None
     cache_key = (pid, url, key)
@@ -157,6 +169,46 @@ def _openai_client(pid: str, config: dict):
         if pid == "local":
             _local_client = client
     return client
+
+
+def _key_trouble(e) -> float:
+    """How long a key rests after this error, in seconds. 0 when it was not the key's doing: another would only fail
+    the same way."""
+    from app.utils import providers
+    if _is_rate_limit(e):
+        return _retry_after(e)
+    return providers.key_at_fault(getattr(e, "status_code", 0) or 0)
+
+
+def note_key_trouble(pid: str, key: str, e) -> None:
+    """A key something else just used, for whoever goes round keys for itself (speaking): rested if it was to blame."""
+    from app.utils import providers
+    rest = _key_trouble(e)
+    if rest and key and pid and pid != "local":
+        providers.rest_key(pid, key, rest)
+
+
+async def _with_each_key(pid: str, config: dict, call):
+    """`call(client)` with this provider's key, and with each of its others while they run out or are refused. The
+    model has not failed, only the key, so this all happens before anything hands over to the next model."""
+    from app.utils import providers
+    keys = providers.key_order(pid) if pid != "local" else []
+    if not keys:
+        return await call(_openai_client(pid, config))
+    last = None
+    for n, key in enumerate(keys, start=1):
+        try:
+            return await call(_openai_client(pid, config, key))
+        except Exception as e:
+            rest = _key_trouble(e)
+            if not rest:
+                raise
+            providers.rest_key(pid, key, rest)
+            last = e
+            if n < len(keys):
+                log_system(f"{providers.BY_ID[pid]['name']}: key {n} of {len(keys)} "
+                           f"{'hit its limit' if _is_rate_limit(e) else 'was refused'}, trying the next")
+    raise last
 
 
 def init_ai():
@@ -231,7 +283,8 @@ def init_ai():
         log_system("Replies: " + " → ".join(providers.label(e) for e in chain))
     moved = [f"{n} on {providers.label(plan[j])}" for j, n in
              (("small", "background work"), ("vision", "pictures"),
-              ("stt", "voice messages"), ("tts", "speaking")) if plan[j]["provider"] != "groq"]
+              ("stt", "voice messages"), ("tts", "speaking"), ("web", "looking things up"))
+             if plan[j]["provider"] != "groq"]
     if moved:
         log_system("Also: " + ", ".join(moved))
     if keys:
@@ -504,6 +557,9 @@ async def _create_completion_inner(messages, max_tokens=None):
     from app.utils import providers, apihealth
     config = load_config()
     chain = providers.reply_chain(config)
+    first = FIRST.get().get("replies")
+    if first:
+        chain = [first] + [e for e in chain if (e["provider"], e["model"]) != (first["provider"], first["model"])]
     cap = max_tokens or _reply_token_cap()
     now = time.time()
     # Resting entries go last, not away: if everything is resting the first is still worth a try.
@@ -544,8 +600,8 @@ async def _create_completion_inner(messages, max_tokens=None):
                 if pid == "groq":
                     response = await _groq_chat(mid, messages, cap, sampling)
                 else:
-                    response = await client.chat.completions.create(
-                        model=mid, messages=messages, max_tokens=cap, **sampling)
+                    response = await _with_each_key(pid, config, lambda c: c.chat.completions.create(
+                        model=mid, messages=messages, max_tokens=cap, **sampling))
             except Exception as e:
                 # A provider that does not take one of these answers 400 for the
                 # whole request. Rather than lose the reply over a setting, send
@@ -557,8 +613,8 @@ async def _create_completion_inner(messages, max_tokens=None):
                 if pid == "groq":
                     response = await _groq_chat(mid, messages, cap, {})
                 else:
-                    response = await client.chat.completions.create(
-                        model=mid, messages=messages, max_tokens=cap)
+                    response = await _with_each_key(pid, config, lambda c: c.chat.completions.create(
+                        model=mid, messages=messages, max_tokens=cap))
             model = mid
             last_reply_model = providers.label(entry)
             _resting.pop((pid, mid), None)
@@ -611,22 +667,25 @@ def _why_passed_over(e) -> str:
     return type(e).__name__
 
 
-async def _job_call(name: str, call, groq_call):
+async def _job_call(name: str, call, groq_call, native=None):
     """One of the smaller jobs: see _job_call_inner. Counted under its own name (app/utils/usage.py)."""
     from app.utils import usage
     job_token, model_token = usage.JOB.set(name), usage.MODEL.set("")
     try:
-        return await _job_call_inner(name, call, groq_call)
+        return await _job_call_inner(name, call, groq_call, native)
     finally:
         usage.JOB.reset(job_token)
         usage.MODEL.reset(model_token)
 
 
-async def _job_call_inner(name: str, call, groq_call):
+async def _job_call_inner(name: str, call, groq_call, native=None):
     """Run one of the smaller jobs where it is set to run, falling back to Groq. `call(client, model)` does the work on an OpenAI-compatible provider, `groq_call(model)` on Groq. Leaving a job unset keeps it on Groq exactly as before; a named one that fails hands over to Groq too, when there is a Groq key, so a flaky local server costs a slower answer rather than none."""
     from app.utils import providers, apihealth
     config = load_config()
     chain = providers.job_chain(config, name)
+    first = FIRST.get().get(name)
+    if first:
+        chain = [first] + [e for e in chain if (e["provider"], e["model"]) != (first["provider"], first["model"])]
     last_error = None
     tried_groq = set()
     from app.utils import usage
@@ -642,15 +701,19 @@ async def _job_call_inner(name: str, call, groq_call):
         # a voice note goes up as a file, so its request does not say which model; this does
         usage.MODEL.set(entry["model"])
         try:
+            # Hearing on a provider with an API of its own, or on this computer's own voice (app/voice/speech.py).
+            if native is not None:
+                from app.voice import speech
+                if speech.native(name, entry["provider"], entry["model"]):
+                    return await native(entry)
             if entry["provider"] == "groq":
                 if not _groq_clients:
                     continue
                 tried_groq.add(entry["model"])
                 return await groq_call(entry["model"])
-            client = _openai_client(entry["provider"], config)
-            if client is None:
+            if _openai_client(entry["provider"], config) is None:
                 continue
-            return await call(client, entry["model"])
+            return await _with_each_key(entry["provider"], config, lambda c: call(c, entry["model"]))
         except Exception as e:
             last_error = _wont_load_now(entry, config, e) or e
             if entry["provider"] != "groq":
@@ -747,7 +810,17 @@ async def _create_transcription(whisper_model, audio_file):
             pass
         return await _groq_transcription(mid or whisper_model, audio_file)
 
-    return await _job_call("stt", elsewhere, on_groq)
+    async def native(entry):
+        from types import SimpleNamespace
+        from app.voice import speech
+        try:
+            audio_file.seek(0)
+        except Exception:
+            pass
+        text = await speech.hear(entry["provider"], entry["model"], audio_file.read(), getattr(audio_file, "name", "voice.ogg"))
+        return SimpleNamespace(text=text)
+
+    return await _job_call("stt", elsewhere, on_groq, native)
 
 
 async def _groq_transcription(whisper_model, audio_file):
@@ -802,7 +875,8 @@ async def _create_small_completion(messages, **kwargs):
         for entry in providers.reply_chain(config):
             client = _openai_client(entry["provider"], config) if entry["provider"] != "groq" else None
             if client is not None:
-                return await client.chat.completions.create(model=entry["model"], messages=messages, **kwargs)
+                return await _with_each_key(entry["provider"], config, lambda c: c.chat.completions.create(
+                    model=entry["model"], messages=messages, **kwargs))
         raise RuntimeError("No model is set up for background work.")
 
     async def elsewhere(client, mid):
@@ -833,6 +907,67 @@ async def _create_small_completion(messages, **kwargs):
     return await _job_call("small", elsewhere, on_groq)
 
 
+async def _create_web_completion(messages, **kwargs):
+    """Looking things up (app/utils/web/agent.py): each step of a search, wherever that job is set to run under
+    Models. With no Groq key and the job left on Groq, whatever writes the replies does it instead."""
+    if not _initialised:
+        init_ai()
+    from app.utils import providers
+    config = load_config()
+    if not _groq_clients and providers.job(config, "web")["provider"] == "groq":
+        for entry in providers.reply_chain(config):
+            client = _openai_client(entry["provider"], config) if entry["provider"] != "groq" else None
+            if client is not None:
+                return await _with_each_key(entry["provider"], config, lambda c: c.chat.completions.create(
+                    model=entry["model"], messages=messages, **kwargs))
+        raise RuntimeError("No model is set up for looking things up.")
+
+    async def elsewhere(client, mid):
+        return await client.chat.completions.create(model=mid, messages=messages, **kwargs)
+
+    async def on_groq(model):
+        model = model or providers.DEFAULTS["web"]
+        while True:
+            try:
+                return await _active_client().chat.completions.create(model=model, messages=messages, **kwargs)
+            except RateLimitError:
+                if _fallback_client():
+                    continue
+                raise
+
+    return await _job_call("web", elsewhere, on_groq)
+
+
+async def web_completion(messages, max_tokens: int = 600, temperature: float = 0.2) -> str:
+    """One step of a web lookup: the model's words, its thinking taken out.
+
+    A gpt-oss model, told it can look things up, sometimes calls the browser it was trained with instead of
+    answering. Groq refuses that call (tool_use_failed) and sends back what the model tried to do: that is returned
+    as the answer, {"name": "browser.search", "arguments": {...}}, which agent.parse_action reads as an action."""
+    try:
+        response = await _create_web_completion(messages, max_tokens=max_tokens, temperature=temperature)
+    except Exception as e:
+        tried = tool_attempt(e)
+        if tried:
+            return tried
+        raise
+    return _answer_of(response).strip()
+
+
+def tool_attempt(error) -> str:
+    """The tool call a model made that the provider refused (Groq's tool_use_failed), as text; "" otherwise."""
+    text = str(error)
+    if "tool_use_failed" not in text:
+        return ""
+    body = getattr(error, "body", None)
+    if isinstance(body, dict):
+        inner = body["error"] if isinstance(body.get("error"), dict) else body
+        if inner.get("failed_generation"):
+            return str(inner["failed_generation"])
+    m = re.search(r"'failed_generation': '(.*?)'(?:,|\})", text, re.S)
+    return m.group(1) if m else ""
+
+
 def _reasoning_of(response) -> str:
     """A reasoning model's thinking, when the provider sent it back.
 
@@ -858,6 +993,14 @@ def _answer_of(response) -> str:
     """The reply text, with any <think> block taken out of it."""
     content = response.choices[0].message.content or ""
     return re.sub(r"<think>.*?</think>\s*", "", content, flags=re.S)
+
+
+def _out_of_room(response) -> bool:
+    """Stopped by the allowance (max_tokens), not because it was done."""
+    try:
+        return response.choices[0].finish_reason == "length"
+    except Exception:
+        return False
 
 
 def _show_thinking(response):
@@ -909,13 +1052,27 @@ async def generate_response(prompt, instructions, history=None):
                         f"Request too large, retrying with the last {len(rest)} messages")
                     try:
                         response = await _create_completion(trimmed, max_tokens=cap)
+                        messages = trimmed
                         break
                     except RequestTooLarge:
                         continue
                 else:
                     raise
         _show_thinking(response)
-        return _answer_of(response)
+        answer = _answer_of(response)
+        if not answer.strip() and _out_of_room(response):
+            # A reasoning model can think through the whole allowance and stop before a word of the reply, which was then
+            # lost ("No response generated"). Asked again with room for both, and only then, so a reply that fits costs
+            # what it did.
+            room = min(max(cap * 3, 960), 2400)
+            log_system(f"{last_reply_model} spent all {cap} tokens thinking and wrote nothing; asking again with {room}")
+            try:
+                response = await _create_completion(messages, max_tokens=room)
+            except Exception:
+                return answer
+            _show_thinking(response)
+            answer = _answer_of(response)
+        return answer
     except Exception as e:
         # Rate-limit errors are handled and logged by the retry loop in main.py,
         # and a request too big for the model is explained there, in words.
@@ -931,6 +1088,9 @@ async def generate_response(prompt, instructions, history=None):
 
 
 GROQ_IMAGE_SIZE_LIMIT = 20 * 1024 * 1024  # 20MB
+# Said with a conversation whose picture was described into it: a reply asked again (a web lookup's second ask,
+# app/utils/web/lookup.py) uses the description already there instead of looking at the picture twice.
+IMAGE_SEEN = " Images sent to you appear as '[Image of ...]', treat that description as an image you can actually see."
 
 
 # one aiohttp session for image fetches, instead of a fresh TCP connection and TLS handshake per image
@@ -1073,13 +1233,7 @@ async def generate_response_image(prompt, instructions, image_url, history=None)
                 history[-1] = {"role": "user", "content": prompt_with_image}
             else:
                 history.append({"role": "user", "content": prompt_with_image})
-            messages = [
-                {
-                    "role": "system",
-                    "content": instructions + " Images sent to you appear as '[Image of ...]', treat that description as an image you can actually see.",
-                },
-                *history,
-            ]
+            messages = [{"role": "system", "content": instructions + IMAGE_SEEN}, *history]
         else:
             history = [{"role": "user", "content": prompt_with_image}]
             messages = [
@@ -1398,6 +1552,20 @@ async def summarize_conversation(lines: list, their_name: str,
         temperature=0.3,
     )
     # A reasoning model can leave its thinking in the reply; _tidy_summary takes it out with the rest.
+    return _tidy_summary(response.choices[0].message.content or "")
+
+
+async def condense(prompt: str, instructions: str, max_tokens: int = 1100) -> str:
+    """A longer piece of writing than a chat reply allows (replies stop at bot.max_reply_tokens), such as Minecraft's
+    brief persona (app/platforms/minecraft/persona.py). On the small model like the summaries, "" on failure."""
+    try:
+        response = await _create_small_completion(
+            [{"role": "system", "content": instructions}, {"role": "user", "content": prompt}],
+            max_tokens=max_tokens,
+            temperature=0.3,
+        )
+    except Exception:
+        return ""
     return _tidy_summary(response.choices[0].message.content or "")
 
 

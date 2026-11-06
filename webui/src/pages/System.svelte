@@ -6,13 +6,19 @@
    * which told you something was wrong and then left you there. Every failing
    * row now carries what the thing is for, what to do about it, and a button
    * that does it: installs the missing piece, opens the page that fixes it, or
-   * sends you to the download.
+   * sends you to the download. Any of them can be put away ("Don't show again"),
+   * and the ones put away are still listed, under the rest, to bring back.
    */
   import { onMount } from "svelte";
+  import { slide } from "svelte/transition";
+  import { cubicOut } from "svelte/easing";
+  import { get } from "svelte/store";
   import { api } from "../lib/api";
   import { track } from "../lib/busy";
   import { subscribeLogs } from "../lib/logsocket";
-  import { toast, settingsSection } from "../lib/stores";
+  import { hiddenChecks, motionEnabled, toast, settingsSection } from "../lib/stores";
+  import { TABS, resolveTarget } from "../lib/settingsmap";
+  import { play } from "../lib/uisound";
   import { resource } from "../lib/resource";
   import { pickFolder, pickFile, openExternal, openUrl } from "../lib/window";
   import { deviceInfo, notHere } from "../lib/device";
@@ -45,6 +51,8 @@
     why?: string;
     fix?: string;
     action?: Action | null;
+    /** The Settings subtabs that change it ("tab/sub"), each a button. */
+    places?: string[];
   };
   /** Named in app/web/routes/system_routes.py as well, which is what the
       desktop shell opens; this is the browser's copy of the same address. */
@@ -116,9 +124,36 @@
     return { destroy: () => node.remove() };
   }
 
-  const failing = $derived(checks.filter((c) => !c.ok).length);
-  const problems = $derived(checks.filter((c) => !c.ok));
+  const problems = $derived(checks.filter((c) => !c.ok && !$hiddenChecks.includes(c.id)));
+  const putAway = $derived(checks.filter((c) => !c.ok && $hiddenChecks.includes(c.id)));
+  const failing = $derived(problems.length);
   const passing = $derived(checks.filter((c) => c.ok));
+  let showPutAway = $state(false);
+
+  const moving = (ms: number) => ({ duration: get(motionEnabled) ? ms : 0, easing: cubicOut });
+
+  /** "tiktok/engage" by the names Settings has for it: "TikTok › Likes and comments". */
+  function placeName(place: string): string {
+    const [t, s] = (resolveTarget(place) ?? place).split("/");
+    const tab = TABS.find((x) => x.id === t);
+    const sub = tab?.subs.find((x) => x.id === s);
+    return tab ? (sub ? `${tab.name} › ${sub.name}` : tab.name) : place;
+  }
+
+  function goToPlace(place: string) {
+    settingsSection.set(place);
+    window.location.hash = "/settings";
+  }
+
+  function putCheckAway(c: Check) {
+    play("off");
+    hiddenChecks.update((ids) => [...ids.filter((id) => id !== c.id), c.id]);
+  }
+
+  function bringCheckBack(c: Check) {
+    play("on");
+    hiddenChecks.update((ids) => ids.filter((id) => id !== c.id));
+  }
 
   // How long the app has been up, for the header. The panel's own uptime is
   // the app's: they start and stop together.
@@ -146,6 +181,7 @@
     doctorLoading ? "Checking everything"
     : failing === 1 ? sayProblem(problems[0])
     : failing ? `${failing} things need a look`
+    : putAway.length ? "Nothing else needs a look"
     : "Everything is working",
   );
   /** The fix for the first problem, as the header's main button. */
@@ -167,7 +203,7 @@
     // The installers report progress over the same log stream the rest of the
     // app uses, so the page can show what is happening instead of a spinner.
     return subscribeLogs((entry) => {
-      if (entry.source === "ffmpeg-install" || entry.source === "snapchat-install") {
+      if (entry.source === "ffmpeg-install" || entry.source === "opus-install" || entry.source === "snapchat-install" || entry.source === "minecraft-install") {
         installLog = [...installLog.slice(-40), entry.text ?? ""];
       }
     });
@@ -205,6 +241,18 @@
         // The download runs in a thread, so poll until the doctor turns green.
         const poll = setInterval(async () => {
           const s = await api.ffmpegStatus().catch(() => null);
+          if (s && !s.installing) {
+            clearInterval(poll);
+            busy[c.id] = false;
+            load();
+          }
+        }, 2000);
+        return;
+      } else if (a.kind === "install" && a.target === "opus") {
+        await api.opusInstall();
+        toast("Downloading the opus library. Progress is below.", "info");
+        const poll = setInterval(async () => {
+          const s = await api.opusStatus().catch(() => null);
           if (s && !s.installing) {
             clearInterval(poll);
             busy[c.id] = false;
@@ -415,6 +463,42 @@
 {/if}
 
 <!-- ── How it is, at a glance ─────────────────────────────────────────────── -->
+{#snippet problemRow(c: Check, away: boolean)}
+  <div class="sys-problem" class:is-away={away} out:slide={moving(220)}>
+    <div class="flex items-start gap-3">
+      <span class="sys-problem-icon"><Icon name="alert" size={15} /></span>
+      <div class="min-w-0 flex-1">
+        <div class="flex flex-wrap items-center gap-2">
+          <span class="text-[13.5px] font-semibold text-ink">{c.name}</span>
+          {#if c.detail}<span class="text-[11.5px] text-warn">{c.detail}</span>{/if}
+        </div>
+        {#if c.why}<p class="mt-1 text-[12px] leading-relaxed text-muted">{c.why}</p>{/if}
+        {#if c.fix}<p class="mt-1 text-[12px] leading-relaxed text-ink/85">{c.fix}</p>{/if}
+        <!-- Where to change it: each place by the name Settings has for it, and a press goes there. -->
+        {#if c.places?.length}
+          <div class="sys-places">
+            {#each c.places as place (place)}
+              <Button size="sm" kind="ghost" onclick={() => goToPlace(place)}>{placeName(place)}<Icon name="chevron" size={11} /></Button>
+            {/each}
+          </div>
+        {/if}
+      </div>
+      {#if c.action}
+        <span class="shrink-0 self-center">
+          <Button size="sm" loading={busy[c.id]} onclick={() => act(c)}>{c.action.label}</Button>
+        </span>
+      {/if}
+    </div>
+    <div class="sys-problem-foot">
+      {#if away}
+        <button type="button" class="sys-put" data-sound="self" onclick={() => bringCheckBack(c)}>Show again</button>
+      {:else}
+        <button type="button" class="sys-put" data-sound="self" onclick={() => putCheckAway(c)}>Don't show again</button>
+      {/if}
+    </div>
+  </div>
+{/snippet}
+
 <!-- The page used to open on a list of eleven checks, nine of them "ok", and
      make you read all of them to find out whether anything was wrong. The
      answer comes first now, with the things you come here to do beside it. -->
@@ -425,7 +509,7 @@
       {#if doctorLoading}
         <ProgressRing size={54} />
       {:else}
-        <ProgressRing done={passing.length} total={Math.max(1, checks.length)} size={54} />
+        <ProgressRing done={passing.length} total={Math.max(1, passing.length + failing)} size={54} />
       {/if}
       <span class="sys-ring-icon" use:chime={{ sound: failing ? "land" : "done", delay: 500 }}>
         <Icon name={doctorLoading ? "refresh" : failing ? "alert" : "check"} size={18} />
@@ -439,7 +523,7 @@
         {#if upFor}<span class="text-faint">·</span><span>up {upFor}</span>{/if}
         {#if storageInfo}<span class="text-faint">·</span><span>{mb(storageInfo.size)} of data</span>{/if}
         {#if !doctorLoading}
-          <span class="text-faint">·</span><span>{passing.length} of {checks.length} checks passing</span>
+          <span class="text-faint">·</span><span>{passing.length} of {passing.length + failing} checks passing</span>
         {/if}
         {#if failing > 1}
           <span class="text-faint">·</span><span class="text-warn">{problems.map((c) => c.name).join(", ")}</span>
@@ -480,8 +564,8 @@
     <!-- ── Health ─────────────────────────────────────────────────────────── -->
     <Card title="Health checks">
       {#snippet actions()}
-        <span class="text-[11px] {failing ? 'text-warn' : 'text-good'}">
-          {doctorLoading ? "checking" : failing ? `${failing} to fix` : "all passing"}
+        <span class="text-[11px] {failing ? 'text-warn' : putAway.length ? 'text-muted' : 'text-good'}">
+          {doctorLoading ? "checking" : failing ? `${failing} to fix` : putAway.length ? `${putAway.length} hidden` : "all passing"}
         </span>
       {/snippet}
 
@@ -501,25 +585,27 @@
       {#if problems.length}
         <div class="mb-3 space-y-2 domino" use:domino={{ step: 90 }}>
           {#each problems as c (c.id)}
-            <div class="sys-problem">
-              <div class="flex items-start gap-3">
-                <span class="sys-problem-icon"><Icon name="alert" size={15} /></span>
-                <div class="min-w-0 flex-1">
-                  <div class="flex flex-wrap items-center gap-2">
-                    <span class="text-[13.5px] font-semibold text-ink">{c.name}</span>
-                    {#if c.detail}<span class="text-[11.5px] text-warn">{c.detail}</span>{/if}
-                  </div>
-                  {#if c.why}<p class="mt-1 text-[12px] leading-relaxed text-muted">{c.why}</p>{/if}
-                  {#if c.fix}<p class="mt-1 text-[12px] leading-relaxed text-ink/85">{c.fix}</p>{/if}
-                </div>
-                {#if c.action}
-                  <span class="shrink-0 self-center">
-                    <Button size="sm" loading={busy[c.id]} onclick={() => act(c)}>{c.action.label}</Button>
-                  </span>
-                {/if}
+            {@render problemRow(c, false)}
+          {/each}
+        </div>
+      {/if}
+
+      <!-- Put away, not gone: how many, and a press shows them, each with the way back. -->
+      {#if putAway.length}
+        <div class="mb-3">
+          <button type="button" class="sys-put sys-put-list" class:is-open={showPutAway} data-sound="self" aria-expanded={showPutAway}
+                  onclick={() => { showPutAway = !showPutAway; play(showPutAway ? "open" : "undo"); }}>
+            <Icon name="chevron" size={10} />{putAway.length} hidden
+          </button>
+          {#if showPutAway}
+            <div transition:slide={moving(240)}>
+              <div class="space-y-2 pt-2">
+                {#each putAway as c (c.id)}
+                  {@render problemRow(c, true)}
+                {/each}
               </div>
             </div>
-          {/each}
+          {/if}
         </div>
       {/if}
 
@@ -824,6 +910,18 @@
     background: color-mix(in srgb, var(--color-warn) 7%, transparent);
     box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-warn) 24%, transparent);
   }
+  .sys-problem.is-away { background: rgb(255 255 255 / 0.025); box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.05); }
+  .sys-places { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
+  .sys-problem-foot { display: flex; justify-content: flex-end; margin-top: 4px; }
+  .sys-put {
+    display: inline-flex; align-items: center; gap: 5px; padding: 3px 6px; border-radius: 7px;
+    font-size: 11.5px; color: var(--color-muted);
+    transition: color 0.15s ease, background-color 0.15s ease;
+  }
+  .sys-put:hover { color: var(--color-ink); background: rgb(255 255 255 / 0.05); }
+  .sys-put-list { margin-left: -6px; }
+  .sys-put-list :global(svg) { transition: transform 0.24s var(--jelly); }
+  .sys-put-list.is-open :global(svg) { transform: rotate(90deg); }
   .sys-problem-icon {
     display: grid;
     width: 28px;
@@ -861,6 +959,8 @@
   :global(:root[data-motion="off"]) .sys-ok,
   :global(:root[data-motion="off"]) .sys-ok-icon { transition: none; }
 
+  /* Tinted with the theme like every button (app.css, "Buttons with depth"), pointed at too: no outline of its
+     own, which made it an old bordered button beside the health checks. */
   .sys-action {
     display: flex;
     min-width: 0;
@@ -868,13 +968,7 @@
     gap: 12px;
     padding: 12px;
     border-radius: 14px;
-    background: rgb(255 255 255 / 0.03);
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-edge) 70%, transparent);
-    transition: background-color 0.15s ease, box-shadow 0.15s ease, transform 0.2s var(--spring);
-  }
-  .sys-action:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--color-accent) 7%, transparent);
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 40%, transparent);
+    transition: transform 0.2s var(--swift);
   }
   .sys-action:active:not(:disabled) { transform: scale(0.98); }
   .sys-action:disabled { opacity: 0.7; cursor: default; }

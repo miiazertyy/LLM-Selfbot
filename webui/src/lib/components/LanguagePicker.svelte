@@ -12,7 +12,13 @@
    * A stored value that is not in the list is kept and said, not replaced.
    */
   import { tick } from "svelte";
+  import { fly } from "svelte/transition";
+  import { get } from "svelte/store";
   import Icon from "./Icon.svelte";
+  import PopupMark from "./PopupMark.svelte";
+  import { motionEnabled } from "../stores";
+  import { unroll } from "../unroll";
+  import { floatFrom } from "../floatfrom";
   import { flagOf } from "../clock";
   import { searchLanguages, type Lang } from "../languages";
   import { afterLanding, onScreen } from "../cascade";
@@ -53,6 +59,8 @@
   let active = $state(0);
   let up = $state(false);
   let root: HTMLElement | null = $state(null);
+  /** The open list: not inside root, it lives at the end of <body> (lib/floatfrom.ts). */
+  let pop: HTMLElement | null = $state(null);
   let list: HTMLElement | null = $state(null);
   let input: HTMLInputElement | null = $state(null);
 
@@ -103,9 +111,10 @@
     void q;
     active = 0;
   });
-  /** A click anywhere else closes it. */
+  /** A click anywhere else closes it: the list counts as here, though it lives at the end of <body>. */
   function outside(e: PointerEvent) {
-    if (open && root && !root.contains(e.target as Node)) open = false;
+    const t = e.target as Node;
+    if (open && root && !root.contains(t) && !(pop && pop.contains(t))) open = false;
   }
 </script>
 
@@ -133,11 +142,14 @@
         {#if current}{current.native !== current.name ? `${current.native} · ` : ""}{current.code}{:else if value}{unknown}{:else}Pick one{/if}
       </span>
     </span>
-    <Icon name="chevron" size={13} class="lp-chev" />
+    <PopupMark class="lp-chev" />
   </button>
 
   {#if open}
-    <div class="lp-pop" class:is-up={up} role="presentation" onkeydown={onKey}>
+    <!-- Unrolls out of the box like every menu (app.css .unroll). -->
+    <div class="lp-pop unroll" class:is-up={up} role="presentation" onkeydown={onKey} bind:this={pop}
+         use:floatFrom={{ anchor: root, up, onaway: () => (open = false) }} use:unroll={".lp-search, .lp-head, .lp-row"}
+         out:fly={{ y: up ? 4 : -4, duration: get(motionEnabled) ? 150 : 0, opacity: 0 }}>
       <label class="lp-search">
         <Icon name="search" size={13} />
         <input bind:this={input} bind:value={q} placeholder="Name, in any language, or code" spellcheck="false"
@@ -166,6 +178,9 @@
 
 <style>
   .lp { position: relative; width: 100%; max-width: 20rem; }
+  /* The closed box is a button like the rest (app.css, "Buttons with depth": tinted with the theme, nothing else),
+     with Apple's pop-up mark at its end, as Select's. A language not in the list still says so, in the warning's
+     colour. */
   .lp-trigger {
     display: flex;
     width: 100%;
@@ -173,15 +188,13 @@
     gap: 11px;
     padding: 7px 10px 7px 8px;
     border-radius: 12px;
-    border: 1px solid var(--color-edge);
-    background: rgb(0 0 0 / 0.22);
     text-align: left;
-    transition: border-color 0.18s var(--swift), box-shadow 0.18s var(--swift), transform 0.25s var(--spring);
+    transition: box-shadow 0.18s var(--swift), transform 0.25s var(--swift);
   }
-  .lp-trigger:hover { border-color: color-mix(in srgb, var(--color-accent) 45%, var(--color-edge)); }
+  .lp-trigger[aria-expanded="true"]::before { --d3-lit: 1; }
   .lp-trigger:active { transform: scale(0.985); }
-  .lp-trigger:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 22%, transparent); }
-  .lp-trigger.is-bad { border-color: color-mix(in srgb, var(--color-warn) 60%, transparent); }
+  .lp-trigger:focus-visible { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 50%, transparent); }
+  .lp-trigger.is-bad { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-warn) 55%, transparent); }
 
   /* The flag, in a soft round frame like the timezone picker's clock,
      arriving with a little bounce when the language changes. */
@@ -208,27 +221,30 @@
   .lp-name { overflow: hidden; font-size: 13.5px; font-weight: 650; color: var(--color-ink); text-overflow: ellipsis; white-space: nowrap; }
   .lp-meta { overflow: hidden; font-size: 11px; color: var(--color-muted); text-overflow: ellipsis; white-space: nowrap; }
   .lp-trigger.is-bad .lp-meta { color: var(--color-warn); }
-  .lp-trigger :global(.lp-chev) { flex-shrink: 0; color: var(--color-faint); transform: rotate(90deg); }
+  /* Apple's pop-up mark (PopupMark), quiet, in the theme's colour when pointed at or open: as Select's. */
+  .lp-trigger :global(.lp-chev) {
+    flex-shrink: 0;
+    margin: 0 2px;
+    color: var(--color-faint);
+    transition: color 0.16s ease;
+  }
+  .lp-trigger:hover :global(.lp-chev),
+  .lp-trigger[aria-expanded="true"] :global(.lp-chev) { color: var(--color-accent); }
 
+  /* At the end of <body>, placed against the box (lib/floatfrom.ts): inside its row it was drawn under the subtabs. */
   .lp-pop {
-    position: absolute;
-    right: 0;
-    top: calc(100% + 6px);
-    z-index: 40;
+    position: fixed;
+    z-index: 1000;
     display: flex;
     width: min(22rem, 90vw);
     flex-direction: column;
     gap: 6px;
     padding: 8px;
     border-radius: 14px;
-    border: 1px solid var(--color-edge);
+    /* The panel and a soft shadow: no ring of the accent or glow round it, as Select's list. */
     background: var(--color-surface);
     box-shadow: 0 24px 60px -20px rgb(0 0 0 / 0.65);
-    animation: lp-in 0.16s var(--swift) both;
-    transform-origin: top right;
   }
-  .lp-pop.is-up { top: auto; bottom: calc(100% + 6px); transform-origin: bottom right; }
-  @keyframes lp-in { from { opacity: 0; transform: scale(0.96) translateY(-4px); } }
   .lp-search {
     display: flex;
     align-items: center;
@@ -236,8 +252,10 @@
     padding: 6px 9px;
     border-radius: 9px;
     color: var(--color-faint);
-    background: rgb(0 0 0 / 0.25);
+    background: rgb(0 0 0 / 0.22);
+    box-shadow: inset 0 0 0 1px var(--color-edge);
   }
+  .lp-search:focus-within { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 55%, transparent); }
   .lp-search input { min-width: 0; flex: 1; font-size: 13px; color: var(--color-ink); background: transparent; outline: none; }
   .lp-list { display: flex; max-height: 290px; flex-direction: column; overflow-y: auto; }
   .lp-head {

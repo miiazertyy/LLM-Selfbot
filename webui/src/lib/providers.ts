@@ -16,7 +16,6 @@ export type Provider = {
   blurb: string;
   jobs: Job[];
   env: string;
-  multi: boolean;
   keys: number;
   ready: boolean;
   base_url: string;
@@ -34,6 +33,8 @@ export type Plan = {
   vision: Entry;
   stt: Entry;
   tts: Entry;
+  /** Looking things up on the web (app/utils/web/agent.py). */
+  web: Entry;
   /** Every model each job tries, in order (the entries above are each one's first). */
   chains?: Record<string, Entry[]>;
 };
@@ -83,6 +84,12 @@ export const TINT: Record<string, string> = {
   together: "#0f6fff",
   cerebras: "#f15a29",
   local: "#4ecdc4",
+  // Hearing and speaking only.
+  deepgram: "#13ef93",
+  cartesia: "#d9c9a8",
+  fish: "#5b8cff",
+  rime: "#ff7a59",
+  minimax: "#e8445a",
   llamacpp: "#9a9ab0",
   vllm: "#30a2ff",
   // The servers on this computer, under This computer.
@@ -100,6 +107,7 @@ export const TINT: Record<string, string> = {
 export const MONOGRAM: Record<string, string> = {
   groq: "Gq", openai: "OA", anthropic: "An", gemini: "Ge", openrouter: "OR",
   mistral: "Mi", deepseek: "DS", xai: "xA", together: "To", cerebras: "Ce",
+  deepgram: "Dg", cartesia: "Ca", fish: "Fi", rime: "Ri", minimax: "Mm", elevenlabs: "11",
   llamacpp: "Ll", vllm: "vL",
   jan: "Ja", gpt4all: "G4", koboldcpp: "Kc", localai: "LA", textgen: "TG", tabbyapi: "Tb",
   docker: "Dk", sglang: "SG",
@@ -110,6 +118,7 @@ export const JOB_NAMES: Record<Exclude<keyof Plan, "replies" | "chains">, { titl
   vision: { title: "Reading pictures", hint: "Describes images and stickers people send", needs: "vision", icon: "pictures" },
   stt: { title: "Hearing voice messages", hint: "Turns a voice note into text", needs: "stt", icon: "mic" },
   tts: { title: "Speaking", hint: "Voice messages the bot sends back", needs: "tts", icon: "volume" },
+  web: { title: "Looking things up", hint: "Searching, reading pages, browsing", needs: "chat", icon: "globe" },
 };
 
 /** Model lists, per provider, fetched once and shared by every picker. */

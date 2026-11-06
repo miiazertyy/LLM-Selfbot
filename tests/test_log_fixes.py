@@ -182,13 +182,14 @@ check("Snapchat too: the reply job held, cancelled, and what it queued taken bac
 chats = src("webui/src/pages/Chats.svelte")
 check("the button stays there, and works, while it is written",
       "{#if (cancellable(selected) || replying[selected.id]) && !selected.ignored}" in chats
-      and "disabled={!!rowBusy[selected.id]}>" in chats and "if (res?.cancelled) return;" in chats)
+      and "disabled={!!rowBusy[keyOf(selected)]}>" in chats and "if (res?.cancelled) return;" in chats)
 
 print("\n== Snapchat's own chats ==")
 snaprun = src("app/platforms/snapchat/snapchat_runner.js")
 check("never answered from a chat opened in the panel", "!SYSTEM_CHATS.includes(String(name).toLowerCase().trim())" in snaprun
       and "const IGNORED_NAMES = SYSTEM_CHATS;" in snaprun)
-check("nor by the bridge, whatever comes in", '_SYSTEM_CHATS = {"my ai", "team snapchat"}' in bridge
+check("nor by the bridge, whatever comes in", '"system_chats": {"my ai", "team snapchat"},' in bridge
+      and '_SYSTEM_CHATS = P["system_chats"]' in bridge
       and 'if (user_name or "").strip().lower() in _SYSTEM_CHATS:' in bridge)
 
 print("\n== how things look ==")

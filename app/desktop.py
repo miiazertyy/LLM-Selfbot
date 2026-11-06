@@ -317,9 +317,79 @@ def _quit_app() -> None:
     os._exit(0)
 
 
+# ── A Minecraft account's view, in a window of its own ───────────────────────
+# The bot plays with no game window (mindcraft is a program, not a Minecraft client), so "not headless" here is a
+# window onto what it sees: the same live view the panel's Watch shows (app/web/routes/minecraft_routes.py), opened
+# when it is asked for, and, with minecraft.show_window on, as soon as the account is in a world.
+_VIEWS: dict = {}
+
+
+def _open_view(account: str, title: str = "") -> bool:
+    """The window for one account's view: brought back when it is already open, made when it is not."""
+    import re
+    if not re.fullmatch(r"minecraft_[1-9][0-9]{0,2}", str(account or "")) or not _APP.get("url"):
+        return False
+    win = _VIEWS.get(account)
+    if win is not None:
+        try:
+            win.show()
+            win.restore()
+            return True
+        except Exception:
+            _VIEWS.pop(account, None)
+    from urllib.parse import quote
+    # The panel's own Watch, filling the window (webui/src/WatchView.svelte, as "?watch="): the picture with its
+    # HUD, its chat and its controls, not the viewer's bare page.
+    page = f"{_APP['url']}?watch={account}" + (f"&name={quote(title)}" if title else "")
+    try:
+        import webview
+    except Exception:
+        webbrowser.open(page)
+        return True
+    name = title or f"Minecraft #{account.split('_')[1]}"
+    # The app's own bridge too, for its Save dialog (a picture of the view, F2): the window has no downloads.
+    win = webview.create_window(f"{name} - what it sees", page, width=1100, height=720, min_size=(520, 380),
+                                background_color="#0a0a11", js_api=WindowApi())
+    _VIEWS[account] = win
+
+    def _closed():
+        _VIEWS.pop(account, None)
+
+    win.events.closed += _closed
+    return True
+
+
+def _watch_views() -> None:
+    """With minecraft.show_window on, each Minecraft account's view opens as it comes into a world (once per time in:
+    a window closed stays closed until it leaves and comes back)."""
+    import json
+    from app.core import ipc
+    from app.utils.helpers import load_config
+    from app.utils.paths import DATA_DIR
+    inside: dict = {}
+    while True:
+        time.sleep(3)
+        try:
+            on = bool(((load_config() or {}).get("minecraft") or {}).get("show_window", False))
+            for n in range(1, ipc._count_minecraft_accounts() + 1):
+                sfx = "" if n == 1 else f"_{n}"
+                try:
+                    st = json.loads((DATA_DIR / "ipc" / f"mc_state{sfx}.json").read_text(encoding="utf-8"))
+                    now_in = st.get("state") == "ready" and time.time() - float(st.get("at") or 0) < 180
+                except (OSError, ValueError, TypeError):
+                    now_in = False
+                account = f"minecraft_{n}"
+                if now_in and not inside.get(account) and on:
+                    _open_view(account)
+                inside[account] = now_in
+        except Exception:
+            pass
+
+
 def _start_tray(url: str, supervisor) -> None:
     from app import tray
     _APP.update(url=url, supervisor=supervisor)
+    threading.Thread(target=_watch_views, daemon=True, name="minecraft-views").start()
     tray.start(url, supervisor, {
         "show_main": _show_main,
         "toggle_panel": _toggle_panel,
@@ -386,6 +456,10 @@ class WindowApi:
 
     def quit_app(self):
         threading.Thread(target=_quit_app, daemon=True).start()
+
+    def open_view(self, account="", title=""):
+        """A Minecraft account's view in a window of its own (its Watch, popped out)."""
+        return _open_view(str(account or ""), str(title or ""))
 
     def set_size(self, width, height):
         w = _WINDOW.get("w")

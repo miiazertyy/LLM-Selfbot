@@ -18,6 +18,7 @@
   import { platformName } from "../accounts/condition";
   import { usePersona } from "../personas/context";
   import Icon from "./Icon.svelte";
+  import { platformOf } from "../platforms";
   import Avatar from "./Avatar.svelte";
   import Button from "./Button.svelte";
   import Toggle from "./Toggle.svelte";
@@ -111,7 +112,8 @@
       chance = lk.touches?.chance ?? 0.5;
       kinds = lk.touches?.kinds ?? KINDS.map((k) => k.id);
       accts = (ac?.accounts ?? [])
-        .filter((a: any) => a.platform !== "telegram")
+        // Minecraft is left out: there is no picture to send in a game's chat.
+        .filter((a: any) => a.platform !== "controller" && a.platform !== "minecraft")
         .map((a: any) => ({
           id: a.id, platform: a.platform, avatar: a.avatar || "",
           name: a.display_name || a.username || `${platformName(a.platform)}${a.account ? ` #${a.account}` : ""}`,
@@ -355,9 +357,10 @@
               {@const on = accounts.includes(a.id)}
               <div class="pp-acct" class:is-on={on}>
                 <span class="pp-acct-face">
-                  <Avatar src={a.avatar} name={a.name} size={30} zoom={false} silhouette={a.platform === "snapchat" && !a.avatar} />
-                  <span class="pp-acct-mark" class:is-snap={a.platform === "snapchat"}>
-                    <Icon name={a.platform === "snapchat" ? "snapchat" : "discord"} size={9} />
+                  <Avatar src={a.avatar} name={a.name} size={30} zoom={false} silhouette={platformOf(a.platform).silhouette && !a.avatar} />
+                  <span class="pp-acct-mark" class:is-snap={a.platform === "snapchat"} class:is-tiktok={a.platform === "tiktok"}
+                        class:is-insta={a.platform === "instagram"}>
+                    <Icon name={platformOf(a.platform).icon} size={9} />
                   </span>
                 </span>
                 <span class="pp-acct-text">
@@ -651,6 +654,8 @@
     box-shadow: 0 0 0 2px var(--color-card);
   }
   .pp-acct-mark.is-snap { color: #141414; background: #fffc00; }
+  .pp-acct-mark.is-tiktok { color: #fff; background: #111; box-shadow: 0 0 0 2px var(--color-card), inset 0 0 0 1px rgb(254 44 85 / 0.55); }
+  .pp-acct-mark.is-insta { color: #f06292; background: #16090f; box-shadow: 0 0 0 2px var(--color-card), inset 0 0 0 1px rgb(225 48 108 / 0.55); }
   .pp-acct-text { display: flex; min-width: 0; flex: 1; flex-direction: column; }
   .pp-acct-name { overflow: hidden; font-size: 13px; font-weight: 600; color: var(--color-ink); text-overflow: ellipsis; white-space: nowrap; }
   .pp-acct-says { font-size: 11px; color: var(--color-faint); transition: color 0.2s ease; }

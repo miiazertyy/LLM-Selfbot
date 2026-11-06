@@ -1,15 +1,14 @@
 <script lang="ts">
   /**
-   * The top of each part of Settings > Models: its icon in a glowing orb with a
-   * ring of light turning slowly round it, what it is for, and how things stand
-   * there right now as a row of chips (how many models write replies, how many
-   * providers are connected, whether the computer's server is running, how much
-   * has been asked today). The chips pop in one after another as it opens, a
-   * soft note each (lib/domino.ts), the orb with a thud of its own. The plain
-   * header every other part of Settings has said only the part's name.
+   * The top of each part of Settings > Models: its icon, on the same tinted tile and at the same size as every other
+   * part of Settings, what it is for, and how things stand there right now as a row of chips (how many models write
+   * replies, how many providers are connected, whether the computer's server is running, how much has been asked today).
+   * The chips pop in one after
+   * another as it opens, a soft note each (lib/domino.ts), the icon with a thud of its own.
    */
   import { onMount } from "svelte";
   import { api } from "../api";
+  import { resource } from "../resource";
   import { chime, domino } from "../domino";
   import { providerList, providersLoaded, savedPlan, shortModel } from "../providers";
   import { usage, loadUsage } from "../modelusage";
@@ -19,14 +18,21 @@
 
   type Chip = { icon: string; text: string; tone?: "good" | "warn" | "muted" };
 
-  let local = $state<{ reachable: boolean; name: string; models: number; bytes: number } | null>(null);
+  // The one answer the tab below keeps up to date, so these change with it: a model removed, one added.
+  const localStatus = resource("localStatus", () => api.localStatus(), null as any);
+  let local = $state<{ reachable: boolean; restarting: boolean; name: string; models: number; bytes: number } | null>(null);
+  $effect(() => {
+    if (which !== "local" || !$localStatus.data) return;
+    const s = $localStatus.data;
+    const sizes = Object.values(s.sizes ?? {}) as number[];
+    // Being started again it lists nothing, which is not the same as having nothing.
+    const held = s.restarting && !s.reachable && local;
+    local = { reachable: !!s.reachable || !!s.restarting, restarting: !!s.restarting, name: s.server_name || "The server",
+              models: held ? local!.models : (s.models ?? []).length, bytes: held ? local!.bytes : sizes.reduce((a, b) => a + (b || 0), 0) };
+  });
   onMount(() => {
     if (which === "local") {
-      api.localStatus().then((s: any) => {
-        const sizes = Object.values(s?.sizes ?? {}) as number[];
-        local = { reachable: !!s?.reachable, name: s?.server_name || "The server", models: (s?.models ?? []).length,
-                  bytes: sizes.reduce((a, b) => a + (b || 0), 0) };
-      }).catch(() => (local = { reachable: false, name: "The server", models: 0, bytes: 0 }));
+      localStatus.refresh({ maxAge: 20000 }).catch(() => (local = { reachable: false, restarting: false, name: "The server", models: 0, bytes: 0 }));
     }
     if (which === "usage" && !$usage.loaded) loadUsage().catch(() => {});
   });
@@ -56,8 +62,9 @@
     if (which === "local") {
       if (!local) return [{ icon: "refresh", text: "Looking", tone: "muted" }];
       return [
-        { icon: local.reachable ? "check" : "alert", text: `${local.name} ${local.reachable ? "running" : "not running"}`,
-          tone: local.reachable ? "good" : "warn" },
+        local.restarting ? { icon: "refresh", text: `${local.name} restarting`, tone: "warn" }
+          : { icon: local.reachable ? "check" : "alert", text: `${local.name} ${local.reachable ? "running" : "not running"}`,
+              tone: local.reachable ? "good" : "warn" },
         ...(local.reachable ? [{ icon: "monitor", text: plural(local.models, "model") + (local.bytes ? ` · ${gb(local.bytes)}` : "") }] : []),
       ];
     }
@@ -77,9 +84,8 @@
 </script>
 
 <header class="mh">
-  <span class="mh-orb" use:chime={"land"}>
-    <span class="mh-ring" aria-hidden="true"></span>
-    <Icon name={icon} size={22} />
+  <span class="mh-mark" use:chime={"land"}>
+    <Icon name={icon} size={18} />
   </span>
   <div class="min-w-0 flex-1">
     <div class="mh-kicker">Models</div>
@@ -97,53 +103,26 @@
 
 <style>
   .mh {
-    position: relative;
     display: flex;
     align-items: flex-start;
-    gap: 16px;
-    margin-bottom: 18px;
-    padding: 18px 20px;
-    overflow: hidden;
-    border-radius: 20px;
-    background:
-      radial-gradient(70% 140% at 0% 0%, color-mix(in srgb, var(--color-accent) 16%, transparent), transparent 60%),
-      radial-gradient(50% 120% at 100% 100%, color-mix(in srgb, var(--color-accent-2, var(--color-accent)) 10%, transparent), transparent 60%),
-      rgb(255 255 255 / 0.02);
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 18%, var(--color-edge));
+    gap: 14px;
+    margin-bottom: 16px;
   }
-  /* The orb: the part's icon on the accent, a ring of light turning slowly round it. */
-  .mh-orb {
-    position: relative;
-    display: grid;
-    place-items: center;
-    width: 52px;
-    height: 52px;
+  /* The same tile, at the same size, as the head of every other part of Settings (.settings-head-icon). */
+  .mh-mark {
+    display: flex;
+    width: 40px;
+    height: 40px;
     flex-shrink: 0;
-    border-radius: 17px;
-    color: #fff;
-    background: linear-gradient(140deg, var(--color-accent), color-mix(in srgb, var(--color-accent-2, var(--color-accent)) 70%, var(--color-accent)));
-    box-shadow: 0 10px 28px -10px var(--color-accent), inset 0 1px 0 rgb(255 255 255 / 0.25);
-    animation: mh-orb-in 0.4s var(--jelly) backwards;
+    align-items: center;
+    justify-content: center;
+    border-radius: 12px;
+    color: var(--color-accent);
+    background: color-mix(in srgb, var(--color-accent) 13%, transparent);
+    animation: icon-pop 0.5s var(--jelly) both;
   }
-  .mh-ring {
-    position: absolute;
-    inset: -5px;
-    border-radius: 21px;
-    padding: 1.5px;
-    background: conic-gradient(from var(--mh-turn, 0deg), transparent 0deg, color-mix(in srgb, var(--color-accent) 85%, white) 70deg,
-                transparent 140deg, transparent 360deg);
-    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-    -webkit-mask-composite: xor;
-    mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-    mask-composite: exclude;
-    animation: mh-turn 6s linear infinite;
-    opacity: 0.8;
-  }
-  @property --mh-turn { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
-  @keyframes mh-turn { to { --mh-turn: 360deg; } }
-  @keyframes mh-orb-in { from { opacity: 0; transform: scale(0.5) rotate(-18deg); } }
-  .mh-kicker { font-size: 11px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--color-faint); }
-  .mh-title { font-size: 19px; font-weight: 650; letter-spacing: -0.01em; color: var(--color-ink); }
+  .mh-kicker { font-size: 11px; font-weight: 500; letter-spacing: 0.12em; text-transform: uppercase; color: var(--color-faint); }
+  .mh-title { font-size: 17px; font-weight: 600; letter-spacing: -0.01em; color: var(--color-ink); }
   .mh-blurb { margin-top: 2px; font-size: 12.5px; color: var(--color-muted); }
   .mh-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
   .mh-chip {
@@ -160,7 +139,6 @@
     font-weight: 600;
     color: var(--color-ink);
     background: rgb(255 255 255 / 0.06);
-    box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.06);
   }
   .mh-chip :global(svg) { flex-shrink: 0; color: var(--color-accent); }
   .mh-chip[data-tone="good"] :global(svg) { color: var(--color-good); }
@@ -168,6 +146,5 @@
   .mh-chip[data-tone="warn"] :global(svg) { color: var(--color-warn); }
   .mh-chip[data-tone="muted"] { color: var(--color-muted); }
   .mh-chip[data-tone="muted"] :global(svg) { color: var(--color-faint); }
-  :global(:root[data-motion="off"]) .mh-orb,
-  :global(:root[data-motion="off"]) .mh-ring { animation: none; }
+  :global(:root[data-motion="off"]) .mh-mark { animation: none; }
 </style>

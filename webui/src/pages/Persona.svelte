@@ -24,12 +24,14 @@
   import ReactionEditor from "../lib/components/ReactionEditor.svelte";
   import OpenersEditor from "../lib/components/OpenersEditor.svelte";
   import TriggerEditor from "../lib/components/TriggerEditor.svelte";
+  import WebJournal from "../lib/personas/WebJournal.svelte";
   import Num from "../lib/dashboard/Num.svelte";
   import { chime, domino } from "../lib/domino";
   import { renderMarkdown } from "../lib/markdown";
   import { play } from "../lib/uisound";
   import PersonaOrb from "../lib/personas/PersonaOrb.svelte";
   import PersonaScope from "../lib/personas/PersonaScope.svelte";
+  import NewPersona from "../lib/personas/NewPersona.svelte";
   import { personasRes, reloadPersonas } from "../lib/personas/store";
   import { providePersona } from "../lib/personas/context";
   import { colorOf } from "../lib/personas/logic";
@@ -142,11 +144,30 @@
     await loadText(pid);
   }
 
+  // ── A new one, from your own chats: the new profile card, grown in place out of the button pressed ─────────
+  let fromChats = $state(false);
+  let chatsFrom = $state<DOMRect | null>(null);
+  function openChats(e: MouseEvent) {
+    chatsFrom = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    fromChats = true;
+    play("open");
+  }
+  async function made(p: { id: string; name?: string } | null, face: File | null) {
+    if (p?.id && face) await api.uploadPersonaAvatar(p.id, face).catch((e: any) => toast(e?.message || "Could not use that picture", "err"));
+    fromChats = false;
+    await reloadPersonas();
+    if (p?.id) await select(p.id);
+    play("done");
+    toast(`${p?.name ?? "It"} is ready. No account has it until you give it one.`, "ok");
+  }
+
   const SECTIONS = [
     { id: "names", title: "Names it answers to", sub: "Said in a group chat, any of these gets a reply without a mention", icon: "chats", tone: "var(--persona-color)" },
     { id: "openers", title: "Late openers", sub: "How it comes back after leaving you on read", icon: "send", tone: "var(--color-good)" },
     { id: "moods", title: "Moods", sub: "How it shifts through the day", icon: "sparkle", tone: "color-mix(in srgb, var(--persona-color) 45%, #e879f9)" },
     { id: "reactions", title: "Reactions", sub: "When it taps an emoji instead of writing back", icon: "smilePlus", tone: "var(--color-warn)" },
+    // Browsing in its free time (app/utils/web): what it saw, and a way to send it now.
+    { id: "web", title: "Online lately", sub: "What it saw browsing in its free time", icon: "globe", tone: "color-mix(in srgb, var(--persona-color) 40%, #38bdf8)" },
   ];
 </script>
 
@@ -187,10 +208,16 @@
             <Button size="sm" onclick={save} loading={saving} disabled={!dirty}>{dirty ? "Save changes" : "Saved"}</Button>
           </span>
         {:else}
+          <Button kind="ghost" size="sm" onclick={openChats}><Icon name="chats" size={13} /> From your chats</Button>
           <Button size="sm" onclick={startEdit}><Icon name="persona" size={13} /> Edit</Button>
         {/if}
       </div>
     </section>
+
+    {#if fromChats}
+      <NewPersona bind:open={fromChats} only="chats" {list} palette={$personasRes.data.palette} themes={$personasRes.data.themes}
+                  from={chatsFrom} oncreated={made} />
+    {/if}
 
     <!-- ── What it is told ────────────────────────────────────────────────────── -->
     <section class="ps-doc glass" class:is-editing={editing} class:is-switching={!textLoading && textFor !== selected}>
@@ -249,6 +276,7 @@
             {#if s.id === "names"}<TriggerEditor />
             {:else if s.id === "openers"}<OpenersEditor />
             {:else if s.id === "moods"}<MoodEditor />
+            {:else if s.id === "web"}<WebJournal />
             {:else}<ReactionEditor />{/if}
           </section>
         {/each}

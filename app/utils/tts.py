@@ -141,7 +141,22 @@ async def _generate_voice_message(text: str) -> list[bytes] | None:
     # Each speaker picked under Models, in order, then Groq: a voice message
     # from the second choice beats none at all.
     from app.utils import ai
+    from app.voice import speech
     for target in ai.tts_targets():
+        if speech.native("tts", target["provider"], target["model"]):
+            # Its own API, not /audio/speech, or this computer's own voice (app/voice/speech.py speaks them, for calls
+            # and for this). In pieces a provider takes in one go, then one recording.
+            try:
+                from app.voice.audio import resample, wav_bytes
+                pcm, rate = b"", 0
+                for piece in _chunk_text(cleaned, max_chars=900):
+                    got, got_rate = await speech.say(target["provider"], target["model"], target["voice"] or "", piece)
+                    rate = rate or got_rate
+                    pcm += got if got_rate == rate else resample(got, got_rate, rate)
+                return [wav_bytes(pcm, rate)]
+            except Exception as e:
+                print(f"[TTS] {target['provider']} failed ({e}), trying the next")
+                continue
         client = _client_for(target)
         # Voice names are per-engine, Orpheus has "autumn" and Kokoro has "af_sky", so each keeps its own.
         result = await _speak(client, target["model"], target["voice"] or voice, "", cleaned)

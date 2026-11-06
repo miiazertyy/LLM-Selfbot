@@ -5,6 +5,7 @@ import time
 from fastapi import APIRouter, HTTPException, Request
 
 from app.core import ipc
+from app.platforms import registry
 from app.utils import personas
 from app.web.logbus import bus
 
@@ -16,17 +17,30 @@ START_TIME = time.time()
 @router.get("/api/status")
 async def status(request: Request):
     supervisor = request.app.state.supervisor
+    from app.utils import socials
+    switches = socials.on()
     return {
         "uptime": round(time.time() - START_TIME),
-        "children": supervisor.status(),
+        # Not the accounts of a social switched off in Settings (app/utils/socials.py).
+        "children": [c for c in supervisor.status()
+                     if socials.child_shown(c.get("role"), c.get("account"), switches)],
         "port": supervisor.port,
     }
+
+
+@router.get("/api/socials")
+def socials_on(request: Request):
+    """Which socials are switched on. The panel shows the ones that are off nowhere (app/utils/socials.py)."""
+    from app.utils import socials
+    return {"on": socials.on()}
 
 
 def _identity(platform: str, account) -> dict:
     """Who an account actually is, recorded by the runner when it connects. Read from a file rather than asked over IPC, so the panel can still show the username and avatar for an account that is currently stopped."""
     if platform == "snapchat" and account:
         return _snap_identity(account)
+    if platform in registry.BRIDGED_BUT_SNAPCHAT and account:
+        return _web_identity(platform, account, registry.BY_ID[platform].tone)
     if platform != "discord" or not account:
         return {}
     try:
@@ -53,26 +67,50 @@ def _identity(platform: str, account) -> dict:
         return {}
 
 
-def _snap_files(account) -> tuple:
-    """(config dir, what the Snapchat runner recorded about who it is) for one account."""
+def _snap_files(account, stem: str = "identity_snap") -> tuple:
+    """(config dir, what the Snapchat runner recorded about who it is) for one account. stem="identity_tiktok":
+    the TikTok runner's."""
     import json
     from app.utils.paths import DATA_DIR
     cfg = DATA_DIR / "config"
     try:
-        data = json.loads((cfg / f"identity_snap_{int(account)}.json").read_text(encoding="utf-8"))
+        data = json.loads((cfg / f"{stem}_{int(account)}.json").read_text(encoding="utf-8"))
     except (OSError, ValueError, TypeError):
         data = {}
     return cfg, data if isinstance(data, dict) else {}
 
 
-def _snap_picture_file(account, key: str):
+def _snap_picture_file(account, key: str, stem: str = "identity_snap"):
     """The picture the runner saved (its Bitmoji, or that Bitmoji's background), when the file named is one of its own."""
-    cfg, data = _snap_files(account)
+    cfg, data = _snap_files(account, stem)
     name = str(data.get(key) or "")
-    if not re.fullmatch(rf"identity_snap_{int(account)}(_bg)?\.(webp|png|jpg)", name):
+    if not re.fullmatch(rf"{stem}_{int(account)}(_bg)?\.(webp|png|jpg)", name):
         return None
     path = cfg / name
     return path if path.is_file() else None
+
+
+def _web_identity(platform: str, account, tone: str) -> dict:
+    """A TikTok or Instagram account as its runner found it once signed in: its name, its username and its picture,
+    read off the site and never changed. Until it has signed in once there is nothing, and the card shows the
+    username it was added as. `tone` is the platform's own colour, for a card with no picture to blur."""
+    try:
+        stem = f"identity_{platform}"
+        _, data = _snap_files(account, stem)
+        if not data.get("username"):
+            return {}
+        n = int(account)
+        path = _snap_picture_file(n, "picture", stem)
+        avatar = f"/api/accounts/{platform}_{n}/picture?v={int(path.stat().st_mtime)}" if path else ""
+        return {
+            "username": str(data.get("username") or ""),
+            "display_name": str(data.get("display_name") or ""),
+            "avatar": avatar,
+            "banner": "",
+            "accent": "" if avatar else tone,
+        }
+    except Exception:
+        return {}
 
 
 def _snap_identity(account) -> dict:
@@ -103,11 +141,11 @@ def _snap_identity(account) -> dict:
         return {}
 
 
-def _snap_states() -> dict:
-    """Each Snapchat runner's own account of itself, by account number. "Running" only says the process exists; an account sitting on a verification screen, or logged out and waiting to retry, is running too."""
+def _snap_states(prefix: str = "snap") -> dict:
+    """Each Snapchat runner's own account of itself, by account number. "Running" only says the process exists; an account sitting on a verification screen, or logged out and waiting to retry, is running too. prefix="tiktok": TikTok's."""
     try:
         from app.web.routes.system_routes import _snap_runner_states
-        rows = _snap_runner_states()
+        rows = _snap_runner_states(prefix)
     except Exception:
         return {}
     out = {}
@@ -147,11 +185,13 @@ def _last_errors(ids: set) -> dict:
 def accounts(request: Request):
     """Every account, and what it is doing. Plain def rather than async: it reads the identity and Snapchat state files and walks the log buffer, and none of that belongs on the event loop, so FastAPI runs it on its threadpool."""
     supervisor = request.app.state.supervisor
-    targets = ipc.discover_targets()
+    # Not the accounts of a social switched off in Settings: the panel shows it nowhere.
+    targets = ipc.shown_targets()
     children = {c["id"]: c for c in supervisor.status()}
     planned = getattr(supervisor, "planned", None)
     planned = planned() if callable(planned) else None
-    snap = _snap_states() if any(m["platform"] == "snapchat" for m in targets.values()) else {}
+    in_use = {m["platform"] for m in targets.values()}
+    says = {p: _snap_states(registry.TARGETS[p]) for p in registry.BRIDGED if p in in_use}
     errors = _last_errors(set(targets))
     out = []
     for web_id, meta in targets.items():
@@ -175,13 +215,19 @@ def accounts(request: Request):
             "persona": personas.persona_of(web_id),
         }
         if meta["platform"] == "snapchat":
-            row["snap"] = snap.get(meta["account"])
+            row["snap"] = says["snapchat"].get(meta["account"])
+        if meta["platform"] in registry.BRIDGED:
+            # What the runner says it is doing (signing in, a code to type, ready), as "web" for all of them:
+            # Minecraft's and iMessage's runners report the same way, without a browser.
+            row["web"] = says[meta["platform"]].get(meta["account"])
         out.append(row)
     tg_child = children.get("telegram")
     if tg_child:
         out.append({
             "id": "telegram",
-            "platform": "telegram",
+            # Not a platform: the bot that controls the app. The persona's own Telegram accounts are
+            # "telegram_<n>", with platform "telegram", and the panel tells them apart by this.
+            "platform": "controller",
             "account": None,
             "target": "telegram",
             "state": tg_child.get("state", "stopped"),
@@ -221,8 +267,9 @@ async def account_action(request: Request, child_id: str, action: str):
 
 def _snap_picture_response(child_id: str, key: str):
     from fastapi.responses import FileResponse
-    m = re.fullmatch(r"snapchat_(\d{1,2})", child_id)
-    path = _snap_picture_file(int(m.group(1)), key) if m else None
+    m = re.fullmatch(rf"({'|'.join(registry.BRIDGED)})_(\d{{1,2}})", child_id)
+    stem = f"identity_{m.group(1)}" if m and m.group(1) != "snapchat" else "identity_snap"
+    path = _snap_picture_file(int(m.group(2)), key, stem) if m else None
     if not path:
         raise HTTPException(status_code=404, detail="no picture")
     # The address carries the file's time, so a new Bitmoji is a new address.
@@ -295,7 +342,9 @@ async def raw_command(request: Request):
     payload = body.get("payload", {})
     if not target or not cmd:
         raise HTTPException(status_code=400, detail="target and cmd required")
-    if isinstance(target, str) and target.startswith(("discord_", "snapchat_")):
+    if isinstance(target, str) and target.startswith(("discord_", "snapchat_", "tiktok_", "instagram_", "x_",
+                                                      "reddit_", "whatsapp_", "minecraft_", "imessage_",
+                                                      "telegram_")):
         meta = ipc.discover_targets().get(target)
         target = meta["target"] if meta else target
     timeout = float(body.get("timeout", 15.0))

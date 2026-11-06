@@ -15,6 +15,8 @@ type PyApi = {
   set_size?: (w: number, h: number) => Promise<void>;
   get_size?: () => Promise<[number, number]>;
   set_fullscreen?: (on: boolean) => Promise<boolean>;
+  /** A Minecraft account's live view in a window of its own (app/desktop.py _open_view). */
+  open_view?: (account: string, title: string) => Promise<boolean>;
 };
 
 declare global {
@@ -206,7 +208,12 @@ export async function saveUrlAs(url: string, name: string): Promise<string> {
   const ext = EXT[blob.type] ?? "";
   const base = (name || "picture").replace(/[\\/:*?"<>|]+/g, "_").slice(0, 80);
   const filename = ext && !base.toLowerCase().endsWith("." + ext) ? `${base}.${ext}` : base;
+  return saveBlob(filename, blob);
+}
 
+/** A file made here (a zip of chats, say) saved where the person chooses: the desktop app's own Save dialog, a
+ *  download in a browser. Returns where it went, "" when the dialog was cancelled. */
+export async function saveBlob(filename: string, blob: Blob): Promise<string> {
   const api = (window as any).pywebview?.api;
   if (api?.save_binary_file) {
     const b64 = await new Promise<string>((resolve, reject) => {
@@ -269,6 +276,23 @@ export async function openExternal(name: string, url: string): Promise<void> {
     }
   }
   window.open(url, "_blank", "noopener");
+}
+
+/**
+ * A GitHub page for community profiles (the sign-in, a profile, a request, the Report form). The address is made by
+ * the app from known parts only (/api/community/link); the desktop window has no tab of its own, so the computer
+ * opens it there, and a browser or the phone app opens it themselves.
+ */
+export async function openGitHub(what: string, opts: { slug?: string; number?: number } = {}): Promise<void> {
+  const desktop = isDesktop() && !inPhoneApp();
+  try {
+    const r: any = await api.communityLink(what, { ...opts, open: desktop });
+    if (r?.opened || !r?.url) return;
+    if (inPhoneApp()) return openUrl(r.url);
+    window.open(r.url, "_blank", "noopener");
+  } catch {
+    /* nothing to open */
+  }
 }
 
 /**

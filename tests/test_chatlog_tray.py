@@ -293,7 +293,8 @@ check("and it closes when another window takes over, focus in the page or not", 
 check("Open window opens the app, not a browser tab", "w.show" in desktop.split("def _show_main")[1][:600])
 panel = read("TrayPanel.svelte")
 main = read("main.ts")
-check("the quick panel is the app's own page", 'new URLSearchParams(location.search).has("tray")' in main and "TrayPanel" in main)
+check("the quick panel is the app's own page", 'const params = new URLSearchParams(location.search);' in main
+      and 'params.has("tray") ? TrayPanel' in main)
 check("each account with a switch to pause it", '<Toggle checked={!paused[a.id]}' in panel and 'api.accountAction(a.id, "pause")' in panel)
 check("today's replies, rolling", "<Odometer value={today} />" in panel)
 check("the pages one click away, and pause all, restart all, quit", "bridge()?.open_main?.(route)" in panel

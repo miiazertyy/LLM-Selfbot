@@ -131,7 +131,8 @@ chat_routes = (ROOT / "app" / "web" / "routes" / "chat_routes.py").read_text(enc
 check("the ignore list is read from the database", "/api/chats/ignored" in chat_routes and "db.get_ignored_users()" in chat_routes)
 check("and setting it writes the database first", "(db.add_ignored_user if want else db.remove_ignored_user)" in chat_routes)
 chats = (ROOT / "webui" / "src" / "pages" / "Chats.svelte").read_text(encoding="utf-8")
-check("rows that need you have the X", 'class="ch-x"' in chats and ("ignorePerson(u, e)" in chats or "ignorePerson(personOf(u), e)" in chats))
+check("rows that need you have the X", 'class="ch-x"' in chats and ("ignorePerson(u, e)" in chats or "ignorePerson(personOf(u), e)" in chats
+                                                                   or "ignorePerson(personOf(u), e, acc)" in chats))
 check("ignored people are off the list and under Ignored", "users.filter((u) => !u.ignored)" in chats and "unignore(p)" in chats)
 
 print(f"\n{len(PASS)} passed, {len(FAIL)} failed")

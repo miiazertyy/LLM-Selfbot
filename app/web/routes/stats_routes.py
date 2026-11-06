@@ -11,11 +11,37 @@ router = APIRouter(tags=["stats"])
 
 DB_PATH = DATA_DIR / "config" / "bot_data.db"
 
+# Every platform's reply log and the column that names a person in it. Adding a platform adds a row here, and the
+# totals, the series, the busiest day and the people counts all pick it up.
+LOGS = (("discord", "message_log", "user_id"),
+        ("snapchat", "message_log_snap", "chat_id"),
+        ("tiktok", "message_log_tiktok", "chat_id"),
+        ("instagram", "message_log_instagram", "chat_id"),
+        ("x", "message_log_x", "chat_id"),
+        ("reddit", "message_log_reddit", "chat_id"),
+        ("whatsapp", "message_log_whatsapp", "chat_id"),
+        ("minecraft", "message_log_minecraft", "chat_id"),
+        ("imessage", "message_log_imessage", "chat_id"))
+# The browser platforms alone: their people are named by a chat id, and their pictures come from their runners.
+WEB_LOGS = LOGS[1:]
+WEB_PLATFORMS = tuple(p for p, _, _ in WEB_LOGS)
+_ACCOUNT_PREFIXES = tuple(f"{p}_" for p, _, _ in LOGS)
+# Each platform's table of who it has spoken to.
+_STATS_TABLE = {"discord": "user_stats", "snapchat": "user_stats_snap",
+                **{p: f"user_stats_{p}" for p, _, _ in WEB_LOGS[1:]}}
+
+
+def _shown_logs() -> tuple:
+    """LOGS without the socials switched off in Settings: they are counted nowhere either (app/utils/socials.py)."""
+    from app.utils import socials
+    on = socials.on()
+    return tuple(row for row in LOGS if on.get(row[0], True))
+
 
 @router.get("/api/stats/leaderboard")
 async def leaderboard(request: Request, target: str = "", filter: str = ""):
     from app.core import ipc
-    if target and (target.startswith("discord_") or target.startswith("snapchat_")):
+    if target and target.startswith(_ACCOUNT_PREFIXES):
         meta = ipc.discover_targets().get(target)
         tgt = meta["target"] if meta else None
     else:
@@ -58,6 +84,12 @@ def overview(request: Request):
         try:
             total = conn.execute("SELECT COUNT(*) FROM message_log").fetchone()[0]
             total_snap = conn.execute("SELECT COUNT(*) FROM message_log_snap").fetchone()[0]
+            web_totals = {}
+            for _plat, _table, _ in WEB_LOGS[1:]:
+                try:
+                    web_totals[_plat] = conn.execute(f"SELECT COUNT(*) FROM {_table}").fetchone()[0]
+                except sqlite3.OperationalError:
+                    web_totals[_plat] = 0
             day = 86400
             now = time.time()
             # One scan of the last 30 days, bucketed in SQL, instead of three separate counts over overlapping ranges.
@@ -76,18 +108,34 @@ def overview(request: Request):
             ).fetchall()
         except sqlite3.OperationalError:
             total, total_snap, buckets, per_day = 0, 0, {}, []
+            web_totals = {plat: 0 for plat, _, _ in WEB_LOGS[1:]}
         series = [{"day": int(d), "count": n} for d, n in per_day]
         extra = _extra_overview(conn)
     finally:
         conn.close()
-    return {"total": total, "total_snapchat": total_snap, "windows": buckets,
-            "series": series, **extra}
+    # A social switched off in Settings is counted nowhere (app/utils/socials.py). Its fields stay, as nothing, so
+    # the page's sums still add up. Everything here that is not a per-platform total is Discord's own.
+    from app.utils import socials
+    on = socials.on()
+    if not on["discord"]:
+        total, buckets, series = 0, {k: 0 for k in buckets}, []
+        extra.update(hourly=[{**h, "count": 0} for h in extra.get("hourly", [])], top=[], people=0, people_7d=0)
+    if not on["snapchat"]:
+        total_snap = 0
+        extra["snap_series"] = []
+    for plat in web_totals:
+        if not on.get(plat, True):
+            web_totals[plat] = 0
+            extra[f"{plat}_series"] = []
+    return {"total": total, "total_snapchat": total_snap, "windows": buckets, "series": series,
+            **{f"total_{plat}": n for plat, n in web_totals.items()}, **extra}
 
 
 def _extra_overview(conn) -> dict:
     """The rest of what the dashboard draws: an hourly curve, who is most active, and how many distinct people have been spoken to. Takes the caller's connection; it used to open a second one for the same request."""
     import time as _t
-    out = {"hourly": [], "top": [], "people": 0, "people_7d": 0, "snap_series": []}
+    out = {"hourly": [], "top": [], "people": 0, "people_7d": 0, "snap_series": [],
+           **{f"{plat}_series": [] for plat, _, _ in WEB_LOGS[1:]}}
     now = _t.time()
     try:
         rows = conn.execute(
@@ -121,6 +169,14 @@ def _extra_overview(conn) -> dict:
         out["snap_series"] = [{"day": int(d), "count": n} for d, n in snap]
     except sqlite3.OperationalError:
         pass
+    for plat, table, _ in WEB_LOGS[1:]:
+        try:
+            rows = conn.execute(
+                f"SELECT CAST(ts/86400 AS INT) AS d, COUNT(*) FROM {table} "
+                "WHERE ts >= ? GROUP BY d ORDER BY d", (_t.time() - 14 * 86400,)).fetchall()
+            out[f"{plat}_series"] = [{"day": int(d), "count": n} for d, n in rows]
+        except sqlite3.OperationalError:
+            pass
     return out
 
 
@@ -140,7 +196,7 @@ def accounts_activity(request: Request, days: int = 7):
     since = datetime.combine(today - timedelta(days=days - 1), datetime.min.time()).timestamp()
     week_from = datetime.combine(today - timedelta(days=6), datetime.min.time()).timestamp()
 
-    targets = ipc.discover_targets()
+    targets = ipc.shown_targets()
     per_platform: dict = {}
     for meta in targets.values():
         per_platform[meta["platform"]] = per_platform.get(meta["platform"], 0) + 1
@@ -156,8 +212,7 @@ def accounts_activity(request: Request, days: int = 7):
             ensure_account_columns(conn)
         except sqlite3.OperationalError:
             pass
-        for platform, table, id_col in (("discord", "message_log", "user_id"),
-                                        ("snapchat", "message_log_snap", "chat_id")):
+        for platform, table, id_col in LOGS:
             if not per_platform.get(platform):
                 continue
             # What an untagged row counts as: account 1 when that is the only account there is, otherwise nobody (-1 matches no account).
@@ -203,13 +258,13 @@ def accounts_activity(request: Request, days: int = 7):
             except sqlite3.OperationalError:
                 continue
 
-        # A Snapchat account's people, from what its runner saved off the chat list.
+        # A browser account's people, from what its runner saved off the chat list.
         from app.utils import snappeople
         for k, v in out.items():
-            if k.startswith("snapchat_"):
-                n = int(k.split("_", 1)[1] or 1)
+            if k.startswith(tuple(f"{p}_" for p in WEB_PLATFORMS)):
+                plat, n = k.split("_", 1)
                 for t in v["top"]:
-                    t["avatar"] = snappeople.avatar_url(n, t["id"])
+                    t["avatar"] = snappeople.avatar_url(int(n or 1), t["id"], plat)
         # Pictures for the people each Discord account talks to most, from the local profile cache: a face is how you recognise someone at a glance.
         wanted = {t["id"] for k, v in out.items() if k.startswith("discord_") for t in v["top"]}
         if wanted:
@@ -258,6 +313,10 @@ def stats_detail(request: Request, days: int = 30):
     since = now - days * day
     prev_since = since - days * day
 
+    # A social switched off in Settings is counted nowhere (app/utils/socials.py). Its platform keeps its place in
+    # what is sent, as zeros, so the page's sums still add up.
+    logs = _shown_logs()
+    web_logs = tuple(row for row in logs if row[0] != "discord")
     conn = connect_raw()
     try:
         out: dict = {"days": days, "generated_at": now}
@@ -274,60 +333,55 @@ def stats_detail(request: Request, days: int = 30):
             except sqlite3.OperationalError:
                 return 0
 
-        discord_n = _count("message_log", since)
-        snap_n = _count("message_log_snap", since)
-        prev_n = _count("message_log", prev_since, since) + _count("message_log_snap", prev_since, since)
-        out["total"] = discord_n + snap_n
+        now_n = {plat: _count(table, since) for plat, table, _ in logs}
+        prev_n = sum(_count(table, prev_since, since) for _, table, _ in logs)
+        out["total"] = sum(now_n.values())
         out["previous"] = prev_n
-        out["platform"] = {"discord": discord_n, "snapchat": snap_n}
+        out["platform"] = {**{plat: 0 for plat, _, _ in LOGS}, **now_n}
 
         # ── Per day, per platform ── faceted in the UI rather than drawn as two coloured series: the app's two accent colours fail a colour-vision separation check in four of its six themes, so one hue per chart is the only encoding that holds up whatever theme is picked.
-        d_days = _bucket(conn, "message_log", "user_id", since, "CAST(ts/86400 AS INT)")
-        s_days = _bucket(conn, "message_log_snap", "chat_id", since, "CAST(ts/86400 AS INT)")
+        per_day = {plat: _bucket(conn, table, id_col, since, "CAST(ts/86400 AS INT)")
+                   for plat, table, id_col in logs}
         first_day = int(since // day)
         out["series"] = [
-            {"day": first_day + i,
-             "discord": d_days.get(first_day + i, 0),
-             "snapchat": s_days.get(first_day + i, 0)}
+            {"day": first_day + i, **{plat: per_day[plat].get(first_day + i, 0) if plat in per_day else 0
+                                      for plat, _, _ in LOGS}}
             for i in range(days + 1)
         ]
 
         # ── Shape of a day, and of a week ── strftime on a unix ts: '%H' is 00-23 local-to-UTC, '%w' is 0=Sunday.
-        d_hour = _bucket(conn, "message_log", "user_id", since,
+        hours = [_bucket(conn, table, id_col, since,
                          "CAST(strftime('%H', ts, 'unixepoch', 'localtime') AS INT)")
-        s_hour = _bucket(conn, "message_log_snap", "chat_id", since,
-                         "CAST(strftime('%H', ts, 'unixepoch', 'localtime') AS INT)")
-        out["hourly"] = [{"hour": h, "count": d_hour.get(h, 0) + s_hour.get(h, 0)}
-                         for h in range(24)]
+                 for _, table, id_col in logs]
+        out["hourly"] = [{"hour": h, "count": sum(b.get(h, 0) for b in hours)} for h in range(24)]
 
-        d_dow = _bucket(conn, "message_log", "user_id", since,
+        dows = [_bucket(conn, table, id_col, since,
                         "CAST(strftime('%w', ts, 'unixepoch', 'localtime') AS INT)")
-        s_dow = _bucket(conn, "message_log_snap", "chat_id", since,
-                        "CAST(strftime('%w', ts, 'unixepoch', 'localtime') AS INT)")
-        out["weekday"] = [{"day": w, "count": d_dow.get(w, 0) + s_dow.get(w, 0)}
-                          for w in range(7)]
+                for _, table, id_col in logs]
+        out["weekday"] = [{"day": w, "count": sum(b.get(w, 0) for b in dows)} for w in range(7)]
 
         # ── Who ──────────────────────────────────────────────────────────────
         top = []
         try:
-            for uid, uname, n in conn.execute(
-                    "SELECT user_id, username, COUNT(*) AS n FROM message_log "
-                    "WHERE ts >= ? GROUP BY user_id ORDER BY n DESC LIMIT 12",
-                    (since,)).fetchall():
+            discord_rows = conn.execute(
+                "SELECT user_id, username, COUNT(*) AS n FROM message_log "
+                "WHERE ts >= ? GROUP BY user_id ORDER BY n DESC LIMIT 12",
+                (since,)).fetchall() if any(plat == "discord" for plat, _, _ in logs) else []
+            for uid, uname, n in discord_rows:
                 # Ids go out as strings: a snowflake is 19 digits and a JSON number loses precision past 2**53.
                 top.append({"id": str(uid), "name": uname or str(uid),
                             "count": n, "platform": "discord"})
         except sqlite3.OperationalError:
             pass
-        try:
-            for cid, uname, n in conn.execute(
-                    "SELECT chat_id, username, COUNT(*) AS n FROM message_log_snap "
-                    "WHERE ts >= ? GROUP BY chat_id ORDER BY n DESC LIMIT 12",
-                    (since,)).fetchall():
-                top.append({"id": str(cid), "name": uname or str(cid),
-                            "count": n, "platform": "snapchat"})
-        except sqlite3.OperationalError:
-            pass
+        for plat, table, id_col in web_logs:
+            try:
+                for cid, uname, n in conn.execute(
+                        f"SELECT {id_col}, username, COUNT(*) AS n FROM {table} "
+                        f"WHERE ts >= ? GROUP BY {id_col} ORDER BY n DESC LIMIT 12",
+                        (since,)).fetchall():
+                    top.append({"id": str(cid), "name": uname or str(cid), "count": n, "platform": plat})
+            except sqlite3.OperationalError:
+                pass
         top.sort(key=lambda r: r["count"], reverse=True)
         out["top"] = top[:12]
         # Their pictures, from the local profile cache, for the widgets that list people: a face is how anyone is recognised at a glance.
@@ -342,12 +396,15 @@ def stats_detail(request: Request, days: int = 30):
                 pass
         from app.core import ipc as _ipc
         from app.utils import snappeople
-        snap_n = [int(m["account"]) for m in _ipc.discover_targets().values() if m["platform"] == "snapchat"] or [1]
+        _targets = _ipc.discover_targets().values()
+        accts = {plat: [int(m["account"]) for m in _targets if m["platform"] == plat] or [1]
+                 for plat in WEB_PLATFORMS}
         for t in out["top"]:
             if t["platform"] == "discord":
                 t["avatar"] = pics.get(t["id"], "")
             else:
-                t["avatar"] = next((u for u in (snappeople.avatar_url(n, t["id"]) for n in snap_n) if u), "")
+                t["avatar"] = next((u for u in (snappeople.avatar_url(n, t["id"], t["platform"])
+                                                for n in accts[t["platform"]]) if u), "")
 
         # ── People ───────────────────────────────────────────────────────────
         def _scalar(sql, args=()):
@@ -356,30 +413,29 @@ def stats_detail(request: Request, days: int = 30):
             except sqlite3.OperationalError:
                 return 0
 
+        stats_tables = [_STATS_TABLE[p] for p, _, _ in logs]
         out["people"] = {
-            "window": _scalar("SELECT COUNT(DISTINCT user_id) FROM message_log WHERE ts >= ?", (since,))
-            + _scalar("SELECT COUNT(DISTINCT chat_id) FROM message_log_snap WHERE ts >= ?", (since,)),
-            "previous": _scalar(
-                "SELECT COUNT(DISTINCT user_id) FROM message_log WHERE ts >= ? AND ts < ?",
-                (prev_since, since))
-            + _scalar(
-                "SELECT COUNT(DISTINCT chat_id) FROM message_log_snap WHERE ts >= ? AND ts < ?",
-                (prev_since, since)),
-            "all_time": _scalar("SELECT COUNT(DISTINCT user_id) FROM message_log")
-            + _scalar("SELECT COUNT(DISTINCT chat_id) FROM message_log_snap"),
+            "window": sum(_scalar(f"SELECT COUNT(DISTINCT {col}) FROM {t} WHERE ts >= ?", (since,))
+                          for _, t, col in logs),
+            "previous": sum(_scalar(f"SELECT COUNT(DISTINCT {col}) FROM {t} WHERE ts >= ? AND ts < ?",
+                                    (prev_since, since)) for _, t, col in logs),
+            "all_time": sum(_scalar(f"SELECT COUNT(DISTINCT {col}) FROM {t}") for _, t, col in logs),
             # first_seen is when the row was created, so this really is "people who had never been spoken to before this window".
-            "new": _scalar("SELECT COUNT(*) FROM user_stats WHERE first_seen >= ?", (since,))
-            + _scalar("SELECT COUNT(*) FROM user_stats_snap WHERE first_seen >= ?", (since,)),
+            "new": sum(_scalar(f"SELECT COUNT(*) FROM {t} WHERE first_seen >= ?", (since,))
+                       for t in stats_tables),
         }
 
         # ── The single busiest hour and day, for the headline sentence ───────
         busiest_hour = max(out["hourly"], key=lambda h: h["count"], default=None)
-        busiest_day = max(out["series"], key=lambda d: d["discord"] + d["snapchat"], default=None)
+        def _day_total(d):
+            return sum(d[plat] for plat, _, _ in LOGS)
+
+        busiest_day = max(out["series"], key=_day_total, default=None)
         out["busiest"] = {
             "hour": busiest_hour["hour"] if busiest_hour and busiest_hour["count"] else None,
             "hour_count": busiest_hour["count"] if busiest_hour else 0,
             "day": busiest_day["day"] if busiest_day else None,
-            "day_count": (busiest_day["discord"] + busiest_day["snapchat"]) if busiest_day else 0,
+            "day_count": _day_total(busiest_day) if busiest_day else 0,
         }
         return out
     finally:

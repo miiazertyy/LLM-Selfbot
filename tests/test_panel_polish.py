@@ -105,7 +105,11 @@ il = read("lib/components/IssueList.svelte")
 check("the page banner and the Dashboard list are one component",
       "<IssueList" in read("lib/components/PageIssues.svelte") and "<IssueList" in read("pages/Dashboard.svelte"))
 check("each level has its own icon", '"alertCircle"' in il and '"alert"' in il and '"info"' in il)
-check("only notices can be dismissed, never problems", 'issue.level === "info"' in il.split('class="note-x"')[0][-300:])
+check("notices and warnings can be dismissed, never problems", "{#if dismissable(issue.level)}" in il.split('class="note-x"')[0][-300:]
+      and 'export const dismissable = (level: string) => level !== "error";' in il)
+check("and a dismissed one stays away everywhere it was: the banner, the Dashboard and the sidebar's dot",
+      "!(dismissable(i.level) && $dismissedIssues.has(key(i)))" in il
+      and "{#if attention[key]}" in read("App.svelte") and "!gone(i)" in read("App.svelte"))
 check("no button that would only reload the page you are on", "i.route !== here" in il)
 en = read("lib/components/ErrorNote.svelte")
 check("a load failure says so in the same style, with a retry", "Could not load this" in en and "Try again" in en)

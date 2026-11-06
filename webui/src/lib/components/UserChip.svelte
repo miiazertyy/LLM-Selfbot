@@ -14,6 +14,8 @@
   import { fmtDate } from "../fmt";
   import Avatar from "./Avatar.svelte";
   import Icon from "./Icon.svelte";
+  import { platformOf, platformOfUser } from "../platforms";
+  import { play } from "../uisound";
 
   let { id, name, sub = "", size = "sm" } = $props<{
     id?: string | number;
@@ -95,9 +97,11 @@
     if (!id) return;
     if (open) {                 // a second click on the same name closes it
       open = false;
+      play("off");
       return;
     }
     open = true;
+    play("open");
     loading = true;
     place();
     try {
@@ -132,6 +136,7 @@
     try {
       await navigator.clipboard.writeText(handle);
       copied = true;
+      play("ok");
       setTimeout(() => (copied = false), 1500);
     } catch {
       /* clipboard is blocked in some browsers, the text is still selectable */
@@ -139,6 +144,10 @@
   }
 
   const factList = $derived(Object.entries(person?.facts ?? {}));
+
+  /** 12345 as 12.3K, as TikTok shows a count. */
+  const followers = (n: number) =>
+    n >= 1e6 ? `${Math.floor(n / 1e5) / 10}M` : n >= 1e4 ? `${Math.floor(n / 100) / 10}K` : String(n);
 </script>
 
 <svelte:window
@@ -192,9 +201,12 @@
       <!-- The avatar is a Discord CDN link cached when the bot last saw them.
            A link can rot, so a failed load falls back to the placeholder
            rather than leaving a broken image icon in the card. -->
-      <Avatar src={person?.avatar || ""} name={heading} size={56} silhouette={person?.platform === "snapchat"} />
+      <Avatar src={person?.avatar || ""} name={heading} size={56} silhouette={platformOf(person?.platform).silhouette} />
       <div class="min-w-0 flex-1">
-        <div class="truncate text-[15px] font-semibold text-ink">{heading}</div>
+        <div class="flex min-w-0 items-center gap-1.5 text-[15px] font-semibold text-ink">
+          <span class="truncate">{heading}</span>
+          {#if person?.verified}<span class="uc-tick" title="Verified"><Icon name="check" size={9} /></span>{/if}
+        </div>
         {#if handle}
           <button
             type="button"
@@ -207,9 +219,13 @@
           </button>
         {/if}
         {#if sub}<div class="truncate text-[11px] text-faint">{sub}</div>{/if}
-        {#if person?.platform === "snapchat"}
-          <!-- A Snapchat chat id says nothing to anyone: where they are from does. -->
-          <div class="mt-1 flex items-center gap-1 text-[10.5px] text-faint"><Icon name="snapchat" size={10} /> Snapchat</div>
+        {#if person?.platform && person.platform !== "discord"}
+          <!-- A Snapchat chat id (or a TikTok, Instagram, X or Reddit one) says nothing to anyone: where they are
+               from does. Everything but Discord, whose ids are numbers and whose people are placed by the server. -->
+          <div class="mt-1 flex items-center gap-1 text-[10.5px] text-faint">
+            <Icon name={platformOf(person.platform).icon} size={10} /> {platformOf(person.platform).name}
+            {#if person.followers != null}<span>· {followers(person.followers)} followers</span>{/if}
+          </div>
         {:else}
           <div class="mt-1 font-mono text-[10px] text-faint">{id}</div>
         {/if}
@@ -220,6 +236,23 @@
       <div class="mt-4">
         <div class="mb-1 text-[10px] uppercase tracking-[0.12em] text-faint">About them</div>
         <p class="whitespace-pre-wrap text-[13px] leading-relaxed text-ink/90">{person.bio}</p>
+      </div>
+    {/if}
+
+    {#if person?.posts?.length}
+      <!-- Their latest posts, as their profile showed them when it was last looked at. -->
+      <div class="mt-4">
+        <div class="mb-1.5 text-[10px] uppercase tracking-[0.12em] text-faint">Latest posts</div>
+        <div class="uc-posts">
+          {#each person.posts as p, i (p.url)}
+            <a class="uc-post" href={p.url} target="_blank" rel="noopener noreferrer"
+               title={p.caption || `Open it on ${platformOfUser(id).name}`}
+               style="--i: {i}">
+              {#if p.cover}<img src={p.cover} alt="" loading="lazy" referrerpolicy="no-referrer" />{/if}
+              {#if p.views}<span class="uc-views"><Icon name="play" size={8} />{p.views}</span>{/if}
+            </a>
+          {/each}
+        </div>
       </div>
     {/if}
 
@@ -271,3 +304,44 @@
     </div>
   </div>
 {/if}
+
+<style>
+  .uc-tick {
+    display: inline-grid;
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+    place-items: center;
+    border-radius: 50%;
+    color: #fff;
+    background: #20d5ec;
+  }
+  .uc-posts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+  .uc-post {
+    position: relative;
+    aspect-ratio: 3 / 4;
+    overflow: hidden;
+    border-radius: 9px;
+    background: linear-gradient(150deg, #25f4ee22, #fe2c5522), #111;
+    box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.06);
+    animation: uc-in 0.3s ease-out both;
+    animation-delay: calc(var(--i) * 50ms);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+  }
+  .uc-post:hover { transform: translateY(-1px); box-shadow: inset 0 0 0 1px rgb(254 44 85 / 0.35), 0 8px 18px -10px rgb(254 44 85 / 0.5); }
+  .uc-post img { width: 100%; height: 100%; object-fit: cover; }
+  .uc-views {
+    position: absolute;
+    left: 5px;
+    bottom: 4px;
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 10px;
+    font-weight: 700;
+    color: #fff;
+    text-shadow: 0 1px 3px rgb(0 0 0 / 0.8);
+  }
+  @keyframes uc-in { from { opacity: 0; transform: translateY(3px); } }
+  :global(:root[data-motion="off"]) .uc-post { animation: none; transition: none; }
+</style>

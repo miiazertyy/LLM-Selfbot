@@ -1,0 +1,65 @@
+<!doctype html>
+<!--
+  A stand-in for one of X's lists of posts: its notifications, a thread, or somebody's profile - they are all the
+  same rows. The same hooks as the real page, with nobody's words in it. What the readers lean on:
+    - every post is an article[data-testid="tweet"]
+    - its address and its real moment come from the permalink and the <time datetime> inside it
+    - the buttons keep their old names in the hooks: "retweet" for repost, "unlike" meaning it is already liked
+    - the counts are in the buttons' aria-labels, not in the words
+-->
+<meta charset="utf-8">
+<title>x</title>
+<div data-testid="primaryColumn">
+
+  <!-- Somebody else's post, not liked, not reposted. -->
+  <div data-testid="cellInnerDiv">
+    <article data-testid="tweet">
+      <div data-testid="User-Name">
+        <a href="/someone">xxxxx xxxx</a>
+        <a href="/someone">@someone</a>
+        <a href="/someone/status/1234567890123456789"><time datetime="2026-11-01T08:00:00.000Z">2h</time></a>
+      </div>
+      <div data-testid="UserAvatar-Container-someone"><img src="about:blank" alt="x"></div>
+      <div data-testid="tweetText">xxxx xxxxx xx @aliciamwwoff xxxx</div>
+      <button data-testid="reply" aria-label="12 replies"></button>
+      <button data-testid="retweet" aria-label="3 reposts"></button>
+      <button data-testid="like" aria-label="40 likes"></button>
+    </article>
+  </div>
+
+  <!-- Its own post, already liked by it and reposted, with a picture. -->
+  <div data-testid="cellInnerDiv">
+    <article data-testid="tweet">
+      <div data-testid="User-Name">
+        <a href="/aliciamwwoff">xxxxxx</a>
+        <a href="/aliciamwwoff">@aliciamwwoff</a>
+        <a href="/aliciamwwoff/status/2234567890123456789"><time datetime="2026-11-01T07:00:00.000Z">3h</time></a>
+      </div>
+      <div data-testid="tweetText">xxxxxx xxx xxxx</div>
+      <div data-testid="tweetPhoto"><img src="about:blank" alt="x"></div>
+      <button data-testid="reply" aria-label="1 reply"></button>
+      <button data-testid="unretweet" aria-label="2 reposts"></button>
+      <button data-testid="unlike" aria-label="9 likes"></button>
+    </article>
+  </div>
+
+  <!-- A reply to it, which is the shape a mention takes. -->
+  <div data-testid="cellInnerDiv">
+    <article data-testid="tweet">
+      <div>xxxxxxxx xx <a href="/aliciamwwoff">@aliciamwwoff</a></div>
+      <div data-testid="User-Name">
+        <a href="/third">xxxxx</a>
+        <a href="/third">@third</a>
+        <a href="/third/status/3234567890123456789"><time datetime="2026-11-01T09:30:00.000Z">1h</time></a>
+      </div>
+      <div data-testid="tweetText">xxx xxxxx</div>
+      <button data-testid="reply" aria-label="0 replies"></button>
+      <button data-testid="retweet" aria-label="0 reposts"></button>
+      <button data-testid="like" aria-label="2 likes"></button>
+    </article>
+  </div>
+
+</div>
+
+<div data-testid="SideNav_AccountSwitcher_Button" role="button">xxxxx @aliciamwwoff</div>
+<a data-testid="AppTabBar_Home_Link" href="/home">xxxx</a>

@@ -1,74 +1,84 @@
 <script lang="ts">
   /**
-   * Big Picture Mode: the whole screen, watching everything the bots do, live.
+   * Big Picture Mode: the whole screen, a set of pages about everything the bots
+   * do, live, that plays by itself and can be walked into at any moment.
    *
-   * Nothing to type into and nothing to set up: it follows what is already
-   * streaming. The queue from every account down the left, the conversation
-   * the director has picked in the middle (director.ts), which model is
-   * working and what it is thinking on the right, and the day's numbers along
-   * the bottom. With nobody waiting it cycles through idle scenes, one for
-   * every part of the app: the people you talk to (Memory), the day, the
-   * accounts, recent conversations, the bot's pictures, who it talks to most,
-   * its persona, and, when there are any, friend requests and anything broken.
-   * The chapters under the stage name them and go straight to one.
+   * Left alone it follows the bots (director.ts): whoever is being answered goes on
+   * stage on Now, and when nobody is, it walks round the same pages anyone can use.
+   * Reach out and everything on screen can be pressed: with the mouse, the keys
+   * (focus.ts) or a gamepad (gamepad.ts). Nothing is taken from under you meanwhile.
+   * Now says who is being answered instead, and Auto comes back when you have been
+   * gone a while, with a ring on its button saying when.
    *
-   * It reads the same live data the rest of the app keeps: the Chats cache
-   * (kept live app-wide by App.svelte), model usage (modelusage.ts), the log
-   * stream for thoughts and the log face, the Health poll, and the stats. The
-   * one thing it does that costs the account anything is reading a
-   * conversation's history, so that happens only for the one on stage, only
-   * when it is not already loaded, and at most once every twenty seconds:
-   * history reads come out of the account's hourly allowance. Friend requests
-   * are a call to Discord each, so they are asked for on opening, when the log
-   * says one arrived, and otherwise every five minutes.
+   * Each fact lives in one place. What the pages show is world.svelte.ts; this keeps
+   * who is on stage, what is held, what the room is lit for, and the keys.
+   *
+   * The one thing it does by itself that costs the account anything is reading a
+   * conversation's history, so that happens only for the one on stage, only when it
+   * is not already loaded, and at most once every twenty seconds: history reads come
+   * out of the account's hourly allowance. Opening someone by hand reads them at once,
+   * as the Chats tab does.
    */
-  import { onDestroy, onMount, untrack } from "svelte";
+  import "./bp.css";
+  import { onDestroy, onMount, tick as domUpdated, untrack } from "svelte";
   import { get } from "svelte/store";
   import { cubicIn, cubicOut } from "svelte/easing";
-  import { fade } from "svelte/transition";
-  import { api } from "../api";
   import { bigPicture, bigPictureArriving, bigPictureCloser, bigPictureCovering, bigPictureSound, health, motionEnabled,
            picturesBlur, setBigPicture, toast } from "../stores";
-  import { cancelReply, chatAccounts, chatCache, conversations, convKey, loadChatAccounts, loadConversation, loadEarlier,
-           refreshChats, replying, sendOwnMessage, sendReply, toggleIgnore } from "../chats";
+  import { cancelReply, chatAccounts, chatCache, conversations, convKey, loadChatAccounts, loadConversation, loadDrafts,
+           loadEarlier, refreshChats, replying, sendOwnMessage, sendReply, toggleIgnore } from "../chats";
   import { statusOf } from "../chatstatus";
   import { subscribeEvents, subscribeLogs } from "../logsocket";
-  import { loadUsage, startUsageLive, usage } from "../modelusage";
-  import { loadProviders, savedPlan, shortModel } from "../providers";
-  import { loadMoods } from "../accounts/state";
+  import { loadUsage, startUsageLive, usage, working } from "../modelusage";
+  import { loadProviders, savedPlan } from "../providers";
   import { personasRes } from "../personas/store";
-  import { platformName } from "../accounts/condition";
-  import { isMore, isRule, kindOf, sourceInfo, tidy } from "../logrows";
+  import { socialsOn, sourceOn } from "../socials";
+  import { thoughts, useThoughts } from "../thoughts";
+  import { play as uiPlay } from "../uisound";
   import { setFullscreen, isDesktop } from "../window";
   import { HOUR_MINUTE, fmtDate } from "../fmt";
-  import Avatar from "../components/Avatar.svelte";
-  import Icon from "../components/Icon.svelte";
-  import { MANUAL_HOLD, cycleFor, hold, initial, live, pick, ranked, sceneOf, sceneProgress, showScene, step, tick,
-           togglePin, type Row, type Scene } from "./director";
-  import { chapterOrder, personaLines, personaName, sentPictures } from "./scenes";
-  import { SCENE_LOOK, energyFor, lookFor, type LookName } from "./looks";
-  import { paletteForTrouble, themePalette, type RGB } from "./palette";
-  import { play, primeAudio } from "./sounds";
-  import { burstFrom, pointerActivity } from "./fx";
+  import { MANUAL_HOLD, autoState, groupQueue, hold, initial, live, pageOf, pageProgress, pick, ranked, score, showPage, tabsFor,
+           tick, togglePin, tourFor, type Page, type Row } from "./director";
+  import { PAGE_LOOK, energyFor, lookFor, type LookName } from "./looks";
+  import { cssColour, paletteForTrouble, themePalette, type RGB } from "./palette";
+  import { personaName } from "./scenes";
+  import { arrivals, primeAudio } from "./sounds";
+  import { pageIn, pageOut } from "./motion";
+  import { pointerActivity } from "./fx";
+  import { clearFocus, focusAt, focusPage, focusPlate, inputMode, moveFocus, pressFocus, setFocus } from "./focus";
+  import { startGamepad, type PadCommand } from "./gamepad";
+  import { World } from "./world.svelte";
+  import BPAccounts from "./BPAccounts.svelte";
   import BPBackdrop from "./BPBackdrop.svelte";
-  import BPQueue from "./BPQueue.svelte";
-  import BPStage from "./BPStage.svelte";
-  import BPBrain from "./BPBrain.svelte";
-  import BPThoughts from "./BPThoughts.svelte";
-  import BPStats from "./BPStats.svelte";
-  import BPRotate from "./BPRotate.svelte";
-  import BPChapters from "./BPChapters.svelte";
-  import type { Active, BPAccount, BPActivity, FeedItem, FriendReq, HealthIssue, LogLite, MemoryLine, MemoryPerson,
-                Picture, QRow, SceneActions, SceneWorld, SentPicture, Spot, Thought } from "./types";
+  import BPHints from "./BPHints.svelte";
+  import BPInbox from "./BPInbox.svelte";
+  import BPMinecraft from "./BPMinecraft.svelte";
+  import BPNav from "./BPNav.svelte";
+  import BPNow from "./BPNow.svelte";
+  import BPPeople from "./BPPeople.svelte";
+  import BPPersona from "./BPPersona.svelte";
+  import BPPictures from "./BPPictures.svelte";
+  import BPToday from "./BPToday.svelte";
+  import type { HealthIssue, PageActions, Person, QRow, Spot } from "./types";
 
   let now = $state(Date.now() / 1000);
   let dir = $state(initial(Date.now() / 1000));
+  /** H: what is written, and the pictures, blurred. */
   let hideText = $state(false);
-  /** The top bar and the cursor: there while the mouse moves, gone after a few seconds, like a film. */
+  /** The pointer has been still a while: the cursor and the keys sit out. */
   let awake = $state(true);
   let sleepTimer: ReturnType<typeof setTimeout> | null = null;
-  /** The list of shortcuts, over everything. */
+  /** The list of keys, unrolled from the bar. */
   let help = $state(false);
+
+  /** Closed or closing: the clock and the feeds stop at once, not after the fade. */
+  const gone = () => !get(bigPicture);
+  const world: World = new World({
+    gone,
+    onStage: (target: string, uid: string): boolean => !!spot && spot.target === target && String(spot.u.id) === uid,
+    hold: (secs) => (dir = hold(dir, Date.now() / 1000, secs)),
+    pulse: () => (roomPulse += 1),
+  });
 
   // ── The queue, every account together ───────────────────────────────────
   const queue = $derived.by<QRow[]>(() => {
@@ -83,36 +93,93 @@
     }
     return out;
   });
-  const rowsFor = (q: QRow[]): Row[] =>
-    q.map((r) => ({ key: r.key, phase: r.st.phase, step: r.st.step ?? 0, eta: r.st.eta ?? null, ts: r.u.ts }));
-  /** The rail in the director's order: what is happening first. */
-  const railed = $derived.by(() => {
-    const order = ranked(rowsFor(queue), now).map((r) => r.key);
-    return queue.slice().sort((a, b) => order.indexOf(a.key) - order.indexOf(b.key));
+  const rowsFor = (q: QRow[]): (Row & { r: QRow })[] =>
+    q.map((r) => ({ key: r.key, phase: r.st.phase, step: r.st.step ?? 0, eta: r.st.eta ?? null, ts: r.u.ts, r }));
+  const groups = $derived.by(() => {
+    const g = groupQueue(rowsFor(queue), now);
+    return { answering: g.answering.map((x) => x.r), next: g.next.map((x) => x.r), waiting: g.waiting.map((x) => x.r) };
   });
   const multi = $derived($chatAccounts.length > 1);
 
   // The one on stage stays drawn after it leaves the queue (it was answered), from its last snapshot.
-  const snapshots = new Map<string, QRow>();
   $effect(() => {
-    for (const r of queue) snapshots.set(r.key, r);
+    for (const r of queue) world.snapshots.set(r.key, r);
   });
   const spot = $derived.by<Spot | null>(() => {
     const k = dir.spotlight;
     if (!k) return null;
-    const live = queue.find((r) => r.key === k);
-    if (live) return { ...live, answered: false };
-    const snap = snapshots.get(k);
-    return snap ? { ...snap, answered: true } : null;
+    const row = queue.find((r) => r.key === k);
+    if (row) return { ...row, answered: false };
+    const snap = world.snapshots.get(k);
+    if (!snap) return null;
+    const ignored = !!$chatCache[snap.target]?.users.find((u) => String(u.id) === String(snap.u.id))?.ignored;
+    return { ...snap, answered: !snap.browsing && !ignored, ignored };
   });
   const messages = $derived(spot ? $conversations[convKey(spot.target, spot.u.id)]?.messages ?? [] : []);
+
+  // ── The pages ────────────────────────────────────────────────────────────
+  const issues = $derived<HealthIssue[]>(($health.issues ?? []) as HealthIssue[]);
+  /** What needs fixing; an available update and the like are not a problem. */
+  const urgent = $derived(issues.filter((i) => i.level === "error" || i.level === "warn"));
+  const inboxCount = $derived(world.friends.length + urgent.length);
+
+  /** Where the tour goes: every page there is something to show on. */
+  const tour = $derived(tourFor({
+    people: world.people.length > 0,
+    accounts: world.accounts.length > 0,
+    pictures: world.pictures.length > 0,
+    persona: world.personaLines.length > 0,
+    inbox: inboxCount > 0,
+    minecraft: !!world.minecraft,
+  }));
+  const page = $derived(pageOf(dir));
+  /** A tab that has emptied stays while it is on show: the last friend request answered says "all caught up". */
+  const tabs = $derived(tabsFor({ minecraft: !!world.minecraft || page === "minecraft", inbox: inboxCount > 0 || page === "inbox" }));
+  const auto = $derived(autoState(dir, now));
+  const held = $derived(auto.mode !== "auto");
+  /** Someone has their hands on it: pressed something, rather than only moved the pointer past. */
+  const driving = $derived(dir.pinned || (auto.mode === "held" && dir.holdFor >= MANUAL_HOLD));
+  /** Each showing of a page starts it afresh; Now stays itself as people come and go on its stage. */
+  const pageKey = $derived(page === "now" ? "now" : `${page}:${dir.idle?.scene ?? 0}`);
+
+  // Which way a page goes: to one further along it comes in from the right.
+  let slide = $state(1);
+  let lastIx = -1;
+  $effect.pre(() => {
+    const i = tabs.indexOf(page);
+    untrack(() => {
+      if (lastIx >= 0 && i !== lastIx) slide = i > lastIx ? 1 : -1;
+      lastIx = i;
+    });
+  });
 
   // The director follows every change in the queue as it happens, and the clock besides.
   $effect(() => {
     const rows = rowsFor(queue);
     untrack(() => {
-      if (!gone()) dir = tick(dir, rows, now, cycle);
+      if (!gone()) dir = tick(dir, rows, now, tour);
     });
+  });
+
+  // The list on the right starts with who wrote lately, once the queue has been read.
+  $effect(() => {
+    if (arrived && queue.length) untrack(() => world.seedFeed(queue));
+  });
+
+  // What a page shows is asked for as it comes up.
+  $effect(() => {
+    const p = page;
+    untrack(() => {
+      if (arrived) world.ensure(p);
+    });
+  });
+  // Whose turn it is on People: the next one each time it comes round. A held page's clock moving is not a new showing.
+  let turnSeen = -1;
+  $effect(() => {
+    const idle = dir.idle;
+    if (page !== "people" || !idle || idle.scene === turnSeen) return;
+    turnSeen = idle.scene;
+    untrack(() => (world.turn += 1));
   });
 
   // History for the one on stage: only if not already loaded, at most one read every 20 seconds.
@@ -121,7 +188,7 @@
   $effect(() => {
     void now;
     const s = spot;
-    if (!s || s.answered) return;
+    if (!s || s.answered || s.browsing) return;
     const k = convKey(s.target, s.u.id);
     if (asked.has(k) || get(conversations)[k]) return;
     if (Date.now() - lastHistory < 20000) return;
@@ -130,318 +197,96 @@
     loadConversation(s.target, s.u.id).catch(() => {});
   });
 
-  // ── The numbers ──────────────────────────────────────────────────────────
-  let stats = $state({ replies: 0, people: 0, hourly: [] as number[], top: [] as { user_id: string; username: string; count: number; avatar?: string }[] });
-  let recent = $state<{ id: string; name: string; avatar?: string; messages: number; last_ts?: number }[]>([]);
-  let accts = $state<BPAccount[]>([]);
-  let accountsAt = 0;
-
-  async function loadStats() {
-    try {
-      const d: any = await api.statsOverview();
-      stats = {
-        replies: d?.windows?.today ?? 0,
-        people: d?.people_7d ?? 0,
-        hourly: (d?.hourly ?? []).map((h: any) => h.count ?? 0),
-        top: (d?.top ?? []).map((t: any) => ({ ...t, avatar: avatarOf(String(t.user_id)) })),
-      };
-    } catch {
-      /* the stage does not depend on it */
-    }
-  }
-  let recentSeq = 0;
-  async function loadRecent() {
-    const seq = ++recentSeq;
-    try {
-      // Every account's: Discord's together, and each Snapchat account's own, newest first.
-      const snaps = accts.filter((a) => a.platform === "snapchat").map((a) => a.id);
-      const lists = await Promise.all([api.chatArchive(12), ...snaps.map((id) => api.chatArchive(12, id).catch(() => null))]);
-      if (seq !== recentSeq) return;      // a later look, with more accounts in it, is on its way
-      const all = lists.flatMap((d: any) => d?.conversations ?? []);
-      all.sort((a: any, b: any) => (b.last_ts ?? 0) - (a.last_ts ?? 0));
-      recent = all.slice(0, 12).map((c: any) => ({ id: String(c.id), name: c.name, avatar: c.avatar, messages: c.messages, last_ts: c.last_ts }));
-    } catch {
-      /* the idle scene falls back to Today */
-    }
-  }
-  /** Every account, who it is and how it is: the supervisor's word, and the worker's own when it answers. */
-  async function loadAccounts() {
-    accountsAt = Date.now();
-    try {
-      const d: any = await api.accounts();
-      const rows = (d?.accounts ?? []).filter((a: any) => a.platform !== "telegram");
-      const details = await Promise.all(rows.map((a: any) =>
-        a.state === "running" ? api.accountDetails(a.id).catch(() => null) : Promise.resolve(null)));
-      accts = rows.map((a: any, i: number): BPAccount => {
-        const det: any = details[i];
-        return {
-          id: a.id, platform: a.platform, account: a.account ?? null,
-          // One that has never connected has no name of its own yet: "Snapchat #1", as the Accounts page says it.
-          name: a.display_name || a.username || `${platformName(a.platform)}${a.account ? ` #${a.account}` : ""}`,
-          username: a.username, avatar: a.avatar, banner: a.banner,
-          accent: a.accent, state: a.state, uptime: a.uptime, enabled: a.enabled,
-          live: !!det?.live, ping: det?.latency_ms ?? null, mood: det?.mood ?? "", presence: det?.presence,
-          paused: !!det?.paused, night: !!det?.night, guilds: det?.guilds, friends: det?.friends,
-        };
-      });
-    } catch {
-      /* keep what was there */
-    }
-  }
-  // ── The rest of the app, for its scenes ──────────────────────────────────
-  let activity = $state<Record<string, BPActivity>>({});
-  let activityDates = $state<string[]>([]);
-  async function loadActivity() {
-    try {
-      const d: any = await api.accountActivity(7);
-      activity = d?.accounts ?? {};
-      activityDates = d?.dates ?? [];
-    } catch {
-      /* the cards go without their week */
-    }
-  }
-
-  let pictures = $state<Picture[]>([]);
-  /** The pictures that went out while watching, by file name. */
-  let sentPics = $state<Record<string, SentPicture>>({});
-  /** "Show pictures" was pressed: for the rest of this visit, like the Pictures tab. */
-  let picsShown = $state(false);
-  const picturesBlurred = $derived($picturesBlur && !picsShown);
-  /** Whose pictures the gallery shows: the persona of the account on show ("" for Default's). */
-  let picturesOf = "";
-  async function loadPictures() {
-    const as = facePersona === "default" ? "" : facePersona;
-    try {
-      const d: any = await api.pictures(as);
-      picturesOf = as;
-      pictures = (d?.pictures ?? []).map((p: any) => ({
-        name: String(p.name), description: String(p.description ?? ""),
-        // A video shows as its still.
-        url: api.pictureThumb({ name: String(p.name), id: String(p.id ?? ""), video: !!p.video }, as),
-      }));
-    } catch {
-      /* no pictures scene this time */
-    }
-  }
-
-  let personaText = $state("");
-  let moods = $state<string[]>([]);
-  /** Who the account on show speaks as: its own text, moods and pictures (app/utils/personas.py). */
-  async function loadPersona() {
-    const pid = facePersona;
-    try {
-      const d: any = await api.personaText(pid);
-      if (pid !== facePersona) return;
-      personaText = String(d?.text ?? "");
-    } catch {
-      /* no persona scene this time */
-    }
-    moods = await loadMoods(false, pid).catch(() => []);
-  }
-  const pLines = $derived(personaLines(personaText));
-  /** Whose face the persona wears: the account that is running, if one is. */
-  const faceAcct = $derived(accts.find((a) => a.state === "running" && a.platform === "discord") ?? accts[0] ?? null);
-  const facePersona = $derived(faceAcct ? $personasRes.data.accounts[faceAcct.id] || "default" : "default");
+  // ── Whose persona ────────────────────────────────────────────────────────
+  /** Chosen on Persona or Pictures; until then the account running, Discord's first. */
+  let faceId = $state("");
+  const faceAcct = $derived(world.accounts.find((a) => a.id === faceId)
+    ?? world.accounts.find((a) => a.state === "running" && a.platform === "discord")
+    ?? world.accounts.find((a) => a.state === "running") ?? world.accounts[0] ?? null);
+  const personaOfAccount = (id: string) => $personasRes.data.accounts[id] || "default";
+  const facePersona = $derived(faceAcct ? personaOfAccount(faceAcct.id) : "default");
   /** The name the persona goes by (its own, or the one its text gives), unless it has none but "Default". */
   const facePersonaName = $derived.by(() => {
     const p = $personasRes.data.personas.find((x) => x.id === facePersona);
     return p && !(p.is_default && p.name === "Default") ? p.name : "";
   });
-  const persona = $derived({ lines: pLines, name: personaName(pLines) || facePersonaName || faceAcct?.name || "", face: faceAcct });
+  const pName = $derived(personaName(world.personaLines) || facePersonaName || faceAcct?.name || "");
+  const speakers = $derived(world.accounts.filter((a) => personaOfAccount(a.id) === facePersona));
+  /** One account for each persona there is, to choose between them. */
+  const choices = $derived.by(() => {
+    const seen = new Map<string, { account: (typeof world.accounts)[number]; persona: string; name: string }>();
+    for (const a of world.accounts) {
+      const pid = personaOfAccount(a.id);
+      if (seen.has(pid)) continue;
+      const p = $personasRes.data.personas.find((x) => x.id === pid);
+      seen.set(pid, { account: a, persona: pid, name: p && !(p.is_default && p.name === "Default") ? p.name : a.name });
+    }
+    return [...seen.values()];
+  });
   // Another account on show, speaking as another persona: its text, moods and pictures instead.
-  let shownPersona = "";
   $effect(() => {
     const pid = facePersona;
-    if (!arrived || pid === shownPersona) return;
-    shownPersona = pid;
+    if (!arrived) return;
     untrack(() => {
-      loadPersona();
-      loadPictures();
+      world.loadPersona(pid);
+      world.loadPictures(pid);
     });
   });
-
-  const issues = $derived<HealthIssue[]>(($health.issues ?? []) as HealthIssue[]);
-  /** What needs fixing; an available update and the like are not a problem. */
-  const urgent = $derived(issues.filter((i) => i.level === "error" || i.level === "warn"));
-
-  // Friend requests: one call to Discord per running account each time, so not often.
-  let friendReqs = $state<FriendReq[]>([]);
-  let friendGone = $state<Record<string, "accept" | "decline">>({});
-  let friendsAt = 0;
-  let friendsQueued: ReturnType<typeof setTimeout> | null = null;
-  async function loadFriends() {
-    friendsAt = Date.now();
-    const targets = accts.filter((a) => a.state === "running");
-    if (!targets.length) {
-      friendReqs = [];
-      return;
-    }
-    const lists = await Promise.all(targets.map((a) =>
-      api.friends(a.id)
-        .then((d: any) => (d?.requests ?? []).filter((r: any) => r.incoming).map((r: any): FriendReq => ({
-          id: String(r.id), username: String(r.username ?? ""), display_name: r.display_name || "",
-          avatar: r.avatar || "", accept_at: r.accept_at ?? null, target: a.id,
-        })))
-        .catch(() => null)));
-    if (gone()) return;
-    // An account that did not answer keeps what it had, rather than emptying the list.
-    friendReqs = targets.flatMap((a, i) => lists[i] ?? friendReqs.filter((r) => r.target === a.id));
+  function chooseFace(id: string) {
+    faceId = id;
+    uiPlay("select");
+    actions.hold();
   }
-  /** Soon, but never more than once every twenty seconds: each look is a call to Discord. */
-  function friendsSoon(delay = 2500) {
-    if (friendsQueued) return;
-    const wait = Math.max(delay, 20000 - (Date.now() - friendsAt));
-    friendsQueued = setTimeout(() => {
-      friendsQueued = null;
-      if (!gone()) loadFriends();
-    }, wait);
-  }
+  /** "Show pictures" was pressed: for the rest of this visit, like the Pictures tab. */
+  let picsShown = $state(false);
+  const picturesBlurred = $derived($picturesBlur && !picsShown);
 
-  // ── Memory: what you talk about with each of them, for the idle scenes ──
-  // Everyone it might show is asked for their stored summary first, which is a
-  // local read and writes nothing. Only then, in the background and only while
-  // nothing else is on stage, does it have a few new ones written: one at a
-  // time, a while apart, a handful per visit. Each of those is one call to the
-  // small model and at most one read of that DM, within the same history
-  // allowance every other reader spends.
-  let memPeople = $state<MemoryPerson[]>([]);
-  const MEM_CANDIDATES = 8;
-  const MEM_WRITES = 4;
-  const MEM_GAP = 45_000;
-  const memAsked = new Set<string>();
-  const memTried = new Set<string>();
-  let memWrites = 0;
-  let memLastWrite = 0;
-  let memWriting = false;
-  /** Summaries are turned off in Settings, or nothing is running that could write one. */
-  let memOff = false;
-
-  function addMemory(c: (typeof recent)[number], r: any) {
-    const lines: MemoryLine[] = (r.recent ?? [])
-      .filter((l: any) => l && typeof l.text === "string" && l.text.trim())
-      .map((l: any) => ({ mine: !!l.mine, text: String(l.text) }));
-    const p: MemoryPerson = {
-      id: c.id, name: c.name, avatar: c.avatar, messages: c.messages, last_ts: c.last_ts,
-      summary: String(r.summary), generated_at: r.generated_at, count: r.count, recent: lines,
-    };
-    // The most recent conversation comes round first.
-    memPeople = [...memPeople.filter((x) => x.id !== p.id), p].sort((a, b) => (b.last_ts ?? 0) - (a.last_ts ?? 0));
-  }
-  async function loadMemoryStored() {
-    for (const c of recent.slice(0, MEM_CANDIDATES)) {
-      if (gone() || memOff) return;
-      if (memAsked.has(c.id)) continue;
-      memAsked.add(c.id);
-      try {
-        const r: any = await api.memorySummary(c.id, false, true);
-        if (r?.enabled === false) {
-          memOff = true;
-          return;
-        }
-        if (r?.ok && r.summary) addMemory(c, r);
-      } catch {
-        /* the idle scenes go on without them */
-      }
-    }
-  }
-  async function writeOneMemory() {
-    if (memOff || memWriting || gone() || document.hidden || dir.spotlight) return;
-    if (memWrites >= MEM_WRITES || Date.now() - memLastWrite < MEM_GAP) return;
-    const c = recent.slice(0, MEM_CANDIDATES)
-      .find((x) => memAsked.has(x.id) && !memTried.has(x.id) && !memPeople.some((p) => p.id === x.id));
-    if (!c) return;
-    memTried.add(c.id);
-    memWriting = true;
-    memWrites += 1;
-    memLastWrite = Date.now();
-    try {
-      const r: any = await api.memorySummary(c.id);
-      if (r?.ok && r.summary) addMemory(c, r);
-      else if (r?.enabled === false || /No account is running/i.test(r?.reason ?? "")) memOff = true;
-    } catch {
-      /* someone else next time */
-    } finally {
-      memWriting = false;
-    }
-  }
-
-  // ── The scenes, and the chapters that name them ──────────────────────────
-  /** Every scene there is something to show in; the director takes them in this order. */
-  const cycle = $derived(cycleFor({
-    memory: memPeople.length > 0,
-    recent: recent.length > 0,
-    people: stats.top.length > 0,
-    accounts: accts.length > 0,
-    pictures: pictures.length > 0,
-    friends: friendReqs.length > 0,
-    persona: pLines.length > 0,
-    health: urgent.length > 0,
-  }));
-  const scene = $derived(sceneOf(dir));
-  const chapters = $derived(chapterOrder(cycle));
-  const badges = $derived<Partial<Record<Scene, number>>>({
-    ...(friendReqs.length ? { friends: friendReqs.length } : {}),
-    ...(urgent.length ? { health: urgent.length } : {}),
-  });
-  /** Held by hand, or by the pointer moving over the stage. */
-  const held = $derived(dir.pinned || now < dir.manualUntil);
-
-  /** Whose turn it is: the next one each time a memory scene comes up. */
-  let memTurn = $state(0);
-  let memSeen = -1;
-  $effect(() => {
-    const idle = dir.idle;
-    if (scene !== "memory" || !idle) return;
-    // Each showing has its own number; a held scene's clock moving is not a new one.
-    if (idle.scene === memSeen) return;
-    memSeen = idle.scene;
-    untrack(() => (memTurn += 1));
-  });
-  /** The one on show, with the latest messages if this visit has already read them. */
-  const memPerson = $derived.by<MemoryPerson | null>(() => {
-    if (!memPeople.length) return null;
-    const p = memPeople[(Math.max(1, memTurn) - 1) % memPeople.length];
-    for (const a of $chatAccounts) {
-      const held = $conversations[convKey(a.id, p.id)]?.messages;
-      if (held?.length) {
-        const lines = held.filter((m) => m.text).slice(-4).map((m) => ({ mine: !!m.mine, text: m.text ?? "" }));
-        if (lines.length) return { ...p, recent: lines };
-      }
-    }
-    return p;
-  });
-
-  // The accounts scene is worth fresh detail: a ping and a mood from a minute ago read as stale.
-  $effect(() => {
-    if (scene === "accounts") untrack(() => {
-      if (Date.now() - accountsAt > 20000) loadAccounts();
-    });
-  });
-
-  /** A face for someone the stats only know by id: from the queue, or the recent list. */
-  function avatarOf(uid: string): string | undefined {
-    for (const e of Object.values(get(chatCache))) {
-      const u = e.users.find((x) => x.id === uid);
-      if (u?.avatar) return u.avatar;
-    }
-    return recent.find((r) => r.id === uid)?.avatar;
-  }
+  // ── The numbers on the bar ───────────────────────────────────────────────
   const tokensToday = $derived($usage.models.reduce((n, m) => n + m.today.in + m.today.out, 0));
   const requestsToday = $derived($usage.models.reduce((n, m) => n + m.today.requests, 0));
-  const today = $derived({ replies: stats.replies, people: stats.people, tokens: tokensToday, requests: requestsToday });
+  const workingNow = $derived(Object.values($working).find((w) => w.job === "replies" || !w.job) ?? null);
+
+  // ── What the model is thinking ───────────────────────────────────────────
+  /** How long a thought stays with the reply it was for. */
+  const THOUGHT_FOR = 120;
+  const latestThought = $derived.by(() => {
+    const list = $thoughts;
+    for (let i = list.length - 1; i >= 0; i--) {
+      const t = list[i];
+      // A Minecraft account's every decision is one: those stay over its own picture.
+      if (!t.source.startsWith("minecraft") && sourceOn($socialsOn, t.source)) return t;
+    }
+    return null;
+  });
+  /** One for the conversation on stage goes in the conversation, where its reply will land. */
+  const stageThought = $derived.by(() => {
+    const t = latestThought;
+    if (!t || !spot || spot.answered || spot.browsing || t.source !== spot.target) return null;
+    if (![2, 3, 4].includes(spot.st.step ?? 0) || now - t.at > THOUGHT_FOR) return null;
+    return t;
+  });
+  /** One that has been up on the stage is done with: it folded away with its reply, and does not come back on the rail. */
+  let thoughtOnStage = 0;
+  $effect(() => {
+    if (stageThought) thoughtOnStage = stageThought.at;
+  });
+  const railThought = $derived(latestThought && !stageThought && latestThought.at !== thoughtOnStage
+    && !(spot && latestThought.source === spot.target) && now - latestThought.at < 60 ? latestThought : null);
 
   // ── The room: whoever is on stage lights it ───────────────────────────────
-  /** The theme's own colours, for the scenes about no one in particular. Read once it is on the page. */
+  /** The theme's own colours, for the pages about no one in particular. Read once it is on the page. */
   let themeColours = $state<RGB[] | null>(null);
+  let themeAccent = $state<RGB | null>(null);
   /** Counts replies gone out on stage and things done by hand: each sends a ring of light across the room. */
   let roomPulse = $state(0);
   const TROUBLE = { errors: paletteForTrouble(true), warnings: paletteForTrouble(false) };
+  /** Who a page says the room is for: the person in hand on People, the account grown on Accounts. */
+  let pageLight = $state<{ page: Page; seed: string; art?: string } | null>(null);
   type Room = { seed: string; art: string; look: LookName; energy: number; palette: RGB[] | null };
   /**
-   * What the background is for: the person on stage, in their own colours and
-   * their own look, lively while their reply is written and typed; else the
-   * scene's subject (a person's memory, an account, a picture, whoever asked
-   * to be friends), or the theme's colours for the scenes about no one.
+   * What the background is for: the person on stage, in their own colours and their
+   * own look, lively while their reply is written and typed; else who the page is
+   * about; or the theme's colours for the pages about no one.
    */
   const room = $derived.by<Room>(() => {
     if (spot) {
@@ -449,163 +294,361 @@
                energy: energyFor(spot.st.phase, spot.st.step ?? 0, spot.answered), palette: null };
     }
     const calm = 0.2;
-    switch (scene) {
-      case "memory":
-        if (memPerson) return { seed: memPerson.id, art: memPerson.avatar || "", look: lookFor(memPerson.id), energy: calm, palette: null };
-        break;
-      case "accounts":
-        return { seed: `accounts:${faceAcct?.id ?? ""}`, art: accts.find((a) => a.banner)?.banner || faceAcct?.avatar || "",
-                 look: SCENE_LOOK.accounts, energy: calm, palette: null };
-      case "persona":
-        return { seed: `persona:${faceAcct?.id ?? ""}`, art: faceAcct?.avatar || "", look: SCENE_LOOK.persona, energy: calm, palette: null };
-      case "friends":
-        return { seed: `friends:${friendReqs[0]?.id ?? ""}`, art: friendReqs[0]?.avatar || "", look: SCENE_LOOK.friends,
-                 energy: 0.35, palette: null };
-      case "pictures":
-        // The pictures' own colours only while they may be seen: blurred, the room keeps the theme's.
-        if (!picturesBlurred && !hideText && pictures[0]) {
-          return { seed: "pictures", art: pictures[0].url, look: SCENE_LOOK.pictures, energy: calm, palette: null };
-        }
-        break;
-      case "health":
-        return { seed: "health", art: "", look: SCENE_LOOK.health, energy: 0.35,
-                 palette: urgent.some((i) => i.level === "error") ? TROUBLE.errors : TROUBLE.warnings };
+    if (page === "inbox" && urgent.length) {
+      return { seed: "inbox", art: "", look: PAGE_LOOK.inbox, energy: 0.35,
+               palette: urgent.some((i) => i.level === "error") ? TROUBLE.errors : TROUBLE.warnings };
     }
-    return { seed: `scene:${scene ?? "room"}`, art: "", look: scene ? SCENE_LOOK[scene] : "silk", energy: calm, palette: themeColours };
+    if (pageLight?.page === page) {
+      return { seed: pageLight.seed, art: pageLight.art || "", look: page === "people" ? lookFor(pageLight.seed) : PAGE_LOOK[page], energy: calm, palette: null };
+    }
+    if (page === "persona" && faceAcct) {
+      return { seed: `persona:${faceAcct.id}`, art: faceAcct.avatar || "", look: PAGE_LOOK.persona, energy: calm, palette: null };
+    }
+    return { seed: `page:${page}`, art: "", look: PAGE_LOOK[page], energy: calm, palette: themeColours };
   });
-
-  // ── What just happened ───────────────────────────────────────────────────
-  let feed = $state<FeedItem[]>([]);
-  let feedId = 0;
-  let active = $state<Active | null>(null);
-  /** The model that last wrote for each person, by their id. */
-  let byConv = $state<Record<string, Active>>({});
-  /** What the Brain shows: the model working on the conversation on stage, and
-      only otherwise the last one to answer anywhere. */
-  const brainModel = $derived((spot && byConv[spot.u.id]) || active);
-  /** A model doing background work (memory, pictures, voice), shown under the replies model for a moment. */
-  let helper = $state<{ model: string; job: string; at: number } | null>(null);
-  let pulse = $state(0);
-  let thoughts = $state<Thought[]>([]);
-  let logs = $state<LogLite[]>([]);
-
-  function pushFeed(kind: FeedItem["kind"], text: string, avatar?: string, name?: string) {
-    feed = [{ id: ++feedId, kind, text, avatar, name, at: Date.now() / 1000 }, ...feed].slice(0, 12);
+  /**
+   * The accent of everything in here: the colour the room has gone to, melting with
+   * it. On a page about no one the theme's own, and on one that is all warnings too:
+   * Accept in the colour of an error would say the wrong thing.
+   */
+  let roomColour = $state<RGB | null>(null);
+  const accent = $derived(room.palette || !roomColour ? themeAccent : roomColour);
+  /**
+   * It melts into a new colour a tenth of a second at a time, set from here rather
+   * than eased in CSS. Every change of it is the whole view styled again, and a CSS
+   * transition did that every frame, at the screen's 143 a second, for well over a
+   * second each time the room changed: with the plate's own easing, that was nearly
+   * all a move cost the iGPU. Ten steps still read as one melt.
+   */
+  let bpEl = $state<HTMLElement | null>(null);
+  let shownAccent: RGB | null = null;
+  let melting: ReturnType<typeof setTimeout> | null = null;
+  const MELT_STEPS = 10;
+  const rgbCss = (c: RGB) => `rgb(${Math.round(c[0] * 255)} ${Math.round(c[1] * 255)} ${Math.round(c[2] * 255)})`;
+  /** What reads on a colour: the room's run from a dark magenta to a light gold. */
+  const onColour = (c: RGB) => (0.2126 * c[0] ** 2.2 + 0.7152 * c[1] ** 2.2 + 0.0722 * c[2] ** 2.2 > 0.3 ? "#0b0b12" : "#fff");
+  function setAccent(el: HTMLElement, c: RGB) {
+    shownAccent = c;
+    el.style.setProperty("--color-accent", rgbCss(c));
+    el.style.setProperty("--bp-on", onColour(c));
   }
-  /** Who a row is, from the queue as it is, or as it was when it left (answered), or the recent list. */
-  function whoIs(target: string, uid: string): { name: string; avatar?: string } {
-    const u = get(chatCache)[target]?.users.find((x) => x.id === uid) ?? snapshots.get(`${target}:${uid}`)?.u;
-    if (u) return { name: u.name, avatar: u.avatar };
-    const r = recent.find((x) => x.id === uid);
-    return r ? { name: r.name, avatar: r.avatar } : { name: "someone" };
-  }
-  const nameOf = (target: string, uid: string) => whoIs(target, uid).name;
-  function onChat(evt: Record<string, any> | null) {
-    if (!evt || gone()) return;
-    const target = String(evt.target ?? "");
-    const uid = String(evt.uid ?? "");
-    if (evt.t === "msg") {
-      play("arrive");
-      const what = (evt.snippet || evt.text || (evt.attachments?.length ? "sent a picture" : "sent a message")).replace(/\s+/g, " ");
-      pushFeed("arrive", `${evt.name || nameOf(target, uid)}: ${what}`, evt.avatar, evt.name);
-    } else if (evt.t === "state" && evt.state?.state === "writing") {
-      play("write");
-      pushFeed("write", `Writing a reply to ${nameOf(target, uid)}`);
-    } else if (evt.t === "sent") {
-      stats.replies += 1;
-      // The reply on stage went out: a ring of light across the room.
-      if (spot && spot.target === target && spot.u.id === uid) roomPulse += 1;
-      const who = whoIs(target, uid);
-      // One of its own pictures went out: the gallery marks it, and says to whom. Only one of the gallery's own
-      // persona: another persona's IMG_3 is another picture.
-      const sender = $personasRes.data.accounts[target] || "default";
-      const mine = (sender === "default" ? "" : sender) === picturesOf;
-      const pics = mine ? sentPictures(evt.attachments, pictures.map((p) => p.name)) : [];
-      if (pics.length) {
-        const at = Date.now() / 1000;
-        const next = { ...sentPics };
-        for (const p of pics) next[p] = { to: who.name, avatar: who.avatar, at };
-        sentPics = next;
-        play("picture");
-        pushFeed("picture", `Sent ${who.name} one of its pictures`, who.avatar, who.name);
-      } else {
-        play("sent");
-        pushFeed("sent", `Replied to ${who.name}`);
-      }
+  $effect(() => {
+    const to = accent;
+    const el = bpEl;
+    if (!el || !to) return;
+    untrack(() => {
+      if (melting) clearTimeout(melting);
+      melting = null;
+      const from = shownAccent;
+      if (!from || !get(motionEnabled)) return setAccent(el, to);
+      let i = 0;
+      const step = () => {
+        i += 1;
+        const k = 1 - (1 - i / MELT_STEPS) ** 2;
+        setAccent(el, [0, 1, 2].map((j) => from[j] + (to[j] - from[j]) * k) as RGB);
+        melting = i < MELT_STEPS ? setTimeout(step, 110) : null;
+      };
+      step();
+    });
+  });
+  /** The light gathers behind whatever has the focus, without chasing it to the very edge. */
+  const lightX = $derived($focusAt ? 0.5 + ($focusAt.x - 0.5) * 0.7 : 0.5);
+  const lightY = $derived($focusAt ? 0.45 + ($focusAt.y - 0.45) * 0.7 : 0.42);
+
+  // ── Doing something about the conversation on stage ──────────────────────
+  // The same things the Chats tab offers. Each holds the stage on that conversation
+  // for a while, since acting on one and then having it slide away would be maddening.
+  let acting = $state(false);
+  async function conv(s: Pick<Spot, "key">, run: () => Promise<unknown>, done: string) {
+    if (acting) return;
+    acting = true;
+    dir = pick(dir, s.key, now);
+    try {
+      await run();
+      if (done) toast(done, "ok");
+    } catch (e: any) {
+      toast(e?.message || "That did not work", "err");
+    } finally {
+      acting = false;
     }
   }
-  function onModel(evt: Record<string, any> | null) {
-    if (!evt || gone()) return;
-    const name = shortModel(String(evt.model ?? ""));
-    if (evt.ok && evt.job !== "replies") {
-      // memory, pictures, voice: the brain mentions it, the feed stays for the conversation
-      helper = { model: String(evt.model ?? ""), job: String(evt.job ?? ""), at: evt.at || Date.now() / 1000 };
-    } else if (evt.ok) {
-      const one: Active = { provider: evt.provider, model: evt.model, at: evt.at || Date.now() / 1000, ms: evt.ms || 0, ok: true };
-      active = one;
-      // Which model wrote for whom, so the Brain can show the one working on the
-      // conversation on stage instead of whichever answered last anywhere.
-      if (evt.uid) byConv = { ...byConv, [String(evt.uid)]: one };
-      pulse += 1;
-      pushFeed("model", `${name} wrote a reply in ${((evt.ms || 0) / 1000).toFixed(1)}s`);
-    } else {
-      play("limit");
-      pushFeed("limit", evt.limited ? `${name} is rate limited, the next one takes over` : `${name} did not answer`);
+  const canHurry = $derived(!!spot && !spot.answered && !spot.browsing && !spot.ignored
+    && (spot.st.phase === "needs" || spot.st.step === 1 || spot.st.step === 3));
+  const doReply = (s: Spot) => conv(s, () => sendReply(s.target, s.u.id), "");
+  const doCancel = (s: Spot) => conv(s, () => cancelReply(s.target, s.u.id), `The reply to ${s.u.name} was dropped.`);
+  const doIgnore = (s: Spot) => conv(s, async () => {
+    const off = await toggleIgnore(s.target, s.u.id);
+    toast(off ? `No longer answering ${s.u.name}.` : `Answering ${s.u.name} again.`, "ok");
+  }, "");
+  const doSend = (s: Spot, text: string) =>
+    conv(s, async () => {
+      const r = await sendOwnMessage(s.target, s.u.id, text);
+      if (!r.ok) throw new Error(r.error || "Could not send it");
+    }, "");
+  /** Reply now on a row: from the queue or a person's card, without putting them on stage. */
+  async function replyRow(r: QRow) {
+    actions.hold();
+    uiPlay("send", { level: 0.6 });
+    try {
+      await sendReply(r.target, r.u.id);
+    } catch (e: any) {
+      toast(e?.message || "That did not work", "err");
     }
   }
 
-  // The log: thoughts to their own panel, the rest to the log face, a line or a
-  // burst of them at a time, and friend requests noticed as they are announced.
-  let logId = 0;
-  let logBuf: LogLite[] = [];
-  let logFrame = 0;
-  const FRIEND_ASK = /^(?:pending )?friend request from (.+?)(?: \(was previously a friend\))?,? (?:will accept|accepting) in \d+s/i;
-  const FRIEND_TAKEN = /^accepted friend request from (.+)$/i;
-  function friendNews(text: string) {
-    const ask = FRIEND_ASK.exec(text);
-    if (ask) {
-      play("friend");
-      pushFeed("friend", `${ask[1]} wants to be friends`, undefined, ask[1]);
-      friendsSoon();
+  // ── Going places ─────────────────────────────────────────────────────────
+  /** Where Esc goes from a conversation opened from another page: back there. */
+  let cameFrom = $state<Page | null>(null);
+  /** Esc, when a page has something open to close first. */
+  let pageBack = $state<(() => void) | null>(null);
+
+  function goPage(p: Page) {
+    cameFrom = null;
+    if (p === "now") return goNow();
+    const t = Date.now() / 1000;
+    if (page === p) {
+      dir = hold(dir, t, MANUAL_HOLD);
+      uiPlay("select");
       return;
     }
-    const took = FRIEND_TAKEN.exec(text);
-    if (took) {
-      // Taken from here, the runner logs an id and the feed already said so; by its own timer, a name.
-      if (!/^\d+$/.test(took[1])) pushFeed("friend", `Now friends with ${took[1]}`, undefined, took[1]);
-      friendsSoon();
-    }
+    dir = showPage(dir, p, tour, t);
+    afterGoing();
   }
-  function onLog(e: { level?: string; text?: string; source?: string; ts?: number }) {
-    if (!e.text || gone()) return;
-    if (e.level === "think") {
-      const [head, ...rest] = e.text.split("\n");
-      const model = /\((.*)\)/.exec(head)?.[1] ?? "";
-      thoughts = [...thoughts, { model, text: rest.join("\n").trim(), at: Date.now() / 1000 }].slice(-4);
-      return;
-    }
-    if (isRule(e.text.trim()) || isMore(e.text)) return;
-    const text = tidy(e.text.split("\n")[0]);
-    if (!text) return;
-    const src = sourceInfo(e.source ?? "", get(chatAccounts));
-    logBuf.push({ id: ++logId, at: e.ts ?? Date.now() / 1000, level: kindOf(e.level ?? "info"), text,
-                  who: src.name, avatar: src.avatar, icon: src.icon });
-    if (!logFrame) {
-      logFrame = requestAnimationFrame(() => {
-        logFrame = 0;
-        logs = [...logs, ...logBuf].slice(-30);
-        logBuf = [];
+  /**
+   * Back to what is happening: whoever is being answered, or just landed. With nobody,
+   * the quiet page, rather than an old conversation nobody is answering.
+   */
+  function goNow() {
+    const t = Date.now() / 1000;
+    const top = ranked(rowsFor(queue), t).find((r) => score(r, t) > 0);
+    const was = page;
+    dir = top ? pick(live(dir), top.key, t) : showPage(live(dir), "now", tour, t);
+    if (was !== "now") afterGoing();
+    else uiPlay("select");
+  }
+  /** A page gone to by hand is heard arriving, and the focus goes with it when the keys took it there. */
+  function afterGoing() {
+    uiPlay("whoosh");
+    arrivals(6);
+    const m = get(inputMode);
+    if (m === "pointer") clearFocus();
+    else domUpdated().then(() => requestAnimationFrame(() => focusPage(m)));
+  }
+  function stepPage(d: 1 | -1) {
+    const i = tabs.indexOf(page);
+    goPage(tabs[(i + d + tabs.length) % tabs.length]);
+  }
+  function pickRow(key: string) {
+    dir = pick(dir, key, now);
+    uiPlay("select");
+  }
+  /** Put someone on stage who is not in the queue: their real history, read now because someone asked. */
+  function openPerson(p: Person) {
+    const was = page;
+    if (!queue.some((r) => r.key === p.key)) {
+      world.snapshots.set(p.key, {
+        key: p.key, target: p.target, browsing: true, account: $chatAccounts.find((a) => a.id === p.target),
+        u: { id: p.id, name: p.name, avatar: p.avatar, username: "", snippet: "", count: 0, ts: p.last_ts },
+        st: { phase: "needs", tone: "muted", short: "", title: "" },
       });
+      asked.add(convKey(p.target, p.id));
+      loadConversation(p.target, p.id).catch(() => {});
     }
-    friendNews(text);
+    dir = pick(dir, p.key, Date.now() / 1000);
+    if (was !== "now") {
+      cameFrom = was;
+      afterGoing();
+    } else {
+      uiPlay("select");
+    }
+  }
+  /** The same from just an account and an id: a row in a list, the last reply. */
+  function openConversation(target: string, id: string, as?: { name: string; avatar?: string }) {
+    const known = world.people.find((p) => p.id === id && p.target === target);
+    const who = as ?? world.whoIs(target, id);
+    openPerson(known ?? { key: `${target}:${id}`, target, id, name: who.name, avatar: who.avatar,
+                          platform: world.accounts.find((a) => a.id === target)?.platform ?? "discord", messages: 0 });
+  }
+  /** Back one level: what is open on the page, then where the conversation was opened from, then out. */
+  function goBack() {
+    if (pageBack) return pageBack();
+    if (cameFrom) {
+      const to = cameFrom;
+      goPage(to);
+      return;
+    }
+    close();
+  }
+  /** Leave for a page of the app: the address is what App.svelte follows. */
+  function openRoute(route: string) {
+    close();
+    window.location.hash = `/${route}`;
+  }
+  const actions: PageActions = {
+    open: openConversation,
+    openPerson,
+    go: goPage,
+    leaveTo: openRoute,
+    hold: () => (dir = hold(dir, Date.now() / 1000, MANUAL_HOLD)),
+    // Asked for by the page it is for. A page on its way out saying "nothing now" comes after the next one has
+    // said what it wants, so it only takes back its own.
+    light: (from, r) => {
+      if (r) pageLight = { page: from, ...r };
+      else if (pageLight?.page === from) pageLight = null;
+    },
+    onBack: (fn) => (pageBack = fn),
+    reply: (target, id) => {
+      const r = queue.find((x) => x.target === target && String(x.u.id) === id);
+      if (r) replyRow(r);
+    },
+  };
+
+  function togglePinned() {
+    dir = togglePin(dir);
+    uiPlay(dir.pinned ? "on" : "off");
+  }
+  function toggleSound() {
+    bigPictureSound.update((v) => !v);
+    if (get(bigPictureSound)) {
+      primeAudio();
+      uiPlay("on");
+    } else {
+      uiPlay("off");
+    }
+  }
+  function toggleHide() {
+    hideText = !hideText;
+    uiPlay(hideText ? "off" : "on");
+  }
+  function toggleHelp() {
+    help = !help;
+    uiPlay(help ? "open" : "release");
   }
 
-  // ── Controls ─────────────────────────────────────────────────────────────
+  // ── Keys ─────────────────────────────────────────────────────────────────
+  let composer = $state<HTMLInputElement | null>(null);
+  function write() {
+    composer?.focus();
+  }
+  function onKey(e: KeyboardEvent) {
+    if (gone()) return;
+    // Writing to someone: the letters are theirs, not shortcuts. Escape still
+    // works, to step out of the box and then out of the view.
+    const el = document.activeElement;
+    const typing = !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA");
+    if (typing && e.key !== "Escape") return;
+    if (typing && e.key === "Escape") {
+      e.preventDefault();
+      (el as HTMLElement).blur();
+      return;
+    }
+    const k = e.key.toLowerCase();
+    const plain = !e.ctrlKey && !e.metaKey && !e.altKey;
+    if (e.key === "Escape") {
+      e.preventDefault();
+      if (help) toggleHelp();
+      else goBack();
+    } else if (!plain) {
+      return;
+    } else if (e.key === "ArrowRight" || (e.key === "Tab" && !e.shiftKey)) {
+      e.preventDefault();
+      moveFocus("right");
+    } else if (e.key === "ArrowLeft" || (e.key === "Tab" && e.shiftKey)) {
+      e.preventDefault();
+      moveFocus("left");
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      moveFocus("up");
+    } else if (e.key === "ArrowDown") {
+      e.preventDefault();
+      moveFocus("down");
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      inputMode.set("keys");
+      if (!pressFocus()) moveFocus("down");
+    } else if (e.key === " ") {
+      e.preventDefault();
+      togglePinned();
+    } else if (k === "q" || e.key === "[") {
+      inputMode.set("keys");
+      stepPage(-1);
+    } else if (k === "e" || e.key === "]") {
+      inputMode.set("keys");
+      stepPage(1);
+    } else if (/^[1-9]$/.test(e.key)) {
+      const p = tabs[Number(e.key) - 1];
+      inputMode.set("keys");
+      if (p) goPage(p);
+    } else if (k === "l") {
+      inputMode.set("keys");
+      goPage("now");
+    } else if (k === "r") {
+      if (spot && canHurry) doReply(spot);
+    } else if (k === "w") {
+      if (spot) {
+        e.preventDefault();
+        write();
+      }
+    } else if (e.key === "?" || (k === "/" && e.shiftKey)) {
+      toggleHelp();
+    } else if (k === "m") {
+      toggleSound();
+    } else if (k === "h") {
+      toggleHide();
+    } else {
+      return;
+    }
+    wake();
+    dir = hold(dir, Date.now() / 1000, MANUAL_HOLD);
+  }
+  function onPad(cmd: PadCommand) {
+    if (gone()) return;
+    wake();
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+    inputMode.set("pad");
+    if (cmd === "up" || cmd === "down" || cmd === "left" || cmd === "right") moveFocus(cmd, "pad");
+    else if (cmd === "ok") {
+      if (!pressFocus()) focusPage("pad");
+    } else if (cmd === "back") {
+      if (help) toggleHelp();
+      else goBack();
+    } else if (cmd === "prev") stepPage(-1);
+    else if (cmd === "next") stepPage(1);
+    else if (cmd === "stay") togglePinned();
+    else if (cmd === "hide") toggleHide();
+    else if (cmd === "keys") toggleHelp();
+    else if (cmd === "reply" && spot && canHurry) doReply(spot);
+    dir = hold(dir, Date.now() / 1000, MANUAL_HOLD);
+  }
+
+  // ── The pointer ──────────────────────────────────────────────────────────
   function wake() {
     awake = true;
     if (sleepTimer) clearTimeout(sleepTimer);
     sleepTimer = setTimeout(() => (awake = false), 3200);
   }
+  function onPointerMove(e: PointerEvent) {
+    wake();
+    // Back from the keys: the plate stops waiting where they left it.
+    if (e.pointerType === "mouse" && (e.movementX || e.movementY) && get(inputMode) !== "pointer") {
+      inputMode.set("pointer");
+      setFocus(null);
+    }
+  }
+  function onPointerDown(e: PointerEvent) {
+    wake();
+    if (help && !(e.target as Element | null)?.closest?.(".bph-list, .bph-key")) help = false;
+  }
+  /** The pointer moving: nothing slides away from under it. */
+  let lastHold = 0;
+  function holdStage() {
+    const t = Date.now();
+    if (t - lastHold < 400) return;
+    lastHold = t;
+    dir = hold(dir, t / 1000);
+  }
+
+  // ── Closing ──────────────────────────────────────────────────────────────
   /**
    * Out of fullscreen first, while this view still covers everything, and
    * only then away: the window shrinks under this view alone, and the app is
@@ -638,209 +681,6 @@
     await settled;
     removeEventListener("resize", onResize);
   }
-  /** Closed or closing: the clock and the feeds stop at once, not after the fade. */
-  const gone = () => !get(bigPicture);
-  function toggleSound() {
-    bigPictureSound.update((v) => !v);
-    if (get(bigPictureSound)) {
-      primeAudio();
-      play("sent");
-    }
-  }
-  function onKey(e: KeyboardEvent) {
-    if (gone()) return;
-    // Writing to someone: the letters are theirs, not shortcuts. Escape still
-    // works, to step out of the box and then out of the view.
-    const el = document.activeElement;
-    const typing = !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA");
-    if (typing && e.key !== "Escape") return;
-    if (typing && e.key === "Escape") {
-      e.preventDefault();
-      (el as HTMLElement).blur();
-      return;
-    }
-    const k = e.key.toLowerCase();
-    const plain = !e.ctrlKey && !e.metaKey && !e.altKey;
-    if (e.key === "Escape") {
-      e.preventDefault();
-      // The list of shortcuts first, then the view.
-      if (help) help = false;
-      else close();
-    } else if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
-      e.preventDefault();
-      dir = step(dir, rowsFor(queue), e.key === "ArrowRight" ? 1 : -1, now, cycle);
-    } else if (e.key === " ") {
-      e.preventDefault();
-      dir = togglePin(dir);
-    } else if (/^[1-9]$/.test(e.key) && plain) {
-      const c = chapters[Number(e.key) - 1];
-      if (c) goChapter(c);
-    } else if (k === "l" && plain) {
-      goLive();
-    } else if (e.key === "?" || (k === "/" && e.shiftKey)) {
-      help = !help;
-    } else if (k === "m" && plain) {
-      toggleSound();
-    } else if (k === "h" && plain) {
-      hideText = !hideText;
-    }
-    wake();
-  }
-  function pickRow(key: string) {
-    dir = pick(dir, key, now);
-  }
-  /** A chapter chosen: that scene now, held a while, even with people waiting. */
-  function goChapter(s: Scene) {
-    dir = showScene(dir, s, cycle, Date.now() / 1000);
-    play("tap");
-  }
-  /**
-   * Back to the conversations: the one the director ranks first, held a while.
-   * Even an old one nobody is answering, which it would not put up by itself:
-   * asking for Live and getting nothing would look broken.
-   */
-  function goLive() {
-    const t = Date.now() / 1000;
-    const top = ranked(rowsFor(queue), t)[0];
-    dir = top ? pick(live(dir), top.key, t) : live(dir);
-    play("tap");
-  }
-  /** The pointer moving over the stage: nothing slides away from under it. */
-  let lastHold = 0;
-  function holdStage() {
-    const t = Date.now();
-    if (t - lastHold < 400) return;
-    lastHold = t;
-    dir = hold(dir, t / 1000);
-  }
-  /** Leave for a page of the app: the address is what App.svelte follows. */
-  function openRoute(route: string) {
-    close();
-    window.location.hash = `/${route}`;
-  }
-
-  // ── Doing something about the conversation on stage ──────────────────────
-  // The same four things the Chats tab offers, so Big Picture is not only
-  // something to watch. Each holds the stage on that conversation for a while,
-  // since acting on one and then having it slide away would be maddening.
-  let acting = $state(false);
-
-  async function act(s: Spot, run: () => Promise<unknown>, done: string) {
-    if (acting) return;
-    acting = true;
-    dir = pick(dir, s.key, now);
-    try {
-      await run();
-      if (done) toast(done, "ok");
-    } catch (e: any) {
-      toast(e?.message || "That did not work", "err");
-    } finally {
-      acting = false;
-    }
-  }
-
-  const doReply = (s: Spot) => act(s, () => sendReply(s.target, s.u.id), "");
-  const doCancel = (s: Spot) => act(s, () => cancelReply(s.target, s.u.id), `The reply to ${s.u.name} was dropped.`);
-  const doIgnore = (s: Spot) => act(s, () => toggleIgnore(s.target, s.u.id), `No longer answering ${s.u.name}.`);
-  const doSend = (s: Spot, text: string) =>
-    act(s, async () => {
-      const r = await sendOwnMessage(s.target, s.u.id, text);
-      if (!r.ok) throw new Error(r.error || "Could not send it");
-    }, "");
-
-  // ── Doing something in the other scenes ──────────────────────────────────
-  // Each keeps its scene up a while, for the same reason, and lands with a
-  // little flourish (fx.ts) so it is plain that it worked.
-  let busy = $state<Record<string, boolean>>({});
-  const setBusy = (id: string, on: boolean) => {
-    const next = { ...busy };
-    if (on) next[id] = true;
-    else delete next[id];
-    busy = next;
-  };
-
-  async function answerFriend(r: FriendReq, action: "accept" | "decline", el: HTMLElement | null) {
-    if (busy[r.id]) return;
-    setBusy(r.id, true);
-    dir = hold(dir, Date.now() / 1000, MANUAL_HOLD);
-    const who = r.display_name || r.username;
-    try {
-      const res: any = await api.friendAction(action, r.id, r.target);
-      if (res?.ok) {
-        friendGone = { ...friendGone, [r.id]: action };
-        if (action === "accept") {
-          burstFrom(el, { count: 28, spread: 160 });
-          roomPulse += 1;
-          play("accept");
-        }
-        friendReqs = friendReqs.filter((x) => x.id !== r.id);
-        pushFeed("friend", action === "accept" ? `Now friends with ${who}` : `Declined ${who}`, r.avatar, who);
-        toast(`${action === "accept" ? "Accepted" : "Declined"} ${who}.`, "ok");
-      } else {
-        toast(res?.reason || "Discord refused that", "err");
-      }
-    } catch (e: any) {
-      toast(e?.message || "That did not work", "err");
-    } finally {
-      setBusy(r.id, false);
-    }
-  }
-
-  async function togglePause(a: BPAccount) {
-    if (busy[a.id]) return;
-    setBusy(a.id, true);
-    dir = hold(dir, Date.now() / 1000, MANUAL_HOLD);
-    try {
-      const res: any = await api.accountAction(a.id, "pause");
-      // The worker answers with where the toggle landed.
-      if (typeof res?.paused === "boolean") {
-        accts = accts.map((x) => (x.id === a.id ? { ...x, live: true, paused: res.paused } : x));
-        play(res.paused ? "limit" : "accept");
-        toast(res.paused ? `${a.name} stopped replying` : `${a.name} is replying again`, "ok");
-      } else {
-        toast(res?.reason || "The account did not answer", "err");
-      }
-    } catch (e: any) {
-      toast(e?.message || "That did not work", "err");
-    } finally {
-      setBusy(a.id, false);
-    }
-  }
-
-  async function setMood(a: BPAccount, mood: string, el: HTMLElement) {
-    if (busy[a.id]) return;
-    setBusy(a.id, true);
-    dir = hold(dir, Date.now() / 1000, MANUAL_HOLD);
-    try {
-      const res: any = await api.accountMood(a.id, mood);
-      if (res && res.ok === false) throw new Error(res.reason || "The account did not answer");
-      accts = accts.map((x) => (x.id === a.id ? { ...x, live: true, mood } : x));
-      burstFrom(el, { count: 16, spread: 90 });
-      roomPulse += 1;
-      play("accept");
-      toast(`${a.name} is now ${mood}`, "ok");
-    } catch (e: any) {
-      toast(e?.message || "That did not work", "err");
-    } finally {
-      setBusy(a.id, false);
-    }
-  }
-
-  const world = $derived<SceneWorld>({
-    accounts: accts, activity, dates: activityDates, pictures, sent: sentPics, picturesBlurred,
-    friends: friendReqs, friendGone, persona, moods, issues, busy,
-  });
-  const actions: SceneActions = {
-    onpause: togglePause,
-    onmood: setMood,
-    onanswer: answerFriend,
-    onreveal: () => {
-      picsShown = true;
-      dir = hold(dir, Date.now() / 1000, MANUAL_HOLD);
-    },
-    onhold: () => (dir = hold(dir, Date.now() / 1000, MANUAL_HOLD)),
-    onopen: openRoute,
-  };
 
   // ── On and off ───────────────────────────────────────────────────────────
   const stops: (() => void)[] = [];
@@ -868,13 +708,14 @@
     }, Math.max(0, ARRIVED_MS - (performance.now() - mountedAt))));
   }
   let covering: ReturnType<typeof setTimeout> | null = null;
-  /** The view has arrived: what is not on the first screen can be built now. */
+  /** The view has arrived: what is not on the first screen can be asked for now. */
   let arrived = $state(false);
 
   onMount(() => {
     mountedAt = performance.now();
     bigPictureCloser.fn = close;
     themeColours = themePalette();
+    themeAccent = cssColour(getComputedStyle(document.documentElement).getPropertyValue("--color-accent"));
     // The app underneath fades out as this fades in (App.svelte), and once it
     // is gone it is not drawn at all. Only then does the window go fullscreen,
     // so the resize lays out this view alone rather than the whole app too.
@@ -886,47 +727,46 @@
     }, 180);
     document.addEventListener("fullscreenchange", onFullscreenChange);
     wake();
+    uiPlay("dawn");
+    arrivals(8, 260);
     // The first screen: who is waiting, and the accounts across the top.
     (get(chatAccounts).length ? Promise.resolve(get(chatAccounts)) : loadChatAccounts())
       .then((list) => list.forEach((a) => refreshChats(a.id, { maxAge: 15000, quiet: true })))
       .catch(() => {});
-    loadRecent().then(() => onceArrived(() => {
-      loadStats();
-      loadMemoryStored();
-    }));
-    loadAccounts().then(() => {
-      // The first look went before the accounts were known: Snapchat's conversations join it now.
-      if (accts.some((a) => a.platform === "snapchat")) loadRecent().then(loadMemoryStored);
-      onceArrived(loadFriends);
+    world.loadDay();
+    world.loadAccounts().then(() => {
+      world.loadMinecraft();
+      onceArrived(() => {
+        world.loadFriends();
+        world.loadPeople();
+      });
     });
     // Everything else, once it is on screen.
     onceArrived(() => {
-      // Its pictures and persona come with it, as the account on show's (the effect by loadPersona).
+      // Its pictures and persona come with it, as the account on show's (the effect by facePersona).
       arrived = true;
       startUsageLive();
       loadUsage().catch(() => {});
       loadProviders().catch(() => {});
-      loadActivity();
+      world.loadActivity();
+      world.loadWeek();
       personasRes.refresh({ maxAge: 15_000, quiet: true });
+      void loadDrafts();
+      world.loadBacklog();
     });
-    stops.push(subscribeEvents("chat", onChat), subscribeEvents("model", onModel), subscribeLogs(onLog));
+    stops.push(subscribeEvents("chat", world.onChat), subscribeEvents("model", world.onModel), subscribeLogs(world.onLog),
+               useThoughts(), startGamepad(onPad));
     clock = setInterval(() => {
       if (document.hidden || gone()) return;
       now = Date.now() / 1000;
-      dir = tick(dir, rowsFor(queue), now, cycle);
-      writeOneMemory();
+      dir = tick(dir, rowsFor(queue), now, tour);
+      world.writeOneSummary(!dir.spotlight);
     }, 1000);
     slow = setInterval(() => {
       if (document.hidden || gone()) return;
       slowTicks += 1;
-      loadStats();
-      loadAccounts();
-      loadActivity();
-      loadPictures();
-      // Someone new may have talked since: the recent list, and any summary they already have.
-      loadRecent().then(loadMemoryStored);
-      // Friend requests also come in through the log as they arrive; this catches the rest.
-      if (slowTicks % 5 === 0) loadFriends();
+      world.slow(slowTicks);
+      world.ensure(page);
     }, 60000);
   });
   onDestroy(() => {
@@ -939,8 +779,8 @@
     if (clock) clearInterval(clock);
     if (slow) clearInterval(slow);
     if (sleepTimer) clearTimeout(sleepTimer);
-    if (friendsQueued) clearTimeout(friendsQueued);
-    if (logFrame) cancelAnimationFrame(logFrame);
+    if (melting) clearTimeout(melting);
+    world.destroy();
     document.removeEventListener("fullscreenchange", onFullscreenChange);
     setFullscreen(false);
   });
@@ -948,11 +788,10 @@
   const hhmm = $derived(fmtDate(now * 1000, HOUR_MINUTE));
 
   /**
-   * The whole view arriving, out of a slight zoom like a scene cut, and
-   * leaving the same way. Opacity and scale only, which the graphics card
-   * does by itself: they used to blur the whole screen as well, and a blur the
-   * size of the screen, redrawn every frame on top of everything in it, was
-   * where the frames went.
+   * The whole view arriving, out of a slight zoom like a scene cut, and leaving the
+   * same way. Opacity and scale only, which the graphics card does by itself: they
+   * used to blur the whole screen as well, and a blur the size of the screen, redrawn
+   * every frame on top of everything in it, was where the frames went.
    */
   function enter(_node: Element) {
     if (!get(motionEnabled)) return { duration: 200, css: (t: number) => `opacity:${t}` };
@@ -972,339 +811,67 @@
   }
 </script>
 
-<svelte:window onkeydown={onKey} onmousemove={wake} onpointerdown={wake} />
+<svelte:window onkeydown={onKey} onpointermove={onPointerMove} onpointerdown={onPointerDown} />
 
-<!-- no-queue: nobody is waiting, so the queue's column folds away and the stage has the room. -->
-<div class="bp" class:is-asleep={!awake} class:no-queue={!railed.length} role="dialog" aria-modal="true"
-     aria-label="Big Picture Mode" in:enter out:leave>
+<div class="bp" class:is-asleep={!awake} class:is-private={hideText} data-input={$inputMode} bind:this={bpEl}
+     role="dialog" aria-modal="true" aria-label="Big Picture Mode" in:enter out:leave>
   <BPBackdrop art={room.art} seed={room.seed} look={room.look} energy={room.energy} palette={room.palette}
-              pulse={roomPulse} focus={railed.length ? 0.47 : 0.4} />
+              pulse={roomPulse} focus={lightX} focusY={lightY} oncolours={(c) => (roomColour = c[0] ?? null)} />
+  <div class="bp-plate" use:focusPlate aria-hidden="true"></div>
 
-  <!-- The bar itself stays: the time, which accounts are on and how they are
-       doing are the things worth being able to glance at, and having them
-       disappear whenever the mouse sat still read as the panel breaking. Only
-       the buttons, which are chrome, fade back when nothing is happening. -->
-  <header class="bp-top">
-    <div class="bp-brand">
-      <!-- A small beat each time something happens, so the mark itself is alive. -->
-      {#key feed[0]?.id ?? 0}<span class="bp-beat"><Icon name="bigpicture" size={20} /></span>{/key}
-      <span>Big Picture</span>
-    </div>
-    <div class="bp-clock">{hhmm}</div>
-    <div class="bp-accts">
-      {#each accts as a (a.id)}
-        <button class="bp-acct" data-state={a.state} class:is-paused={a.paused} onclick={() => goChapter("accounts")}
-                title="{a.name}: {a.paused ? 'paused' : a.state}{a.ping != null ? `, ${a.ping} ms` : ''}">
-          <Avatar src={a.avatar} name={a.name} size={26} zoom={false} /><i></i>
-        </button>
-      {/each}
-    </div>
-    <div class="bp-pills">
-      {#if urgent.length}
-        <button class="bp-pill" data-tone={urgent.some((i) => i.level === "error") ? "bad" : "warn"}
-                onclick={() => goChapter("health")} title={urgent.map((i) => i.title).join(" · ")}>
-          <i></i>{urgent.length} to look at
-        </button>
-      {:else}
-        <span class="bp-pill" data-tone="good" title="Nothing needs attention"><i></i>All good</span>
-      {/if}
-      {#if friendReqs.length}
-        <button class="bp-pill is-friends" onclick={() => goChapter("friends")} in:fade={{ duration: 300 }}
-                title="Friend requests waiting">
-          <Avatar src={friendReqs[0].avatar} name={friendReqs[0].display_name || friendReqs[0].username} size={20} zoom={false} />
-          {friendReqs.length} friend request{friendReqs.length === 1 ? "" : "s"}
-        </button>
-      {/if}
-    </div>
-    <div class="bp-ctrls" class:is-dim={!awake}>
-      <button class="bp-btn" onclick={() => (help = !help)} title="Shortcuts (?)" aria-label="Shortcuts">
-        <Icon name="keyboard" size={17} />
-      </button>
-      <button class="bp-btn" class:is-on={$bigPictureSound} onclick={toggleSound} title="Sound (M)" aria-label="Sound">
-        <Icon name={$bigPictureSound ? "speaker" : "speakerOff"} size={17} />
-      </button>
-      <button class="bp-btn" class:is-on={dir.pinned} onclick={() => (dir = togglePin(dir))}
-              title={dir.pinned ? "Let it move on (Space)" : "Hold what is on stage (Space)"} aria-label="Hold">
-        <Icon name={dir.pinned ? "pause" : "play"} size={15} />
-      </button>
-      <button class="bp-btn" class:is-on={hideText} onclick={() => (hideText = !hideText)} title="Hide message text and pictures (H)" aria-label="Hide text">
-        <Icon name={hideText ? "eyeOff" : "eye"} size={16} />
-      </button>
-      <button class="bp-btn is-close" onclick={close} title="Leave Big Picture (Esc)" aria-label="Leave Big Picture">
-        <Icon name="close" size={17} />
-      </button>
-    </div>
-  </header>
+  <BPNav {tabs} {page} progress={pageProgress(dir, now)} sceneKey={dir.idle?.scene ?? 0} {auto} live={groups.answering}
+         arrivals={world.arrivals} {inboxCount} inboxBad={urgent.some((i) => i.level === "error")} accounts={world.accounts}
+         clock={hhmm} showClock={!(page === "now" && !spot)} {awake} sound={$bigPictureSound} hidden={hideText}
+         ongo={goPage} onauto={togglePinned} onsound={toggleSound} onhide={toggleHide} onleave={close} />
 
-  <main class="bp-main">
-    <aside class="bp-left" aria-hidden={!railed.length}>
-      <BPQueue rows={railed} spotlight={dir.spotlight} {multi} {hideText} {now} onpick={pickRow} />
-    </aside>
-    <!-- Moving the pointer over the stage holds it: nothing slides away from under a click. -->
-    <section class="bp-center" use:pointerActivity={holdStage}>
-      <BPStage {spot} {messages} {now} {hideText} {multi}
-               onearlier={spot ? () => loadEarlier(spot.target, spot.u.id) : undefined}
-               busy={acting} replying={!!spot && !!$replying[spot.u.id]}
-               onreply={spot ? () => doReply(spot) : undefined}
-               oncancel={spot ? () => doCancel(spot) : undefined}
-               onignore={spot ? () => doIgnore(spot) : undefined}
-               onsend={spot ? (t) => doSend(spot, t) : undefined}
-               {scene} sceneKey={dir.idle?.scene ?? 0}
-               sceneData={{ recent, today, hourly: stats.hourly, top: stats.top, memory: memPerson, waiting: railed.length,
-                            world, act: actions }} />
-      <BPChapters {chapters} current={spot ? null : scene} live={!!spot} waiting={railed.length}
-                  progress={sceneProgress(dir, now)} sceneKey={dir.idle?.scene ?? 0} {held} pinned={dir.pinned}
-                  {badges} tones={{ health: urgent.some((i) => i.level === "error") ? "bad" : "warn" }}
-                  ongo={goChapter} onlive={goLive} onpin={() => (dir = togglePin(dir))} />
-    </section>
-    <!-- Built once the view has arrived, and faded in: the first frame has the stage and the queue to build, not everything. -->
-    <aside class="bp-right" class:is-waiting={!arrived}>
-      {#if arrived}
-        <BPBrain active={brainModel} forName={spot && byConv[spot.u.id] ? spot.u.name : ""}
-                 {helper} {pulse} plan={$savedPlan} models={$usage.models} {now} />
-        <BPThoughts {thoughts} {hideText} {now} />
-        <BPRotate items={feed} {now} {hideText} {today} top={stats.top} accounts={accts} {logs} />
-      {/if}
-    </aside>
+  <!-- The pointer moving holds it: nothing slides away from under a click. -->
+  <main class="bp-main" use:pointerActivity={holdStage}>
+    {#key pageKey}
+      <section class="bp-page" data-page={page} in:pageIn={{ dir: slide }} out:pageOut={{ dir: slide }}>
+        {#if page === "now"}
+          <BPNow {world} act={actions} {spot} {messages} answering={groups.answering} next={groups.next} waiting={groups.waiting}
+                 {multi} {now} {driving} thought={stageThought} otherThought={railThought} busy={acting} replying={$replying}
+                 writing={!!workingNow || (!!spot && spot.st.step === 2)} plan={$savedPlan} models={$usage.models} bind:composer
+                 onpick={pickRow} onreply={replyRow} onearlier={spot ? () => loadEarlier(spot.target, spot.u.id) : undefined}
+                 onstagereply={spot ? () => doReply(spot) : undefined} oncancel={spot ? () => doCancel(spot) : undefined}
+                 onignore={spot ? () => doIgnore(spot) : undefined} onsend={spot ? (t) => doSend(spot, t) : undefined}
+                 onmodel={() => goPage("today")} />
+        {:else if page === "people"}
+          <BPPeople {world} act={actions} {now} {queue} replying={$replying} onreply={replyRow} />
+        {:else if page === "accounts"}
+          <BPAccounts {world} act={actions} {now} moodsOf={(id) => world.moodsFor(personaOfAccount(id))} />
+        {:else if page === "today"}
+          <BPToday {world} act={actions} tokens={tokensToday} requests={requestsToday} models={$usage.models} plan={$savedPlan}
+                   working={workingNow ? `${workingNow.provider}|${workingNow.model}` : null} driven={held} />
+        {:else if page === "persona"}
+          <BPPersona {world} act={actions} name={pName} face={faceAcct} {speakers} {choices} current={facePersona} onwho={chooseFace} />
+        {:else if page === "pictures"}
+          <BPPictures {world} act={actions} {now} blurred={picturesBlurred} {hideText} {choices} current={facePersona} onwho={chooseFace}
+                      onreveal={() => { picsShown = true; actions.hold(); }} />
+        {:else if page === "minecraft" && world.minecraft}
+          <BPMinecraft account={world.minecraft} />
+        {:else if page === "inbox"}
+          <BPInbox {world} act={actions} {issues} {now} />
+        {/if}
+      </section>
+    {/key}
   </main>
 
-  <footer class="bp-bottom">
-    <BPStats {today} hourly={stats.hourly} accounts={accts} />
-  </footer>
-
-  {#if help}
-    <!-- Every shortcut in one place; a click anywhere, or Esc, puts it away. -->
-    <div class="bp-help" role="presentation" onclick={() => (help = false)} transition:fade={{ duration: 180 }}>
-      <div class="bp-help-card" role="dialog" aria-label="Shortcuts">
-        <div class="bp-label">Shortcuts</div>
-        <dl>
-          <dt><kbd>←</kbd><kbd>→</kbd></dt><dd>The next conversation, or the next scene</dd>
-          <dt><kbd>1</kbd>–<kbd>9</kbd></dt><dd>Go to a chapter</dd>
-          <dt><kbd>L</kbd></dt><dd>Back to whoever is being answered</dd>
-          <dt><kbd>Space</kbd></dt><dd>Hold what is on stage, or let it move on</dd>
-          <dt><kbd>H</kbd></dt><dd>Hide message text and pictures</dd>
-          <dt><kbd>M</kbd></dt><dd>Sound on or off</dd>
-          <dt><kbd>?</kbd></dt><dd>This list</dd>
-          <dt><kbd>Esc</kbd></dt><dd>Leave Big Picture</dd>
-        </dl>
-        <p>Moving the pointer over the stage holds it while you look.</p>
-      </div>
-    </div>
-  {/if}
+  <BPHints {page} mode={$inputMode} canReply={canHurry && page === "now"} canWrite={!!spot && page === "now"}
+           backLabel={pageBack || cameFrom ? "Back" : "Leave"} showScore={page !== "today"}
+           replies={world.day.replies} people={world.day.people} tokens={tokensToday} {help}
+           onreply={spot ? () => doReply(spot) : undefined} onwrite={write} onpage={stepPage} onstay={togglePinned}
+           onback={goBack} onhelp={toggleHelp} onscore={() => goPage("today")} />
 </div>
 
 <style>
-  .bp {
-    --bp-faint: rgb(255 255 255 / 0.46);
-    --bp-muted: rgb(255 255 255 / 0.7);
-    position: fixed;
-    inset: 0;
-    z-index: 200;
-    display: grid;
-    grid-template-rows: auto minmax(0, 1fr) auto;
-    gap: clamp(12px, 1.6vh, 22px);
-    padding-bottom: clamp(12px, 2vh, 26px);
-    overflow: hidden;
-    color: #fff;
-    color-scheme: dark;
-    background: #04050a;
-    transform-origin: 50% 45%;
-  }
-  .bp.is-asleep { cursor: none; }
-  /* Over the backdrop, which is absolutely placed under everything. */
-  .bp-top, .bp-main, .bp-bottom { position: relative; z-index: 1; }
-  .bp-top {
-    display: flex;
-    align-items: center;
-    gap: 18px;
-    padding: clamp(12px, 2vh, 22px) clamp(16px, 2.2vw, 32px) 0;
-    transition: opacity 0.6s ease, transform 0.6s var(--swift);
-  }
-  /* Idle: the buttons sit back, but stay there and stay clickable. */
-  .bp-ctrls.is-dim { opacity: 0.25; }
-  .bp-ctrls:hover { opacity: 1; }
-  .bp-brand { display: flex; align-items: center; gap: 9px; font-size: 15px; font-weight: 750; letter-spacing: 0.02em; }
-  .bp-beat { display: grid; animation: bp-beat 0.7s var(--spring) both; }
-  @keyframes bp-beat { 0% { transform: scale(1); } 35% { transform: scale(1.22); } 100% { transform: scale(1); } }
-  /* overflow: visible so the glow is not cut square at the icon's own viewBox. */
-  .bp-brand :global(svg) {
-    overflow: visible;
-    color: var(--color-accent);
-    filter: drop-shadow(0 0 14px color-mix(in srgb, var(--color-accent) 42%, transparent));
-  }
-  .bp-clock { font-size: 15px; font-weight: 600; color: var(--bp-muted); font-variant-numeric: tabular-nums; }
-  .bp-accts { display: flex; gap: 6px; margin-left: 6px; }
-  .bp-acct { position: relative; display: grid; border-radius: 999px; transition: transform 0.3s var(--spring); }
-  .bp-acct:hover { transform: scale(1.1); }
-  .bp-acct i { position: absolute; right: -1px; bottom: -1px; width: 9px; height: 9px; border-radius: 999px; background: var(--bp-faint); box-shadow: 0 0 0 2px #04050a; }
-  .bp-acct[data-state="running"] i { background: var(--color-good); box-shadow: 0 0 0 2px #04050a, 0 0 14px color-mix(in srgb, var(--color-good) 42%, transparent); }
-  .bp-acct[data-state="running"].is-paused i { background: var(--color-warn); box-shadow: 0 0 0 2px #04050a; }
-  .bp-acct[data-state="crashing"] i { background: var(--color-bad); }
-
-  /* What is worth knowing without looking for it: whether anything is wrong, and who is asking to be friends. */
-  .bp-pills { display: flex; min-width: 0; gap: 8px; }
-  .bp-pill {
-    display: inline-flex;
-    flex-shrink: 0;
-    align-items: center;
-    gap: 7px;
-    height: 30px;
-    padding: 0 12px 0 10px;
-    border-radius: 999px;
-    font-size: 12.5px;
-    font-weight: 600;
-    white-space: nowrap;
-    color: var(--bp-muted);
-    background: rgb(255 255 255 / 0.05);
-    box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.07);
-    transition: transform 0.3s var(--spring), background-color 0.2s ease, color 0.2s ease;
-  }
-  button.bp-pill:hover { transform: translateY(-1px); color: #fff; background: rgb(255 255 255 / 0.1); }
-  button.bp-pill:active { transform: scale(0.95); }
-  .bp-pill i { width: 8px; height: 8px; border-radius: 999px; background: var(--bp-faint); }
-  .bp-pill[data-tone="good"] i { background: var(--color-good); box-shadow: 0 0 12px color-mix(in srgb, var(--color-good) 42%, transparent); }
-  .bp-pill[data-tone="warn"] { color: #fff; }
-  .bp-pill[data-tone="warn"] i { background: var(--color-warn); animation: bp-blink 1.8s ease-in-out infinite; }
-  .bp-pill[data-tone="bad"] { color: #fff; background: color-mix(in srgb, var(--color-bad) 22%, transparent); }
-  .bp-pill[data-tone="bad"] i { background: var(--color-bad); animation: bp-blink 1.2s ease-in-out infinite; }
-  @keyframes bp-blink { 50% { opacity: 0.35; } }
-  .bp-pill.is-friends { padding-left: 5px; color: #fff; background: color-mix(in srgb, var(--color-accent) 30%, transparent); }
-
-  .bp-ctrls { display: flex; gap: 6px; margin-left: auto; transition: opacity 0.6s ease; }
-  .bp-btn {
-    display: grid;
-    width: 40px;
-    height: 40px;
-    place-items: center;
-    border-radius: 14px;
-    color: var(--bp-muted);
-    background: rgb(255 255 255 / 0.06);
-    box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.08);
-    backdrop-filter: blur(14px);
-    transition: transform 0.3s var(--spring), color 0.2s ease, background-color 0.2s ease;
-  }
-  .bp-btn:hover { transform: scale(1.08); color: #fff; background: rgb(255 255 255 / 0.12); }
-  .bp-btn:active { transform: scale(0.92); }
-  .bp-btn.is-on { color: #fff; background: color-mix(in srgb, var(--color-accent) 40%, transparent); }
-  .bp-btn.is-close:hover { background: var(--color-bad); }
-
-  /* Each column is as wide as what it has to say. With nobody waiting the
-     queue's column folds to nothing and the stage takes its room; the moment
-     someone writes, it opens again. The queue keeps its full width while its
-     column folds, so it slides away under the edge instead of squeezing. */
-  .bp-main {
-    --bp-lw-open: clamp(250px, 21vw, 420px);
-    --bp-lw: var(--bp-lw-open);
-    --bp-rw: clamp(290px, 24vw, 460px);
-    display: grid;
-    grid-template-columns: var(--bp-lw) minmax(0, 1fr) var(--bp-rw);
-    gap: clamp(16px, 2vw, 30px);
-    min-height: 0;
-    padding: 0 clamp(16px, 2.2vw, 32px);
-    transition: grid-template-columns 0.85s var(--swift);
-  }
-  .bp.no-queue .bp-main { --bp-lw: 0px; }
-  .bp-left, .bp-center, .bp-right { display: flex; min-width: 0; min-height: 0; flex-direction: column; }
-  .bp-left { overflow: hidden; transition: opacity 0.45s ease; }
-  .bp-left > :global(.bpq) { width: var(--bp-lw-open); flex: 1 1 auto; }
-  .bp.no-queue .bp-left { opacity: 0; pointer-events: none; }
-  .bp-center { gap: 10px; }
-  .bp-right { gap: 12px; transition: opacity 0.4s ease; }
-  .bp-right.is-waiting { opacity: 0; }
-  :global(:root[data-motion="off"]) .bp-main { transition: none; }
-  .bp-bottom { padding: 0 clamp(16px, 2.2vw, 32px); }
-  .bp :global(.bp-label) {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 11.5px;
-    font-weight: 700;
-    letter-spacing: 0.2em;
-    text-transform: uppercase;
-    color: var(--bp-faint);
-  }
-  .bp :global(.bp-n) {
-    padding: 1px 8px;
-    border-radius: 999px;
-    font-size: 11px;
-    letter-spacing: 0;
-    color: #fff;
-    background: color-mix(in srgb, var(--color-accent) 45%, transparent);
-  }
-  /* The scenes' own headings, the same in every one of them. */
-  .bp :global(.bp-kicker) { font-size: 12px; font-weight: 600; letter-spacing: 0.18em; text-transform: uppercase; color: var(--bp-faint); }
-  /* By the width and the height both: on a short screen a 58px heading is a sixth of the stage. */
-  .bp :global(.bp-title) {
-    margin-bottom: 8px;
-    font-size: clamp(28px, min(4vw, 6.4vh), 58px);
-    font-weight: 750;
-    line-height: 1.04;
-    letter-spacing: -0.03em;
-    color: #fff;
-  }
-
-  .bp-help {
-    position: absolute;
-    inset: 0;
-    z-index: 5;
-    display: grid;
-    place-items: center;
-    padding: 16px;
-    background: rgb(0 0 0 / 0.55);
-    backdrop-filter: blur(6px);
-  }
-  .bp-help-card {
-    display: flex;
-    width: min(460px, 100%);
-    flex-direction: column;
-    gap: 14px;
-    padding: 24px 26px;
-    border-radius: 26px;
-    background: rgb(20 22 32 / 0.92);
-    box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.1), 0 40px 100px -30px rgb(0 0 0 / 0.9);
-  }
-  .bp-help-card dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px 18px; align-items: center; }
-  .bp-help-card dt { display: flex; gap: 4px; justify-content: flex-end; color: var(--bp-faint); }
-  .bp-help-card dd { font-size: 14px; color: #fff; }
-  .bp-help-card kbd {
-    min-width: 26px;
-    padding: 3px 7px;
-    border-radius: 7px;
-    font-family: inherit;
-    font-size: 12px;
-    font-weight: 700;
-    text-align: center;
-    color: #fff;
-    background: rgb(255 255 255 / 0.1);
-    box-shadow: inset 0 -2px 0 rgb(0 0 0 / 0.35), inset 0 0 0 1px rgb(255 255 255 / 0.12);
-  }
-  .bp-help-card p { font-size: 12.5px; color: var(--bp-faint); }
-
-  /* Narrower screens: the queue and the stage; the brain gives way. */
-  @media (max-width: 1100px) {
-    .bp-main { --bp-lw-open: clamp(220px, 34vw, 340px); grid-template-columns: var(--bp-lw) minmax(0, 1fr); }
-    .bp-right { display: none; }
-  }
-  @media (max-width: 960px) {
-    .bp-pill.is-friends, .bp-clock { display: none; }
-  }
-  /* A phone, or the app shrunk to its pocket size: one column, stage first. */
+  .bp-main { position: relative; z-index: 1; display: grid; min-width: 0; min-height: 0; grid-template: minmax(0, 1fr) / minmax(0, 1fr); }
+  /* The leaving and the arriving share the one cell, so one slides off as the other slides in. */
+  .bp-page { grid-area: 1 / 1; min-width: 0; min-height: 0; padding: clamp(2px, 0.6vh, 8px) var(--bp-side) 0; will-change: transform, opacity; }
+  /* A phone, or the app shrunk to its pocket size: the view scrolls, and each page is as tall as what is on it. */
   @media (max-width: 720px) {
-    .bp { overflow-x: hidden; overflow-y: auto; grid-template-rows: auto auto auto; }
-    /* minmax(0, ...): a column may be narrower than its longest line, which is what keeps it on screen.
-       min-height auto: the view scrolls here, so the middle row is as tall as the stage in it. At 0
-       it was squeezed into what the screen had left, and a tall scene ran on under the numbers. */
-    .bp-main { grid-template-columns: minmax(0, 1fr); min-height: auto; }
-    .bp-left > :global(.bpq) { width: auto; }
-    .bp.no-queue .bp-left { display: none; }
-    .bp-center { order: -1; min-height: 62vh; }
-    .bp-accts, .bp-clock, .bp-pills { display: none; }
-    .bp-top { flex-wrap: wrap; gap: 10px; }
-    .bp-btn { width: 36px; height: 36px; }
-    .bp-bottom :global(.bst) { grid-template-columns: minmax(0, 1fr); }
-    .bp-bottom :global(.bst-nums) { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .bp-bottom :global(.bst-accts) { flex-wrap: wrap; }
+    /* align-content: start, or the rows share out what is left of the screen and the bar floats down it. */
+    :global(.bp) { overflow-x: hidden; overflow-y: auto; grid-template-rows: auto auto auto; align-content: start; }
+    .bp-main { min-height: auto; grid-template: auto / minmax(0, 1fr); }
   }
-  :global(:root[data-motion="off"]) .bp-beat,
-  :global(:root[data-motion="off"]) .bp-pill i { animation: none; }
 </style>

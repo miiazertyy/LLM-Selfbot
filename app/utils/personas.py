@@ -38,10 +38,12 @@ from pathlib import Path
 
 import yaml
 
+from app.platforms import registry
+
 DEFAULT = "default"
 RESERVED = {"default", "everyone", "all", "new"}
 _ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
-_WEB_ID = re.compile(r"^(discord|snapchat)_([1-9][0-9]{0,2})$")
+_WEB_ID = registry.ACCOUNT_ID
 _IMAGE_EXT = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".mp4"}
 
 # Ten colours to tell them apart at a glance, named for the tooltip.
@@ -56,13 +58,50 @@ PALETTE = [
     {"id": "cyan", "name": "Cyan", "hex": "#22d3ee"},
     {"id": "blue", "name": "Blue", "hex": "#60a5fa"},
     {"id": "orchid", "name": "Orchid", "hex": "#e879f9"},
+    {"id": "red", "name": "Red", "hex": "#f87171"},
+    {"id": "coral", "name": "Coral", "hex": "#ff8a65"},
+    {"id": "peach", "name": "Peach", "hex": "#ffb38a"},
+    {"id": "gold", "name": "Gold", "hex": "#facc15"},
+    {"id": "olive", "name": "Olive", "hex": "#b5c265"},
+    {"id": "green", "name": "Green", "hex": "#4ade80"},
+    {"id": "sage", "name": "Sage", "hex": "#86c29c"},
+    {"id": "teal", "name": "Teal", "hex": "#2dd4bf"},
+    {"id": "ice", "name": "Ice", "hex": "#a5f3fc"},
+    {"id": "sky", "name": "Sky", "hex": "#38bdf8"},
+    {"id": "cobalt", "name": "Cobalt", "hex": "#3b82f6"},
+    {"id": "indigo", "name": "Indigo", "hex": "#818cf8"},
+    {"id": "lavender", "name": "Lavender", "hex": "#c4b5fd"},
+    {"id": "plum", "name": "Plum", "hex": "#c084fc"},
+    {"id": "magenta", "name": "Magenta", "hex": "#ec4899"},
+    {"id": "blush", "name": "Blush", "hex": "#fda4af"},
+    {"id": "sand", "name": "Sand", "hex": "#d6c3a1"},
+    {"id": "cocoa", "name": "Cocoa", "hex": "#c08a6b"},
+    {"id": "steel", "name": "Steel", "hex": "#94a3b8"},
+    {"id": "pearl", "name": "Pearl", "hex": "#e2e8f0"},
+]
+# Two colours that go together: its face and its card run from one to the other.
+THEMES = [
+    {"id": "aurora", "name": "Aurora", "a": "#34d399", "b": "#818cf8"},
+    {"id": "sunset", "name": "Sunset", "a": "#fb923c", "b": "#ec4899"},
+    {"id": "ocean", "name": "Ocean", "a": "#22d3ee", "b": "#3b82f6"},
+    {"id": "candy", "name": "Candy", "a": "#f472b6", "b": "#a78bfa"},
+    {"id": "lava", "name": "Lava", "a": "#f87171", "b": "#fbbf24"},
+    {"id": "forest", "name": "Forest", "a": "#4ade80", "b": "#2dd4bf"},
+    {"id": "dusk", "name": "Dusk", "a": "#818cf8", "b": "#f472b6"},
+    {"id": "citrus", "name": "Citrus", "a": "#facc15", "b": "#a3e635"},
+    {"id": "frost", "name": "Frost", "a": "#a5f3fc", "b": "#c4b5fd"},
+    {"id": "peach", "name": "Peach", "a": "#ffb38a", "b": "#fda4af"},
+    {"id": "neon", "name": "Neon", "a": "#e879f9", "b": "#22d3ee"},
+    {"id": "ember", "name": "Ember", "a": "#fb7185", "b": "#fb923c"},
+    {"id": "galaxy", "name": "Galaxy", "a": "#c084fc", "b": "#38bdf8"},
+    {"id": "silver", "name": "Silver", "a": "#e2e8f0", "b": "#94a3b8"},
 ]
 _HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 # What is the app's, not a persona's: what runs, where alerts go, the model server on this computer, who may command
 # the bot. A persona cannot change these; Settings shows them as the same for everyone.
 GLOBAL_ONLY = (
-    "services", "notifications", "discord.enabled", "snapchat.enabled", "bot.owner_id",
+    "services", "notifications", *(f"{_id}.enabled" for _id in registry.IDS), "bot.owner_id",
     "bot.local.base_url", "bot.local.api_key", "bot.local.autostart", "bot.local.context_length",
     "bot.profile_cache", "bot.memory_summary", "bot.per_account_persona",
 )
@@ -221,10 +260,12 @@ def get(pid: str) -> dict | None:
     if not name and pid == DEFAULT:
         name = _name_from_text(read_text(DEFAULT)) or "Default"
     color = str(meta.get("color") or "")
+    second = str(meta.get("color2") or "")
     return {
         "id": pid,
         "name": name or pid,
         "color": color if _HEX.match(color) else "",
+        "color2": second if _HEX.match(second) else "",
         "created": float(meta.get("created") or 0),
         "is_default": pid == DEFAULT,
     }
@@ -265,10 +306,11 @@ def read_text(pid: str) -> str:
         return ""
 
 
-def save_text(pid: str, text: str) -> None:
-    """The persona's text, the old one kept in backups/ first: it is the most load bearing text in the app."""
+def save_text(pid: str, text: str, backup: bool = True) -> None:
+    """The persona's text, the old one kept in backups/ first: it is the most load bearing text in the app. A profile
+    just made has only the template to lose, so it can say so (backup=False)."""
     path = instructions_path(pid)
-    if path.is_file():
+    if backup and path.is_file():
         backups = _rp("config").parent / "backups"
         try:
             backups.mkdir(parents=True, exist_ok=True)
@@ -563,7 +605,7 @@ def current_account() -> str | None:
         from app.core import inprocess
         role = inprocess.role_here()
         if role is not None:
-            if role.role in ("discord", "snapchat"):
+            if role.role in registry.IDS and role.role != "telegram":
                 return f"{role.role}_{int(role.account or 1)}"
             return None
     except Exception:
@@ -632,7 +674,7 @@ def _template_text(name: str) -> str:
     return text.replace("[NAME]", name)
 
 
-def create(name: str, color: str = "", copy_from: str | None = None, copy_memory: bool = False) -> dict:
+def create(name: str, color: str = "", copy_from: str | None = None, copy_memory: bool = False, color2: str = "") -> dict:
     """A new persona. Fresh: the template text with its name in, answering to that name. A copy: another's text,
     settings, avatar and pictures, and its memory too when asked (the people it knows)."""
     name = re.sub(r"\s+", " ", str(name or "")).strip()[:40] or "New persona"
@@ -642,7 +684,10 @@ def create(name: str, color: str = "", copy_from: str | None = None, copy_memory
     with _lock:
         pid = slug(name, ids())
         folder(pid).mkdir(parents=True, exist_ok=False)
-        _write_yaml(meta_path(pid), {"name": name, "color": color, "created": time.time()})
+        meta = {"name": name, "color": color, "created": time.time()}
+        if _HEX.match(str(color2 or "")):
+            meta["color2"] = color2
+        _write_yaml(meta_path(pid), meta)
         if copy_from is None:
             _write_text(instructions_path(pid), _template_text(name))
             set_overrides(pid, {"bot.trigger": name})
@@ -668,7 +713,7 @@ def create(name: str, color: str = "", copy_from: str | None = None, copy_memory
     return get(pid)
 
 
-def update(pid: str, *, name: str | None = None, color: str | None = None) -> dict:
+def update(pid: str, *, name: str | None = None, color: str | None = None, color2: str | None = None) -> dict:
     if not exists(pid):
         raise ValueError(f"no such persona: {pid!r}")
     with _lock:
@@ -680,9 +725,41 @@ def update(pid: str, *, name: str | None = None, color: str | None = None) -> di
                 meta["name"] = clean
         if color is not None:
             meta["color"] = color if _HEX.match(str(color)) else ""
+            # The two go together: a plain colour picked leaves no second behind from the theme it had.
+            meta["color2"] = color2 if _HEX.match(str(color2 or "")) else ""
         meta.setdefault("created", 0 if pid == DEFAULT else time.time())
         _write_yaml(meta_path(pid), meta)
     return get(pid)
+
+
+# Notes a persona keeps about itself beside its name and colour, in persona.yaml: where a community profile came from
+# ("community") and what this one was shared as ("shared"). Only these keys, so persona.yaml never becomes a dumping
+# ground.
+EXTRA_KEYS = ("community", "shared")
+
+
+def extra(pid: str, key: str) -> dict | None:
+    if key not in EXTRA_KEYS or not exists(pid):
+        return None
+    value = _read_yaml(meta_path(pid)).get(key)
+    return dict(value) if isinstance(value, dict) else None
+
+
+def set_extra(pid: str, key: str, value: dict | None) -> None:
+    """One note set (or dropped, with None), the rest of persona.yaml as it was."""
+    if key not in EXTRA_KEYS:
+        raise ValueError(f"not a persona note: {key!r}")
+    if not exists(pid):
+        raise ValueError(f"no such persona: {pid!r}")
+    with _lock:
+        folder(pid).mkdir(parents=True, exist_ok=True)
+        meta = dict(_read_yaml(meta_path(pid)))
+        if value is None:
+            meta.pop(key, None)
+        else:
+            meta[key] = dict(value)
+        meta.setdefault("created", 0 if pid == DEFAULT else time.time())
+        _write_yaml(meta_path(pid), meta)
 
 
 def delete(pid: str) -> list:

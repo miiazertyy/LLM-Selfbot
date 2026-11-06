@@ -13,6 +13,9 @@
  */
 import { api } from "./api";
 import { PATHS, homeOf, restHomeOf } from "./settingsmap";
+import { platformIcon, platformName } from "./platforms";
+import { get } from "svelte/store";
+import { personOn, platformOn, socialsOn, sourceOn } from "./socials";
 
 export type Kind = "page" | "action" | "setting" | "secret" | "account" | "person" | "persona" | "picture" | "log";
 
@@ -50,7 +53,7 @@ const PAGE_WORDS: Record<string, string> = {
 /** What each page is for, in a line, for the preview. */
 const PAGE_BLURB: Record<string, string> = {
   dashboard: "Replies today, charts and the live log.",
-  accounts: "Add, start and stop the Discord and Snapchat accounts.",
+  accounts: "Add, start and stop your accounts.",
   profiles: "Each profile is its own bot: which are running, on which accounts.",
   chats: "Who is waiting on a reply, and answering them.",
   persona: "Who the bot is, its moods and how it reacts.",
@@ -63,7 +66,7 @@ const PAGE_BLURB: Record<string, string> = {
 };
 
 /** A login, kept per account and edited on the Accounts page rather than in Settings. */
-const ACCOUNT_KEY = /^(DISCORD_(TOKEN|PROXY)|SNAP_(USERNAME|PASSWORD))(_\d+)?$/;
+const ACCOUNT_KEY = /^(DISCORD_TOKEN|(DISCORD|SNAP|TIKTOK|INSTAGRAM|X|REDDIT|WHATSAPP|TELEGRAM|MINECRAFT)_PROXY|SNAP_(USERNAME|PASSWORD))(_\d+)?$/;
 
 let docs: Doc[] = [];
 let built = 0;
@@ -110,6 +113,9 @@ export async function buildIndex(
   actions: PaletteAction[] = [],
 ): Promise<void> {
   const list: Doc[] = [];
+  // A social switched off in Settings is found nowhere either: not its settings, people or log lines (lib/socials.ts).
+  const on = get(socialsOn);
+  const settingShown = (key: string) => platformOn(on, (homeOf(key) ?? restHomeOf(key) ?? "app/").split("/")[0]);
 
   for (const [key, r] of Object.entries(routes)) {
     add(list, { route: key, title: r.title, subtitle: r.section, group: "Pages", kind: "page", icon: r.icon ?? "command",
@@ -149,6 +155,7 @@ export async function buildIndex(
   }
 
   for (const f of (schema as any)?.fields ?? []) {
+    if (!settingShown(f.key)) continue;
     add(
       list,
       {
@@ -176,12 +183,13 @@ export async function buildIndex(
   }
 
   for (const a of (accounts as any)?.accounts ?? []) {
+    if (!platformOn(on, a.platform)) continue;
     const name = a.display_name || a.username || a.label || a.id;
-    const platform = a.platform === "snapchat" ? "Snapchat" : "Discord";
+    const platform = platformName(a.platform);
     add(
       list,
       { route: "accounts", title: name, subtitle: `${platform} #${a.account ?? ""} · ${a.state ?? ""}`.replace(/ · $/, ""),
-        group: "Accounts", kind: "account", image: a.avatar || undefined, icon: a.platform === "snapchat" ? "snapchat" : "discord",
+        group: "Accounts", kind: "account", image: a.avatar || undefined, icon: platformIcon(a.platform),
         where: "Accounts", detail: a.username ? `@${a.username}` : undefined },
       a.id, a.pid, a.username, a.label,
     );
@@ -189,6 +197,7 @@ export async function buildIndex(
 
   const mem = (memory as any)?.users ?? (memory as any)?.memory ?? [];
   for (const u of Array.isArray(mem) ? mem : []) {
+    if (!(u.platform ? platformOn(on, u.platform) : personOn(on, u.user_id ?? u.id))) continue;
     const facts: Record<string, string> = u.facts ?? u.memory ?? {};
     const name = u.display_name || u.name || u.username || String(u.id ?? u.user_id);
     const n = Object.keys(facts).length;
@@ -211,6 +220,7 @@ export async function buildIndex(
 
   const lines = (logs as any)?.lines ?? (logs as any)?.logs ?? [];
   for (const l of Array.isArray(lines) ? lines.slice(-250).reverse() : []) {
+    if (!sourceOn(on, l.source)) continue;
     const level = String(l.level || "info");
     add(
       list,

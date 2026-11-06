@@ -14,7 +14,13 @@
    * too: "japan" as well as "tokyo".
    */
   import { onMount, tick, untrack } from "svelte";
+  import { fly } from "svelte/transition";
+  import { get } from "svelte/store";
   import Icon from "./Icon.svelte";
+  import PopupMark from "./PopupMark.svelte";
+  import { motionEnabled } from "../stores";
+  import { unroll } from "../unroll";
+  import { floatFrom } from "../floatfrom";
   import { focusStill, showInList } from "../inlist";
   import { allZones, countryName, countryOf, flagOf, localZone, searchZones, validZone, zoneLabel, zoneNow,
            zoneOffset } from "../clock";
@@ -26,6 +32,8 @@
   let active = $state(0);
   let up = $state(false);
   let root: HTMLElement | null = $state(null);
+  /** The open list: not inside root, it lives at the end of <body> (lib/floatfrom.ts). */
+  let pop: HTMLElement | null = $state(null);
   let list: HTMLElement | null = $state(null);
   let input: HTMLInputElement | null = $state(null);
 
@@ -132,9 +140,10 @@
     void q;
     active = 0;
   });
-  /** A click anywhere else closes it. */
+  /** A click anywhere else closes it: the list counts as here, though it lives at the end of <body>. */
   function outside(e: PointerEvent) {
-    if (open && root && !root.contains(e.target as Node)) open = false;
+    const t = e.target as Node;
+    if (open && root && !root.contains(t) && !(pop && pop.contains(t))) open = false;
   }
 </script>
 
@@ -168,11 +177,14 @@
         {#if known}{time(value)} · {zoneOffset(value, now)}{whereOf(value) ? ` · ${whereOf(value)}` : ""}{:else if value}Not a timezone this computer knows{:else}Pick one{/if}
       </span>
     </span>
-    <Icon name="chevron" size={13} class="tz-chev" />
+    <PopupMark class="tz-chev" />
   </button>
 
   {#if open}
-    <div class="tz-pop" class:is-up={up} role="presentation" onkeydown={onKey}>
+    <!-- Unrolls out of the box like every menu (app.css .unroll). -->
+    <div class="tz-pop unroll" class:is-up={up} role="presentation" onkeydown={onKey} bind:this={pop}
+         use:floatFrom={{ anchor: root, up, onaway: () => (open = false) }} use:unroll={".tz-search, .tz-here, .tz-row"}
+         out:fly={{ y: up ? 4 : -4, duration: get(motionEnabled) ? 150 : 0, opacity: 0 }}>
       <label class="tz-search">
         <Icon name="search" size={13} />
         <input bind:this={input} bind:value={q} placeholder="City, region or offset (+2)" spellcheck="false"
@@ -212,6 +224,9 @@
 
 <style>
   .tz { position: relative; width: 100%; max-width: 20rem; }
+  /* The closed box is a button like the rest (app.css, "Buttons with depth": tinted with the theme, nothing else),
+     with Apple's pop-up mark at its end, as Select's. A timezone this computer does not know still says so, in the
+     warning's colour. */
   .tz-trigger {
     display: flex;
     width: 100%;
@@ -219,15 +234,13 @@
     gap: 11px;
     padding: 7px 10px 7px 8px;
     border-radius: 12px;
-    border: 1px solid var(--color-edge);
-    background: rgb(0 0 0 / 0.22);
     text-align: left;
-    transition: border-color 0.18s var(--swift), box-shadow 0.18s var(--swift), transform 0.25s var(--spring);
+    transition: box-shadow 0.18s var(--swift), transform 0.25s var(--swift);
   }
-  .tz-trigger:hover { border-color: color-mix(in srgb, var(--color-accent) 45%, var(--color-edge)); }
+  .tz-trigger[aria-expanded="true"]::before { --d3-lit: 1; }
   .tz-trigger:active { transform: scale(0.985); }
-  .tz-trigger:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 22%, transparent); }
-  .tz-trigger.is-bad { border-color: color-mix(in srgb, var(--color-warn) 60%, transparent); }
+  .tz-trigger:focus-visible { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 50%, transparent); }
+  .tz-trigger.is-bad { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-warn) 55%, transparent); }
   .tz-dial { position: relative; display: grid; flex-shrink: 0; }
   .tz-clock { width: 38px; height: 38px; overflow: visible; }
   /* The flag, pinned to the clock like a sticker, landing with a little bounce
@@ -252,27 +265,30 @@
   .tz-city { overflow: hidden; font-size: 13.5px; font-weight: 650; color: var(--color-ink); text-overflow: ellipsis; white-space: nowrap; }
   .tz-meta { overflow: hidden; font-size: 11px; color: var(--color-muted); text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
   .tz-trigger.is-bad .tz-meta { color: var(--color-warn); }
-  .tz-trigger :global(.tz-chev) { flex-shrink: 0; color: var(--color-faint); transform: rotate(90deg); }
+  /* Apple's pop-up mark (PopupMark), quiet, in the theme's colour when pointed at or open: as Select's. */
+  .tz-trigger :global(.tz-chev) {
+    flex-shrink: 0;
+    margin: 0 2px;
+    color: var(--color-faint);
+    transition: color 0.16s ease;
+  }
+  .tz-trigger:hover :global(.tz-chev),
+  .tz-trigger[aria-expanded="true"] :global(.tz-chev) { color: var(--color-accent); }
 
+  /* At the end of <body>, placed against the box (lib/floatfrom.ts): inside its row it was drawn under the subtabs. */
   .tz-pop {
-    position: absolute;
-    right: 0;
-    top: calc(100% + 6px);
-    z-index: 40;
+    position: fixed;
+    z-index: 1000;
     display: flex;
     width: min(22rem, 90vw);
     flex-direction: column;
     gap: 6px;
     padding: 8px;
     border-radius: 14px;
-    border: 1px solid var(--color-edge);
+    /* The panel and a soft shadow: no ring of the accent or glow round it, as Select's list. */
     background: var(--color-surface);
     box-shadow: 0 24px 60px -20px rgb(0 0 0 / 0.65);
-    animation: tz-in 0.16s var(--swift) both;
-    transform-origin: top right;
   }
-  .tz-pop.is-up { top: auto; bottom: calc(100% + 6px); transform-origin: bottom right; }
-  @keyframes tz-in { from { opacity: 0; transform: scale(0.96) translateY(-4px); } }
   .tz-search {
     display: flex;
     align-items: center;
@@ -280,8 +296,10 @@
     padding: 6px 9px;
     border-radius: 9px;
     color: var(--color-faint);
-    background: rgb(0 0 0 / 0.25);
+    background: rgb(0 0 0 / 0.22);
+    box-shadow: inset 0 0 0 1px var(--color-edge);
   }
+  .tz-search:focus-within { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 55%, transparent); }
   .tz-search input { min-width: 0; flex: 1; font-size: 13px; color: var(--color-ink); background: transparent; outline: none; }
   .tz-here {
     display: flex;

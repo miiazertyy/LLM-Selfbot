@@ -175,6 +175,7 @@
     {#if keyLists.includes("groq")}
       <KeyList
         name="groq"
+        accounts={false}
         hint="Add as many as you like. When one hits its rate limit the bot falls through to the next, and once all are exhausted it moves to the next model in config.yaml."
       />
     {/if}

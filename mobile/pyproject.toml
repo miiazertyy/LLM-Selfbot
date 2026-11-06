@@ -28,6 +28,9 @@ sources = [
     "src/resources",                  # the templates a first start copies out
     "src/webui",                      # the panel
 ]
+# Try a call. Briefcase makes this Android's RECORD_AUDIO and iOS's NSMicrophoneUsageDescription, the sentence the iPhone
+# shows when it asks; an iPhone app that asks without one is closed by the system.
+permission.microphone = "Try a call listens to you through the microphone."
 requires = [
     # The panel's server. FastAPI 0.125 is the last to work with pydantic 1,
     # which is plain Python; pydantic 2's core is compiled, with no phone builds.
@@ -36,14 +39,21 @@ requires = [
     "pydantic>=1.10.24,<2",
     "uvicorn>=0.30",
     "h11",
+    # What the panel's live logs and Try a call talk over, and a realtime voice's connection. uvicorn finds it by itself;
+    # without it they get no answer. Its build for any Python is enough here.
+    "websockets>=13",
     "python-multipart",
     # The AI providers.
     "httpx",
     "groq",
-    "openai",
+    # 3 talks to the network through httpx2 and refuses the httpx client every model call is counted through
+    # (app/utils/usage.py): every reply would fail.
+    "openai>=2.30,<3",
     "jiter==0.99.0",                  # stand-in, mobile/shims/jiter
     # Telegram, settings, the QR code, pictures.
     "python-telegram-bot",
+    "telethon~=1.45",
+    "python-socks[asyncio]~=2.7",     # how Telethon reaches an account's proxy
     "python-dotenv",
     "pyyaml",
     "requests",
@@ -72,7 +82,7 @@ build_gradle_dependencies = [
     "androidx.webkit:webkit:1.15.0",
 ]
 build_gradle_extra_content = """
-chaquopy.defaultConfig.staticProxy("toga_android.widgets.internal.webview")
+chaquopy.defaultConfig.staticProxy("toga_android.widgets.internal.webview", "llmselfbot.webchrome")
 """
 
 [tool.briefcase.app.llmselfbot.iOS]
@@ -87,3 +97,6 @@ requires = [
 # the app's web view reach it without turning off the rest of App Transport
 # Security.
 NSAppTransportSecurity = { NSAllowsLocalNetworking = true }
+# The status bar's text light, over the panel's own dark colour now that the panel runs under it.
+UIStatusBarStyle = "UIStatusBarStyleLightContent"
+UIViewControllerBasedStatusBarAppearance = false

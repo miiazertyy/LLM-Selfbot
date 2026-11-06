@@ -488,10 +488,28 @@
     animation-delay: calc(var(--wave-at, 0ms) + var(--d, 0) * 26ms + 110ms);
   }
   @keyframes ap-pane { from { opacity: 0; transform: translateY(12px) scale(0.92); } }
-  /* A typeface inks itself in, its sample written after it. */
+  /* A typeface is set, rather than wiped on: the Aa comes up out of focus and small, snaps sharp, takes the accent
+     for a moment as if the light caught it, and settles. A left-to-right wipe said nothing about type; this is what
+     choosing a face actually looks like. Its sample is still written after it, which a line of words suits. */
   .ap-sec:global(.is-in) .ap-aa {
-    animation: ap-ink 0.42s cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
+    animation: ap-set 0.56s cubic-bezier(0.22, 1, 0.36, 1) backwards;
     animation-delay: calc(var(--wave-at, 0ms) + var(--d, 0) * 26ms + 40ms);
+  }
+  @keyframes ap-set {
+    0% {
+      opacity: 0; transform: translateY(7px) scale(0.82); filter: blur(8px);
+      box-shadow: inset 0 0 0 1px transparent;
+    }
+    55% { opacity: 1; filter: blur(0); }
+    72% {
+      transform: translateY(0) scale(1.07);
+      box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 60%, transparent),
+                  0 0 24px -4px color-mix(in srgb, var(--color-accent) 55%, transparent);
+    }
+    100% {
+      opacity: 1; transform: none; filter: blur(0);
+      box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 22%, transparent);
+    }
   }
   .ap-sec:global(.is-in) .ap-sample {
     animation: ap-ink 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) backwards;

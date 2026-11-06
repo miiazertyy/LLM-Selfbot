@@ -218,8 +218,10 @@ check("no save note where nothing is saved",
       '{#if !(sub.panel === "theme" || sub.panel === "typeface" || sub.panel === "interface")}' in settings)
 
 print("\n== Snapchat ==")
-check("quiet hours on the night's clock, on this computer's time", 'f.key === "snapchat.quiet_hours"' in settings
-      and "<HourRange value={value(f)} timezone={localZone()} words={QUIET_WORDS}" in settings)
+check("quiet hours on the night's clock, on this computer's time", 'QUIET_KEYS.has(f.key)' in settings
+      and 'const QUIET_KEYS = new Set(["snapchat.quiet_hours", "tiktok.quiet_hours",'
+          ' "instagram.quiet_hours",' in settings
+      and "<HourRange value={value(f)} timezone={localZone()}" in settings and "CALL_QUIET_WORDS : QUIET_WORDS" in settings)
 check("switched off, they are blank, which the script reads as none", 'setValue(f, v ? "2-9" : "")' in settings)
 check("the clock's words are the caller's", "words = NIGHT" in hours and "{words.none}" in hours)
 check("counts on dials", '"snapchat.max_recipients": { one: "chat"' in settings and "countScale(" in settings)
@@ -231,11 +233,15 @@ check("its labels do not repeat Snapchat or their units", all(
 check("the setup board ticks off the four things it needs", "sn-steps" in snap and snap.count("name: \"") >= 4)
 brands = read("lib/brands.ts")
 check("Snapchat's own logo, as Snapchat draws it: a white ghost outlined in black, on its yellow",
-      "<path d={SNAPCHAT_GHOST} />" in snap and "fill: #fff; stroke: #000" in snap and "CC0" in brands)
+      "const mark = $derived(wa ? WHATSAPP_MARK : rd ? REDDIT_SNOO : xx ? X_MARK : ig ? INSTAGRAM_MARK" in snap
+      and "fill: #fff; stroke: #000" in snap and "CC0" in brands)
+# Instagram's own mark too, in its own gradient rather than one flat colour.
+check("and Instagram's camera in its gradient", 'fill={ig ? "url(#sn-ig-grad)" : undefined}' in snap
+      and "INSTAGRAM_GRADIENT" in brands)
 check("and its ghost for every Snapchat icon, not one drawn from memory",
       "snapchat: SNAPCHAT_GHOST," in read("lib/components/Icon.svelte"))
 check("an account that stopped still shows what it last said", "last said" in snap)
-check("installing is still tracked after leaving the page", 'trackUntil("settings", "Installing Snapchat support"' in snap)
+check("installing is still tracked after leaving the page", 'trackUntil("settings", `Installing ${brand} support`' in snap)
 
 print("\n== the Accounts page says online when it is ==")
 check("the presence is the client's own, not the user object's, which carries none",

@@ -44,7 +44,7 @@ from app.utils.helpers import (
 )
 
 from app.utils.db import init_db, get_channels, get_ignored_users, add_unresponded, mark_responded, mark_nudge_sent, get_pending_nudges, get_all_picture_descriptions, record_user_message, get_cached_profile, set_cached_profile
-from app.utils.error_notifications import notify_telegram_error
+from app.utils.error_notifications import notify_telegram_error, notify_telegram_info
 from colorama import init, Fore, Style
 
 from app.utils.logger import (
@@ -84,6 +84,7 @@ from app.utils.memory import init_memory, get_memory, set_memory, delete_memory,
 from app.utils.tts import generate_voice_message
 from app.utils.tts_trigger import is_tts_request
 from app.utils.voice_send import send_voice_message
+from app.voice.session import CallSession, calls_cfg, should_answer, in_quiet_hours, calls_today
 
 # Smooths bulk sweeps only, normal chat never comes close to these caps.
 _profile_fetch_budget = SlidingWindow(limit=20, window_seconds=3600)
@@ -461,6 +462,148 @@ def _preview_text(m) -> str:
     return ""
 
 
+# ── Nitro gifts sent in a DM ──────────────────────────────────────────────────
+# A gift link someone sends you in a DM is yours to take, and it expires. The account can take it the moment it
+# arrives, or leave it and tell you, and either way the Chats tab draws it as a gift with a button. Only in DMs:
+# a link in a server is usually meant for whoever gets there first, and racing strangers for it is not this app.
+# Only a real gift link. A promotion link (discord.com/billing/promotions/...) is redeemed another way entirely,
+# and treating one as a gift would only ever say that it is not there.
+_GIFT_RE = re.compile(r"(?:https?://)?(?:discord\.gift|(?:ptb\.|canary\.|www\.)?discord(?:app)?\.com/gifts)"
+                      r"/([A-Za-z0-9]{8,64})", re.I)
+# What to do with one, from the settings: tell you about it, take it as it lands, or leave it be.
+_GIFT_MODES = ("off", "notify", "accept")
+
+
+def gift_code(text: str) -> str:
+    """The first Nitro gift code in a message, "" for none."""
+    m = _GIFT_RE.search(text or "")
+    return m.group(1) if m else ""
+
+
+def gift_settings() -> dict:
+    """How gifts in DMs are handled: {"mode", "only_friends"}. Missing settings mean tell me, from anyone."""
+    try:
+        cfg = (load_config().get("discord") or {}).get("gifts") or {}
+    except Exception:
+        cfg = {}
+    mode = str(cfg.get("mode", "notify") or "notify").strip().lower()
+    return {"mode": mode if mode in _GIFT_MODES else "notify",
+            "only_friends": bool(cfg.get("only_friends", False))}
+
+
+def gift_says(gift) -> str:
+    """What a looked-up gift is, in words: "Nitro Monthly", a game's name, or just "a gift"."""
+    plan = getattr(gift, "subscription_plan", None)
+    name = getattr(plan, "name", "") or ""
+    if not name:
+        listing = getattr(gift, "store_listing", None)
+        sku = getattr(listing, "sku", None)
+        name = getattr(sku, "name", "") or getattr(listing, "summary", "") or ""
+    return str(name or "a gift")
+
+
+def gift_state(gift) -> str:
+    """Where a gift stands: "gone" once it is used up or run out, "waiting" while it can still be taken."""
+    try:
+        if gift.is_expired():
+            return "expired"
+    except Exception:
+        pass
+    try:
+        if gift.is_claimed() or (gift.max_uses and gift.uses >= gift.max_uses):
+            return "taken"
+    except Exception:
+        pass
+    return "waiting"
+
+
+def gift_reason(e) -> str:
+    """Why Discord would not let a gift be taken, in words."""
+    text = str(getattr(e, "text", "") or e)
+    low = text.lower()
+    if "already" in low and ("claim" in low or "redeem" in low):
+        return "It had already been used"
+    if "payment" in low or "subscription" in low:
+        return "Discord wants a payment method on the account for this one"
+    if "self" in low and "gift" in low:
+        return "Discord does not let an account take its own gift"
+    if "captcha" in low:
+        return "Discord asked for a captcha: take it in the Discord app"
+    return text or "Discord would not take it"
+
+
+async def take_gift(code: str, channel=None) -> dict:
+    """Take a gift by its code: {"ok", "state", "what", "reason"}. Used both when one lands and when the Chats tab
+    asks for it, so the panel and the account agree on what happened."""
+    try:
+        gift = await bot.fetch_gift(code)
+    except discord.NotFound:
+        return {"ok": False, "state": "gone", "what": "a gift", "reason": "That gift is not there any more"}
+    except Exception as e:
+        return {"ok": False, "state": "unknown", "what": "a gift", "reason": str(e)}
+    what, state = gift_says(gift), gift_state(gift)
+    if state != "waiting":
+        return {"ok": False, "state": state, "what": what,
+                "reason": "It had already been used" if state == "taken" else "It had run out"}
+    try:
+        await gift.redeem(channel=channel)
+    except Exception as e:
+        return {"ok": False, "state": "waiting", "what": what, "reason": gift_reason(e)}
+    return {"ok": True, "state": "accepted", "what": what, "reason": ""}
+
+
+def gift_news(mid, info: dict) -> str:
+    """Where a gift stands, kept with its message and shown in an open Chats tab straight away."""
+    try:
+        uid = _chatlog.set_gift(ACCOUNT_INDEX, mid, info)
+    except Exception:
+        return ""
+    if uid:
+        emit_chat_event({"t": "gift", "uid": str(uid), "mid": str(mid), "gift": info})
+    return uid or ""
+
+
+def _is_friend(user) -> bool:
+    try:
+        return bool(user.is_friend())
+    except Exception:
+        return False
+
+
+async def gift_arrived(message) -> None:
+    """A Nitro gift link in a DM: looked up so the Chats tab can draw what it is, taken now when that is the
+    setting, and either way a word to you on Telegram. It is yours, and it expires."""
+    code = gift_code(message.content or "")
+    if not code:
+        return
+    how = gift_settings()
+    if how["mode"] == "off":
+        return
+    who = getattr(message.author, "display_name", "") or getattr(message.author, "name", "") or "Someone"
+    try:
+        gift = await bot.fetch_gift(code)
+        what, state = gift_says(gift), gift_state(gift)
+    except discord.NotFound:
+        gift, what, state = None, "a gift", "gone"
+    except Exception as e:
+        log_error("Nitro gift", f"Could not look up what {who} sent: {e}")
+        return
+    note = ""
+    if how["mode"] == "accept" and state == "waiting" and (not how["only_friends"] or _is_friend(message.author)):
+        took = await take_gift(code, message.channel)
+        state, note = took["state"], took["reason"]
+        log_system(f"Took the {what} {who} sent" if took["ok"] else f"Could not take {who}'s gift: {note}")
+    elif how["mode"] == "accept" and state == "waiting":
+        note = "Only friends' gifts are taken by themselves"
+    gift_news(message.id, {"code": code, "what": what, "state": state, **({"reason": note} if note else {})})
+    said = {"accepted": f"{who} sent you {what}, and it has been taken.",
+            "waiting": f"{who} sent you {what}. Accept it in Chats, or in Discord." + (f" ({note})" if note else ""),
+            "taken": f"{who} sent you {what}, but it had already been used.",
+            "expired": f"{who} sent you {what}, but it had run out.",
+            "gone": f"{who} sent a gift link that is not there any more."}.get(state, f"{who} sent you {what}.")
+    notify_telegram_info("A Nitro gift", said)
+
+
 def _message_payload(m) -> dict:
     """What the Chats tab shows of a message: all of its text, and what is attached.
 
@@ -506,6 +649,11 @@ def _message_payload(m) -> dict:
                            "provider": getattr(getattr(e, "provider", None), "name", "") or ""})
     if embeds:
         out["embeds"] = embeds[:3]
+    # A Nitro gift link: kept as what it is, so the Chats tab draws it as a gift with a button rather than as a
+    # link nobody can read. What it is for and whether it is still there are filled in when it is looked up.
+    code = gift_code(text)
+    if code:
+        out["gift"] = {"code": code, "state": "unknown"}
     # Reactions on the message, so the Chats tab shows what a conversation
     # actually looks like: an answer that got a laughing face reads very
     # differently from one nobody reacted to, and the bot's own reactions were
@@ -518,7 +666,29 @@ def _message_payload(m) -> dict:
                               "mine": bool(getattr(r, "me", False))})
     if reactions:
         out["reactions"] = reactions[:8]
+    # The message it answers, when it is a reply: shown quoted above it in the Chats tab, as Discord shows it.
+    ref = getattr(m, "reference", None)
+    if ref is not None and getattr(ref, "message_id", None):
+        quoted = getattr(ref, "resolved", None)
+        said = (getattr(quoted, "content", "") or "") if quoted is not None else ""
+        if quoted is not None and not said and (getattr(quoted, "attachments", None) or getattr(quoted, "stickers", None)):
+            said = "[attachment]"
+        who = getattr(quoted, "author", None) if quoted is not None else None
+        out["reply_to"] = {"mid": str(ref.message_id), "text": said[:200],
+                           "name": (getattr(who, "display_name", "") or getattr(who, "name", "")) if who else ""}
     return out
+
+
+def _reply_reference(mid, channel_id):
+    """Discord's reference for a reply to one message of this channel, picked in the Chats tab; None when there is
+    none to make. A message gone by now is not an error: it is sent as a plain message (fail_if_not_exists=False)."""
+    s = str(mid or "").strip()
+    if not s.isdigit():
+        return None
+    try:
+        return discord.MessageReference(message_id=int(s), channel_id=int(channel_id), fail_if_not_exists=False)
+    except Exception:
+        return None
 
 
 def _reaction_emoji(emoji) -> dict:
@@ -685,6 +855,7 @@ def emit_chat_event(evt: dict):
 # from it rather than from Discord each time, a deleted message is kept and
 # marked, and the first reply after a restart starts from what was said before.
 from app.utils import chatlog as _chatlog
+from app.utils import voicepeople as _voicepeople
 
 _KEEP_PICTURE_BYTES = 8 * 1024 * 1024
 
@@ -749,7 +920,10 @@ def _turn_text(m) -> str:
     if text:
         return text
     if getattr(m, "attachments", None):
-        return "[picture]" if any((a.content_type or "").startswith("image/") for a in m.attachments) else "[attachment]"
+        types = [(a.content_type or "") for a in m.attachments]
+        if any(t.startswith("image/") for t in types):
+            return "[picture]"
+        return "[video]" if any(t.startswith("video/") for t in types) else "[attachment]"
     if getattr(m, "stickers", None):
         return f"[sticker: {m.stickers[0].name}]"
     return ""
@@ -1715,9 +1889,14 @@ async def _tg_ipc_loop():
                 _write_result(cmd_id, {"ok": False, "reason": "nothing to send" if not text else "Discord takes up to 2000 characters in one message"})
                 return
             dropped = waiting is not None and cancel_pending_reply(waiting.author.id, cid)
+            ref = _reply_reference(payload.get("reply_to"), cid)
             async with bot.global_send_lock:
-                # an answer to what was waiting, so it reads as one in the channel, without pinging them
-                sent = await (waiting.reply(text, mention_author=False) if waiting is not None else ch.send(text))
+                # A reply to the message picked in the Chats tab; else an answer to what was waiting, so it reads as
+                # one in the channel; never pinging them.
+                if ref is not None:
+                    sent = await ch.send(text, reference=ref, mention_author=False)
+                else:
+                    sent = await (waiting.reply(text, mention_author=False) if waiting is not None else ch.send(text))
             bot.last_global_send = time.time()
             bot.message_history.setdefault(f"ch-{cid}", []).append({"role": "assistant", "content": text})
             bot.server_waiting.pop(cid, None)
@@ -1847,6 +2026,9 @@ async def _tg_ipc_loop():
         except Exception as e:
             _write_result(cmd_id, {"ok": False, "reason": str(e)})
 
+    class _PushedBack(Exception):
+        pass
+
     async def _dm_for(cmd_id, payload):
         """The DM with the person a Chats request is about, or None after answering why not."""
         u, _why = await resolve_user(int(payload["user_id"]))
@@ -1952,6 +2134,68 @@ async def _tg_ipc_loop():
         except Exception as e:
             _write_result(cmd_id, {"ok": False, "reason": str(e)})
 
+    async def _guilds_job(cmd_id, payload):
+        """Every server this account is in, with the text channels it may read, under the category they sit in. All
+        of it is already in the gateway's own cache, so this costs no request to Discord and can be asked for often.
+
+        A channel is listed when the account can read it: one it cannot is not worth walking into, and a server
+        whose channels are all shut is left out rather than opening empty."""
+        try:
+            me = bot.user
+            want = str((payload or {}).get("guild") or "")
+            out = []
+            for g in sorted(bot.guilds, key=lambda g: (g.name or "").lower()):
+                if want and str(g.id) != want:
+                    continue
+                mine = g.me or (g.get_member(me.id) if me else None)
+                rows = []
+                vocal = (getattr(discord, "VoiceChannel", ()), getattr(discord, "StageChannel", ()))
+                for ch in g.channels:
+                    # Text, announcements, and every voice and stage channel: one nobody ever typed in can still have
+                    # people talking in it (the list shows who, voicepeople.py). Threads and forums are their own
+                    # thing and are left for now.
+                    if not isinstance(ch, (discord.TextChannel, vocal)):
+                        continue
+                    perms = ch.permissions_for(mine) if mine is not None else None
+                    if perms is not None and not perms.read_messages:
+                        continue
+                    cat = getattr(ch, "category", None)
+                    rows.append({
+                        "id": str(ch.id),
+                        "name": getattr(ch, "name", "") or "channel",
+                        "category": getattr(cat, "name", "") or "",
+                        "category_at": getattr(cat, "position", -1) if cat is not None else -1,
+                        "at": getattr(ch, "position", 0),
+                        "topic": (getattr(ch, "topic", "") or "")[:200],
+                        "nsfw": bool(getattr(ch, "nsfw", False)),
+                        "voice": isinstance(ch, vocal),
+                        # Whether typing there is even possible, so the panel can say so instead of failing on send.
+                        "can_send": bool(perms is None or perms.send_messages),
+                        "waiting": ch.id in bot.server_waiting,
+                    })
+                if not rows:
+                    continue
+                rows.sort(key=lambda r: (r["category_at"], r["category"].lower(), r["at"], r["name"]))
+                out.append({"id": str(g.id), "name": g.name or "server",
+                            "icon": str(g.icon.url) if getattr(g, "icon", None) else "",
+                            "members": getattr(g, "member_count", 0) or 0, "channels": rows})
+            _write_result(cmd_id, {"ok": True, "guilds": out})
+        except Exception as e:
+            _write_result(cmd_id, {"ok": False, "reason": str(e)})
+
+    async def _voice_people_job(cmd_id, payload):
+        """Who is in each voice channel of one server, for the panel's list of channels. Only looks: the gateway has
+        already said all of it, so this can be asked every few seconds, and nothing here joins a call. A name it has no
+        answer for yet is asked for behind this answer, for the next look to have (app/utils/voicepeople.py)."""
+        try:
+            g = bot.get_guild(int((payload or {}).get("guild") or 0))
+            channels, unnamed = _voicepeople.roster(g, bot, (payload or {}).get("first") or ()) if g is not None else ({}, [])
+            if unnamed:
+                asyncio.create_task(_voicepeople.learn_names(g, unnamed))
+            _write_result(cmd_id, {"ok": True, "channels": channels})
+        except Exception as e:
+            _write_result(cmd_id, {"ok": False, "reason": str(e)})
+
     async def _send_message_job(cmd_id, payload):
         """A message typed in the Chats tab, sent as this account. A reply the bot had lined up for them is dropped
         first: you answered them yourself. It goes into the bot's history as the account's own words, so the next
@@ -1976,8 +2220,10 @@ async def _tg_ipc_loop():
             dropped = cancel_pending_reply(uid)
             clear_reply_state(uid)
             dm = u.dm_channel or await u.create_dm()
+            ref = _reply_reference(payload.get("reply_to"), dm.id)
             async with bot.global_send_lock:
-                sent = await dm.send(text or None, files=_as_discord_files(files) or None)
+                sent = await dm.send(text or None, files=_as_discord_files(files) or None,
+                                     **({"reference": ref, "mention_author": False} if ref else {}))
             bot.last_global_send = time.time()
             bot.message_history.setdefault(f"{uid}-{dm.id}", []).append(
                 {"role": "assistant", "content": text or f"[sent {len(files)} picture(s)]"})
@@ -2494,6 +2740,12 @@ async def _tg_ipc_loop():
                 elif cmd == "chat_window":
                     asyncio.create_task(_window_job(cmd_id, payload))
 
+                elif cmd == "guilds":
+                    asyncio.create_task(_guilds_job(cmd_id, payload))
+
+                elif cmd == "voice_people":
+                    asyncio.create_task(_voice_people_job(cmd_id, payload))
+
                 elif cmd == "reply_all":
                     # taken out of the command file before the run, not after: it runs for minutes, and a worker stopped part way through found it still there on the next start and ran it all again
                     _flush_commands(_CMD_FILE, remaining, commands)
@@ -2883,10 +3135,90 @@ async def _tg_ipc_loop():
                         if _existing:
                             _existing._keep_alive_guard = False
                             await _existing.disconnect(force=True)
-                        await _vtarget.connect(self_mute=True, self_deaf=True)
+                        # Muted and deafened, as before, unless calls are on: then it joins for real and can
+                        # hear and be heard (still only on the picked channels' rules). Careful mode keeps it
+                        # out of voice entirely.
+                        from app.utils.stealth import quiet as _careful_quiet3
+                        _vc_on = bool(calls_cfg(config).get("enabled") and calls_cfg(config).get("vc")
+                                      and not _careful_quiet3())
+                        await _vtarget.connect(self_mute=not _vc_on, self_deaf=not _vc_on)
+                        if _vc_on:
+                            await _arm_voice(_vtarget.guild.voice_client, auto=False)
                         _write_result(cmd_id, {"ok": True, "channel": _vtarget.name, "guild": _vtarget.guild.name})
                     except Exception as _e:
                         _write_result(cmd_id, {"ok": False, "reason": str(_e)})
+
+                # ── call_start ────────────────────────────────────────────────
+                elif cmd == "call_start":
+                    # With a channel (link, id, "guild channel"): join there. Without one: the picked autojoin
+                    # channel. Either way she is armed to answer once calls are on.
+                    from app.utils.stealth import quiet as _careful_quiet2
+                    if _careful_quiet2():
+                        _write_result(cmd_id, {"ok": False,
+                                               "reason": "Careful mode is on: voice stays off until it ends."})
+                        continue
+                    import re as _re5
+                    _args_str = payload.get("args", "").strip()
+                    _gid_v, _cid_v = None, None
+                    _lm = _re5.match(r"https?://discord\.com/channels/(\d+)/(\d+)", _args_str)
+                    if _lm:
+                        _gid_v, _cid_v = int(_lm.group(1)), int(_lm.group(2))
+                    elif _args_str.isdigit():
+                        _cid_v = int(_args_str)
+                    else:
+                        _parts = _args_str.split()
+                        if len(_parts) == 2 and _parts[0].isdigit() and _parts[1].isdigit():
+                            _gid_v, _cid_v = int(_parts[0]), int(_parts[1])
+                    if not _cid_v:
+                        _aj = config["bot"].get("autojoin_channel") or {}
+                        _gid_v = int(_aj.get("guild_id") or 0) or None
+                        _cid_v = int(_aj.get("channel_id") or 0) or None
+                    if not _cid_v:
+                        _write_result(cmd_id, {"ok": False,
+                                               "reason": "No channel given, and no autojoin channel is picked."})
+                        continue
+                    _vtarget = (bot.get_guild(_gid_v).get_channel(_cid_v) if _gid_v and bot.get_guild(_gid_v) else bot.get_channel(_cid_v))
+                    if not isinstance(_vtarget, discord.VoiceChannel):
+                        _write_result(cmd_id, {"ok": False, "reason": "Channel not found or is not a voice channel."})
+                        continue
+                    try:
+                        _existing = _vtarget.guild.voice_client
+                        if _existing:
+                            _existing._keep_alive_guard = False
+                            await _existing.disconnect(force=True)
+                        await _vtarget.connect(self_mute=False, self_deaf=False)
+                        _arm_problem = await _arm_voice(_vtarget.guild.voice_client, auto=False)
+                        _write_result(cmd_id, {"ok": True, "channel": _vtarget.name, "guild": _vtarget.guild.name,
+                                               "hearing": not _arm_problem, "reason": _arm_problem})
+                    except Exception as _e:
+                        _write_result(cmd_id, {"ok": False, "reason": str(_e)})
+
+                # ── call_hangup ───────────────────────────────────────────────
+                elif cmd == "call_hangup":
+                    _sess = _VC.get("session")
+                    _run = _VC.get("run")
+                    if _sess is not None and _run is not None and not _run.done():
+                        _sess.end("you hung up")
+                        _write_result(cmd_id, {"ok": True})
+                    else:
+                        _write_result(cmd_id, {"ok": False, "reason": "Not in a call."})
+
+                # ── call_status ───────────────────────────────────────────────
+                elif cmd == "call_status":
+                    _vc_cs = _VC.get("vc")
+                    _run_cs = _VC.get("run")
+                    _sess_cs = _VC.get("session")
+                    _write_result(cmd_id, {
+                        "in_vc": bool(_vc_cs and _vc_cs.is_connected()),
+                        "channel": getattr(getattr(_vc_cs, "channel", None), "name", "") if _vc_cs else "",
+                        "in_call": bool(_run_cs and not _run_cs.done()),
+                        "caller": _VC.get("caller") or "",
+                        "name": _VC.get("name") or "",
+                        "seconds": int(time.time() - _VC["started_at"]) if _run_cs and not _run_cs.done()
+                                   and _VC.get("started_at") else 0,
+                        "engine": getattr(getattr(_sess_cs, "engine", None), "name", "") if _sess_cs else "",
+                        "state": getattr(_sess_cs, "shown_state", "") if _sess_cs else "",
+                    })
 
                 # ── voice_leave ───────────────────────────────────────────────
                 elif cmd == "voice_leave":
@@ -2897,6 +3229,7 @@ async def _tg_ipc_loop():
                     else:
                         _vc = next((g.voice_client for g in bot.guilds if g.voice_client), None)
                     if _vc:
+                        await _disarm_voice(reason="left the channel", disconnect=False)
                         _vc._keep_alive_guard = False
                         await _vc.disconnect(force=True)
                         _write_result(cmd_id, {"ok": True, "channel": _vc.channel.name, "guild": _vc.guild.name})
@@ -3057,6 +3390,59 @@ async def _tg_ipc_loop():
                             _write_result(cmd_id, {"ok": False, "reason": discord_reason(_fa_r)})
                     except Exception as _fe:
                         _write_result(cmd_id, {"ok": False, "reason": str(_fe)})
+
+                elif cmd == "friend_add":
+                    # From the Chats tab: a friend request by username (or by id, all digits).
+                    _fa_who = str(payload.get("username") or "").strip().lstrip("@")
+                    try:
+                        if not _fa_who:
+                            _write_result(cmd_id, {"ok": False, "reason": "Whose username?"})
+                        elif _fa_who.isdigit():
+                            async with build_session(bot.http.token) as _fa_s2:
+                                _fa_r2 = await _fa_s2.put(f"https://discord.com/api/v9/users/@me/relationships/{int(_fa_who)}",
+                                                          json={"type": 1})
+                            if _fa_r2.status_code in (200, 204):
+                                _write_result(cmd_id, {"ok": True})
+                            else:
+                                _write_result(cmd_id, {"ok": False, "reason": discord_reason(_fa_r2)})
+                        else:
+                            await bot.send_friend_request(_fa_who)
+                            log_system(f"Friend request sent to {_fa_who}, from the panel")
+                            _write_result(cmd_id, {"ok": True})
+                    except discord.NotFound:
+                        _write_result(cmd_id, {"ok": False, "reason": "Nobody on Discord has that username"})
+                    except discord.Forbidden:
+                        _write_result(cmd_id, {"ok": False, "reason": "Discord would not send it: they may only take requests from friends of friends"})
+                    except discord.HTTPException as _fa_e:
+                        _fa_text = str(getattr(_fa_e, "text", "") or _fa_e)
+                        _write_result(cmd_id, {"ok": False, "reason": "Discord asked for a captcha: send it from the Discord app"
+                                               if "captcha" in _fa_text.lower() else _fa_text})
+                    except Exception as _fa_e:
+                        _write_result(cmd_id, {"ok": False, "reason": str(_fa_e)})
+
+                elif cmd == "gift_accept":
+                    # From the Chats tab: take the Nitro gift in a message, and say on it how it went.
+                    _g_code = str(payload.get("code") or "").strip()
+                    _g_mid = str(payload.get("mid") or "").strip()
+                    try:
+                        if not _g_code:
+                            _write_result(cmd_id, {"ok": False, "reason": "Which gift?"})
+                        else:
+                            _g_ch = None
+                            if payload.get("user_id"):
+                                _g_u = bot.get_user(int(payload["user_id"]))
+                                _g_ch = getattr(_g_u, "dm_channel", None) if _g_u is not None else None
+                            _g = await take_gift(_g_code, _g_ch)
+                            if _g_mid:
+                                gift_news(_g_mid, {"code": _g_code, "what": _g.get("what") or "a gift",
+                                                   "state": _g["state"],
+                                                   **({"reason": _g["reason"]} if _g.get("reason") else {})})
+                            if _g["ok"]:
+                                log_system(f"Took a {_g['what']}, from the panel")
+                            _write_result(cmd_id, {"ok": _g["ok"], "reason": _g.get("reason", ""),
+                                                   "state": _g["state"], "what": _g.get("what", "")})
+                    except Exception as _g_e:
+                        _write_result(cmd_id, {"ok": False, "reason": str(_g_e)})
 
                 elif cmd == "add_friend":
                     _af_uid = int(payload["user_id"])
@@ -3347,6 +3733,10 @@ async def on_ready():
 
     asyncio.create_task(_tg_ipc_loop())
 
+    # Voice calls: join the picked channel when calls are on, and keep the membership right as hours change.
+    asyncio.create_task(_voice_autojoin())
+    asyncio.create_task(_voice_watchdog())
+
 
 async def _log_active_sessions():
     """Ask Discord's sessions endpoint which clients it sees on this account. One call per login, logged once; this is the authoritative answer to "does the profile say web or desktop", each session's client_info coming straight from what the IDENTIFY payload claimed."""
@@ -3627,6 +4017,43 @@ def _extract_image_url_from_message(message) -> str | None:
             return clean
 
     return None
+
+
+def _tiktok_share_pick(user_id):
+    """A TikTok to send this person, from what a TikTok account of this persona saw: (entry, words for the model) or
+    (None, ""). Reads files: on a worker thread."""
+    from app.utils import personas, tiktoksocial
+    pid = personas.persona_of(f"discord_{ACCOUNT_INDEX}")
+    pick = tiktoksocial.share_pick(tiktoksocial.pools_for(pid), f"discord_{ACCOUNT_INDEX}:{user_id}")
+    return (pick, tiktoksocial.share_context(pick)) if pick else (None, "")
+
+
+def _video_attachment_url(message, image_url) -> str:
+    """The link of a video they attached, which the reply path holds as its picture (the batch's first attachment):
+    "" when that is a picture, or there is none. By the attachment's own type when it is this message's, else by the
+    file's name on Discord's CDN."""
+    if not image_url:
+        return ""
+    for att in getattr(message, "attachments", None) or []:
+        if att.url == image_url:
+            return image_url if (getattr(att, "content_type", "") or "").lower().startswith("video/") else ""
+    from urllib.parse import urlparse
+    from app.utils import videos
+    parsed = urlparse(image_url)
+    if parsed.hostname not in ("cdn.discordapp.com", "media.discordapp.net"):
+        return ""
+    return image_url if os.path.splitext(parsed.path.lower())[1] in videos.VIDEO_EXTS else ""
+
+
+def _tiktok_preview(message, image_url) -> bool:
+    """Whether this picture is only Discord's preview of a TikTok link in the message, not something they sent."""
+    for embed in getattr(message, "embeds", None) or []:
+        if "tiktok.com" not in str(getattr(embed, "url", "") or ""):
+            continue
+        for part in (getattr(embed, "image", None), getattr(embed, "thumbnail", None)):
+            if part is not None and image_url in (getattr(part, "url", None), getattr(part, "proxy_url", None)):
+                return True
+    return False
 
 
 # The model is taught to emit control tokens the person must never see: a
@@ -3981,6 +4408,81 @@ async def generate_response_and_reply(message, prompt, history, image_url=None, 
         except Exception as _e:
             log_error("Voice Transcription", str(_e))
 
+    # A video they sent, watched (app/utils/videowatch.py): frames from across it and what is said in it, where the
+    # picture model would have been handed a video it cannot read. Then TikToks and Spotlights linked in their message,
+    # watched the same way. What happens and what is said in each goes in with their message, and stays in the
+    # conversation after; one that could not be watched says so (a TikTok gives its caption and cover instead).
+    def _with_note(text_note: str) -> None:
+        nonlocal prompt
+        prompt = f"{prompt}\n{text_note}" if prompt else text_note
+        if history and history[-1].get("role") == "user":
+            history[-1] = {**history[-1], "content": (str(history[-1].get("content") or "") + "\n" + text_note).strip()}
+
+    _sent_video = _video_attachment_url(message, image_url)
+    if _sent_video:
+        image_url = None
+        try:
+            from app.utils import videowatch
+            if videowatch.settings()["enabled"]:
+                _with_note(videowatch.note(await videowatch.watch_url(_sent_video)))
+        except Exception:
+            pass
+    # And any other link, read and noted the same way (app/utils/web/links.py).
+    if "tiktok.com" in (prompt or "") or "snapchat.com" in (prompt or "") or "http" in (prompt or ""):
+        try:
+            from app.utils import videowatch
+            _tt_text, _tt_cover, _tt_watched = await videowatch.enrich_links(prompt)
+            _tt_note = _tt_text[len(prompt):].strip()
+            if _tt_note:
+                _with_note(_tt_note)
+            if _tt_watched and image_url and _tiktok_preview(message, image_url):
+                image_url = None  # its frames were looked at already; Discord's preview of it need not be
+            elif _tt_cover and not image_url:
+                image_url = _tt_cover
+        except Exception:
+            pass
+
+    # They asked for a TikTok, in a DM, and this persona has a TikTok account that saw some (tiktok.share.enabled): one
+    # is sent right after the reply, which says something to go with it (app/utils/tiktoksocial.py).
+    _tt_share = None
+    try:
+        from app.utils import tiktoksocial
+        if (isinstance(message.channel, discord.DMChannel) and tiktoksocial.share_settings()
+                and tiktoksocial.wants_tiktok(prompt)):
+            _tt_share, _tt_words = await asyncio.to_thread(_tiktok_share_pick, message.author.id)
+            if _tt_share:
+                enriched_instructions += f"\n\n[{_tt_words}]"
+    except Exception:
+        _tt_share = None
+
+    # ── The web (app/utils/web) ── what it saw online lately, and a look online when the message needs one: the reply's
+    # own model says so (lookup.py), and every attempt below shares it, so a retry never searches twice.
+    _web = None
+    try:
+        from app.utils.web import journal as _web_journal, lookup as _web_lookup
+        enriched_instructions += _web_journal.prompt_block()
+        _web = _web_lookup.Turn(
+            who=message.author.name, conv=history_key(message), about=prompt,
+            on_lookup=lambda task: set_reply_state(uid, "looking" if task else "writing", reason=task))
+    except Exception:
+        _web = None
+
+    # The picture is described once: asked again (a lookup's second ask, a retry) the reply uses the description
+    # already put into the conversation (ai.generate_response_image) rather than looking at it again.
+    _seen_picture = False
+
+    async def _reply(instructions):
+        nonlocal _seen_picture
+        if image_url and not _seen_picture:
+            try:
+                return await generate_response_image(prompt, instructions, image_url, history)
+            finally:
+                _seen_picture = bool(history) and "[Image of " in str(history[-1].get("content") or "")
+        return await generate_response(prompt, instructions + (ai_module.IMAGE_SEEN if _seen_picture else ""), history)
+
+    async def _write():
+        return await (_web.answer(_reply, enriched_instructions) if _web else _reply(enriched_instructions))
+
     max_retries = 3
     response = None
     _was_rate_limited = False
@@ -4018,15 +4520,9 @@ async def generate_response_and_reply(message, prompt, history, image_url=None, 
         try:
             if not bot.realistic_typing:
                 async with message.channel.typing():
-                    if image_url:
-                        response = await generate_response_image(prompt, enriched_instructions, image_url, history)
-                    else:
-                        response = await generate_response(prompt, enriched_instructions, history)
+                    response = await _write()
             else:
-                if image_url:
-                    response = await generate_response_image(prompt, enriched_instructions, image_url, history)
-                else:
-                    response = await generate_response(prompt, enriched_instructions, history)
+                response = await _write()
 
             if response and is_refusal(response):
                 # never send a refusal and never go silent: replace it with a short confused reaction, which is what a real person sends when the conversation takes a weird turn
@@ -4085,10 +4581,7 @@ async def generate_response_and_reply(message, prompt, history, image_url=None, 
         log_error("AI Error", "Retrying one last time after rate limit wait...")
         await asyncio.sleep(120)
         try:
-            if image_url:
-                response = await generate_response_image(prompt, enriched_instructions, image_url, history)
-            else:
-                response = await generate_response(prompt, enriched_instructions, history)
+            response = await _write()
         except Exception:
             pass
         # if the last-ditch retry is still a refusal, answer with a short reaction rather than silence or the refusal itself
@@ -4397,6 +4890,17 @@ async def generate_response_and_reply(message, prompt, history, image_url=None, 
     # the caller treats a returned string as "this was sent", and the panel reports it as a successful reply; returning the text after every send failed said the message had gone out when nothing had left the process, so the conversation stayed unanswered while the panel said otherwise
     if not _delivered:
         return None
+    if _tt_share:
+        # The TikTok itself, a moment after the reply, as its own message.
+        try:
+            await asyncio.sleep(random.uniform(1.5, 4.0))
+            await message.channel.send(_tt_share["url"])
+            from app.utils import tiktoksocial
+            await asyncio.to_thread(tiktoksocial.mark_shared, f"discord_{ACCOUNT_INDEX}:{message.author.id}",
+                                    str(_tt_share.get("id") or ""))
+            log_system(f"Sent {message.author.name} a TikTok: {_tt_share['url']}")
+        except Exception as e:
+            log_error("TikTok share", str(e))
     return response
 
 
@@ -4609,6 +5113,466 @@ async def on_raw_reaction_remove(payload):
     await _reaction_changed(payload, -1)
 
 
+# ── Calls ────────────────────────────────────────────────────────────────────
+# Someone calling the account in a DM, or in a call there: the Chats tab shows it on them as it happens (a strip at the
+# top, their row, their conversation). Discord says when a call starts, rings and ends (call_create, call_update,
+# call_delete), and who is in it as their voice state in that DM changes. A group's call has no row there, so it is not
+# shown.
+_CALLS_SEEN: dict = {}
+
+
+def _dm_call(call) -> dict | None:
+    """A DM call as the Chats tab shows it: them calling the account (it rings), or them in it (the account declined,
+    or is in it too). None once they are not in it."""
+    channel = getattr(call, "channel", None)
+    other = getattr(channel, "recipient", None)
+    if call is None or other is None:
+        return None
+    me = getattr(bot, "selfbot_id", None) or getattr(bot.user, "id", None)
+    try:
+        ringing = {u.id for u in call.ringing}
+        present = {u.id for u in call.members}
+    except Exception:
+        return None
+    if other.id not in present:
+        return None
+    state = "ringing" if me in ringing else ("together" if me in present else "in_call")
+    try:
+        avatar = str(other.display_avatar.url)
+    except Exception:
+        avatar = ""
+    return {"state": state, "name": getattr(other, "display_name", None) or other.name, "avatar": avatar}
+
+
+def _emit_call(channel) -> None:
+    """Tell the panel what is happening in this DM's call, when it changed."""
+    other = getattr(channel, "recipient", None)
+    if other is None:
+        return
+    uid = str(other.id)
+    info = _dm_call(getattr(channel, "call", None))
+    seen = _CALLS_SEEN.get(uid)
+    if (seen or {}).get("state") == (info or {}).get("state"):
+        return
+    if info:
+        # Since it started for them, kept across a ring turning into a call.
+        info["since"] = (seen or {}).get("since") or time.time()
+        _CALLS_SEEN[uid] = info
+    else:
+        _CALLS_SEEN.pop(uid, None)
+    emit_chat_event({"t": "call", "uid": uid, "call": info})
+
+
+@bot.event
+async def on_call_create(call):
+    _emit_call(getattr(call, "channel", None))
+    _ring_note(call)
+
+
+@bot.event
+async def on_call_update(before, after):
+    _emit_call(getattr(after, "channel", None))
+    _ring_note(after)
+
+
+@bot.event
+async def on_call_delete(call):
+    channel = getattr(call, "channel", None)
+    other = getattr(channel, "recipient", None)
+    if other is not None and _CALLS_SEEN.pop(str(other.id), None) is not None:
+        emit_chat_event({"t": "call", "uid": str(other.id), "call": None})
+
+
+@bot.event
+async def on_voice_state_update(member, before, after):
+    """Someone joining or leaving a DM's call: whether they are in it is the voice state, not the call."""
+    try:
+        for ch in {getattr(before, "channel", None), getattr(after, "channel", None)}:
+            if isinstance(ch, discord.DMChannel):
+                _emit_call(ch)
+    except Exception:
+        pass
+    # The account itself was moved out of its voice channel (or kicked): the call ends with it.
+    try:
+        vc = _VC.get("vc")
+        if member.id == getattr(bot, "selfbot_id", None) and vc is not None and after.channel is None \
+                and before.channel is not None and getattr(before.channel, "id", None) == getattr(vc.channel, "id", None):
+            if _VC.get("leaving"):
+                _VC["leaving"] = False
+            else:
+                log_system("Voice calls: moved out of the channel, calls are off until it joins again")
+                asyncio.ensure_future(_disarm_voice(disconnect=False))
+    except Exception:
+        pass
+
+
+# ── Live voice calls ──────────────────────────────────────────────────────────
+# The account in a voice channel, talking to the people there. The whole call - picking up, turn-taking, being
+# talked over, goodbyes, writing it into memory - is app/voice/session.py; app/voice/discord.py is Discord's
+# voice connection around it (hearing the channel, being heard). This section decides when a call happens, and
+# keeps the connection itself tidy.
+#
+# Kept safe on purpose: a selfbot in voice is the most visible thing it can do, so it never joins anywhere on
+# its own (only the channel picked in Settings, or one joined by hand), it only answers within the calls rules
+# (who, quiet hours, how many a day), and it never talks unless a call session has something to say.
+_VC = {"vc": None, "receive": None, "sender": None, "run": None, "session": None, "idle": None,
+       "caller": "", "name": "", "started_at": 0.0, "auto": False, "leaving": False}
+_RING_NOTES = {}        # uid -> when a ringing DM call last got an in-character text back
+
+
+def _vc_known(uid: str) -> bool:
+    """Whether this person has talked with the account before: memory of them, or anything in the chat log."""
+    try:
+        if get_memory(uid):
+            return True
+    except Exception:
+        pass
+    try:
+        _, n = _chatlog.search(ACCOUNT_INDEX, uid, limit=1)
+        return n > 0
+    except Exception:
+        return False
+
+
+def _vc_emit(uid: str, evt: dict) -> None:
+    """A call's live goings-on, to the Chats tab."""
+    t = evt.get("t")
+    if t == "line":
+        emit_chat_event({"t": "call_line", "uid": uid, "who": evt.get("who"), "text": evt.get("text")})
+    elif t == "state":
+        emit_chat_event({"t": "call_state", "uid": uid, "state": evt.get("state")})
+
+
+def _vc_done(task) -> None:
+    """The call finished (any way it finished): the panel hears, the runner logs, the channel waits for the next."""
+    _VC["run"] = None
+    _VC["session"] = None
+    _VC["caller"] = ""
+    _VC["name"] = ""
+    _VC["started_at"] = 0.0
+    try:
+        record = task.result()
+    except Exception as e:
+        log_error("Voice calls", f"the call failed: {type(e).__name__}: {e}")
+        record = {"uid": "", "name": "", "seconds": 0, "reason": "failed", "engine": ""}
+    uid = str(record.get("uid") or "")
+    if uid:
+        emit_chat_event({"t": "call", "uid": uid, "call": None})
+    log_system(f"Call with {record.get('name') or uid or 'someone'} ended: {record.get('reason')} "
+               f"({record.get('seconds')} s, {record.get('engine')})")
+
+
+async def _vc_user(vc, user_id: int):
+    """(display name, avatar url, user object) for someone in the channel, by whatever Discord has given us."""
+    member = None
+    try:
+        if vc.guild is not None:
+            member = vc.guild.get_member(int(user_id))
+        if member is None:
+            member = discord.utils.find(lambda m: m.id == int(user_id), getattr(vc.channel, "members", []) or [])
+    except Exception:
+        member = None
+    if member is not None:
+        name = getattr(member, "display_name", None) or member.name
+        try:
+            avatar = str(member.display_avatar.url)
+        except Exception:
+            avatar = ""
+        return name, avatar, member
+    try:
+        user = await bot.fetch_user(int(user_id))
+        return (getattr(user, "display_name", None) or user.name), str(user.display_avatar.url), user
+    except Exception:
+        return str(user_id), "", None
+
+
+def _voice_speaker(who) -> None:
+    """Someone started talking in the channel (on the loop): a user id off a SPEAKING event, or an ssrc off
+    their media when Discord has not announced who yet."""
+    try:
+        if int(who) == int(getattr(bot, "selfbot_id", None) or 0):
+            return
+    except (TypeError, ValueError):
+        return
+    asyncio.ensure_future(_maybe_answer_vc(who))
+
+
+async def _arm_voice(vc, *, auto: bool) -> str:
+    """Attach hearing and speaking to a live voice connection. Returns "" when ready, else a reason."""
+    from app.voice.discord import ensure_opus as _ensure_opus
+    problem = _ensure_opus()
+    if problem:
+        log_system(f"Voice calls: {problem}")
+        return problem
+    from app.voice import discord as vdiscord
+    try:
+        receive = vdiscord.VoiceReceive(vc, on_speaker=_voice_speaker, log=log_system)
+        receive.attach()
+    except Exception as e:
+        log_error("Voice calls", f"could not hear the channel: {type(e).__name__}: {e}")
+        return str(e)
+    _VC.update(vc=vc, receive=receive, sender=vdiscord.VoiceSender(vc, log=log_system), auto=auto)
+    # Discord's voice servers only route other people's audio to a client once it has sent something, so she
+    # breathes silence while she waits - what a real connected client does. Without the "speaking" opcode:
+    # real clients send these frames without lighting up as speaking.
+    _VC["idle"] = asyncio.ensure_future(_idle_sender())
+    log_system(f"Voice calls ready in {vc.channel.name}" + ("" if auto else " (joined by hand)"))
+    return ""
+
+
+async def _idle_sender() -> None:
+    """Silence into the channel while nobody is calling, so inbound audio keeps flowing her way."""
+    from app.voice import discord as vdiscord
+    frame = vdiscord.quiet_pcm(48000, 2, 0.02)
+    encoded = b""
+    while True:
+        await asyncio.sleep(0.02)
+        vc = _VC.get("vc")
+        sender = _VC.get("sender")
+        if vc is None or not vc.is_connected() or sender is None:
+            return
+        run = _VC.get("run")
+        if run is not None and not run.done():
+            continue        # a call is live: its own pump is talking
+        try:
+            if not encoded:
+                encoded = sender._encoder.encode(frame, 960)
+            vc.send_audio_packet(encoded, encode=False)
+        except Exception:
+            return
+
+
+async def _disarm_voice(reason: str = "", *, disconnect: bool = True) -> None:
+    """End anything live, stop hearing, and (by default) leave the channel."""
+    vc = _VC.get("vc")
+    session = _VC.get("session")
+    run = _VC.get("run")
+    idle = _VC.get("idle")
+    if idle is not None:
+        idle.cancel()
+    if session is not None and run is not None and not run.done():
+        session.end("you stopped it")
+        try:
+            await asyncio.wait_for(asyncio.shield(run), 10)
+        except Exception:
+            run.cancel()
+    receive = _VC.get("receive")
+    if receive is not None:
+        try:
+            receive.detach()
+        except Exception:
+            pass
+    _VC.update(vc=None, receive=None, sender=None, run=None, session=None, idle=None,
+               caller="", name="", started_at=0.0)
+    if vc is not None and disconnect:
+        _VC["leaving"] = True
+        try:
+            vc._keep_alive_guard = False
+            await vc.disconnect(force=True)
+        except Exception:
+            pass
+
+
+async def _voice_sync(reason: str = "") -> None:
+    """Match the membership to the settings: in the picked channel while calls are on and it is a good hour,
+    out of it otherwise (or once the settings say so)."""
+    calls = calls_cfg(config)
+    on = bool(calls.get("enabled") and calls.get("vc"))
+    # Careful mode (app/utils/stealth.py): voice is the most visible thing an account does, so it stays out
+    # of channels entirely until the date passes.
+    from app.utils.stealth import quiet as _careful_quiet
+    if on and _careful_quiet():
+        on = False
+    cfg = config["bot"].get("autojoin_channel") or {}
+    want = on and bool(cfg) and not in_quiet_hours(calls.get("quiet_hours", ""))
+    vc = _VC.get("vc")
+    if vc is not None and not vc.is_connected():
+        # The connection died underneath it: forget it, then rejoin below.
+        receive = _VC.get("receive")
+        if receive is not None:
+            try:
+                receive.detach()
+            except Exception:
+                pass
+        idle = _VC.get("idle")
+        if idle is not None:
+            idle.cancel()
+        _VC.update(vc=None, receive=None, sender=None, idle=None)
+        vc = None
+    if want and vc is None:
+        try:
+            guild = bot.get_guild(int(cfg["guild_id"]))
+            ch = guild.get_channel(int(cfg["channel_id"])) if guild else None
+        except Exception:
+            ch = None
+        if not isinstance(ch, discord.VoiceChannel):
+            if reason:
+                log_system("Voice calls: the picked channel is not there")
+            return
+        try:
+            new_vc = await ch.connect(self_mute=False, self_deaf=False)
+            await _arm_voice(new_vc, auto=True)
+        except Exception as e:
+            log_error("Voice calls", f"could not join {ch.name}: {type(e).__name__}: {e}")
+    elif not want and vc is not None:
+        await _disarm_voice(reason or "calls turned off", disconnect=True)
+
+
+async def _voice_autojoin() -> None:
+    """Join the picked channel once at startup, when calls and the channel are set."""
+    await _voice_sync(reason="starting")
+
+
+async def _voice_watchdog() -> None:
+    """Every minute: rejoin if the connection dropped, leave when quiet hours began. A cheap, slow loop."""
+    while True:
+        await asyncio.sleep(60)
+        try:
+            calls = calls_cfg(config)
+            if not (calls.get("enabled") and calls.get("vc")):
+                continue
+            await _voice_sync()
+        except Exception:
+            pass
+
+
+async def _maybe_answer_vc(who) -> None:
+    """Someone in the channel started talking (a user id, or a bare ssrc before Discord says who). Whether she
+    picks up is the same call rules as anywhere else."""
+    try:
+        vc = _VC.get("vc")
+        if vc is None or not vc.is_connected() or vc.guild is None:
+            return
+        run = _VC.get("run")
+        if run is not None and not run.done():
+            return
+        calls = calls_cfg(config)
+        if not calls.get("enabled") or not calls.get("vc"):
+            return
+        if in_quiet_hours(calls.get("quiet_hours", "")):
+            return
+        from app.utils.stealth import quiet as _careful_quiet
+        if _careful_quiet():
+            log_system("Voice calls: careful mode is on, so calls stay off.")
+            return
+        who = int(who)
+        if who < 2 ** 32:
+            # An ssrc whose user Discord has not announced. Only worth answering when anyone is allowed, and
+            # the receiver names them the moment their SPEAKING event arrives.
+            if str(calls.get("answer") or "known") != "anyone":
+                log_system("Voice calls: someone is talking in the channel, but it only answers people it "
+                           "knows, and Discord has not said who this is yet.")
+                return
+            uid, name, avatar, user, known = f"vc{who}", "someone", "", None, False
+        else:
+            name, avatar, user = await _vc_user(vc, who)
+            uid = str(who)
+            known = _is_friend(user) if user is not None else False
+            if not known:
+                known = _vc_known(uid)
+        ok, why = should_answer(calls, known=known, calls_today=calls_today(f"discord_{ACCOUNT_INDEX}"))
+        if not ok:
+            log_system(f"Voice call from {name} not answered ({why}).")
+            return
+        from app.voice import discord as vdiscord
+        receive = _VC.get("receive")
+        sender = _VC.get("sender")
+        if receive is None or sender is None:
+            return
+        if receive._e2ee_now():
+            session = getattr(vc._connection, "dave_session", None)
+            if session is None or not getattr(session, "ready", False):
+                # The channel is E2EE and the MLS group has not been welcomed yet: hearing catches up shortly.
+                log_system("Voice calls: channel is end-to-end encrypted; the DAVE session is still negotiating.")
+        adapter = vdiscord.DiscordVoiceAdapter(vc, receive, sender, uid=uid, name=name,
+                                               account=f"discord_{ACCOUNT_INDEX}", chat_account=ACCOUNT_INDEX,
+                                               no_log=uid.startswith("vc"), log=log_system)
+        try:
+            page, _ = _chatlog.search(ACCOUNT_INDEX, uid, limit=10)
+            recent = [{"mine": bool(m.get("mine")), "text": m.get("text") or ""} for m in reversed(page)]
+        except Exception:
+            recent = []
+        session = CallSession(adapter, uid=uid, name=name, cfg=config, recent=recent, log=log_system,
+                              account=f"discord_{ACCOUNT_INDEX}")
+        session.listen(lambda evt: _vc_emit(uid, evt))
+        # A moment of silence first: Discord's clients drop the very first packets, and without it the greeting
+        # would open on a clipped word.
+        for _ in range(4):
+            await sender.send(vdiscord.quiet_pcm(48000, 2, 0.02))
+            await asyncio.sleep(0.02)
+        await sender.pause()
+        run_task = asyncio.ensure_future(session.run())
+        sender_task = asyncio.ensure_future(vdiscord.pump_playout(session, sender, run_task))
+        run_task.add_done_callback(lambda t: (sender_task.cancel(), _vc_done(t)))
+        _VC.update(run=run_task, session=session, caller=uid, name=name, started_at=time.time())
+        emit_chat_event({"t": "call", "uid": uid, "call": {"state": "together", "name": name,
+                                                            "avatar": avatar, "since": time.time(), "live": True}})
+        log_system(f"Voice call with {name} answered.")
+    except Exception as e:
+        log_error("Voice calls", f"could not answer: {type(e).__name__}: {e}")
+
+
+def _ring_note(call) -> None:
+    """A call is ringing in a DM. She cannot pick it up - Discord's DM calls are WebRTC, outside the gateway -
+    so she says so in her own words: once per ring, never more than every few hours, and only within her hours."""
+    try:
+        channel = getattr(call, "channel", None)
+        other = getattr(channel, "recipient", None)
+        info = _dm_call(call)
+        if channel is None or other is None or not info or info.get("state") != "ringing":
+            return
+        calls = calls_cfg(config)
+        if not calls.get("enabled") or not calls.get("reply_ring", True):
+            return
+        if in_quiet_hours(calls.get("quiet_hours", "")):
+            return
+        if calls.get("answer") == "nobody":
+            return
+        if calls.get("answer") == "known" and not (_is_friend(other) or _vc_known(str(other.id))):
+            return
+        uid = str(other.id)
+        if time.time() - _RING_NOTES.get(uid, 0.0) < 3 * 3600:
+            return
+        _RING_NOTES[uid] = time.time()
+        asyncio.ensure_future(_ring_note_send(channel, other, calls))
+    except Exception:
+        pass
+
+
+async def _ring_note_send(channel, other, calls) -> None:
+    """The text that meets the ring: in character, and pointing at her voice channel when there is one."""
+    try:
+        await asyncio.sleep(random.uniform(2.0, 6.0))       # noticing the phone, as a person would
+        channel_name = ""
+        cfg = config["bot"].get("autojoin_channel") or {}
+        if calls.get("vc") and cfg:
+            try:
+                guild = bot.get_guild(int(cfg["guild_id"]))
+                ch = guild.get_channel(int(cfg["channel_id"])) if guild else None
+                if isinstance(ch, discord.VoiceChannel):
+                    channel_name = ch.name
+            except Exception:
+                pass
+        instr = load_instructions() + (
+            f"\n\n[INCOMING CALL: {other.display_name} is ringing you on Discord right now. You cannot take a "
+            f"Discord call, so it will ring out." +
+            (f" Tell them, in your own words, to come meet you in the voice channel called \"{channel_name}\" "
+             f"instead, and you will talk to them there." if channel_name else
+             " Reply with ONE short, casual chat message that brushes the call off in your own words, like "
+             "\"cant talk rn, text me!\". No emoji, no links, nothing but that one line.") + "]")
+        words = await generate_response("(they are calling you right now - answer in one short line)", instr,
+                                        history=None)
+        if not words or is_refusal(words):
+            return
+        words = str(words).strip()[:300]
+        async with bot.global_send_lock:
+            await _simulate_typing(channel, words, fast=True)
+            await channel.send(words)
+        log_system(f"Ringing call from {other.display_name} \u2192 \"{words}\"")
+    except Exception as e:
+        log_error("Call ring", str(e))
+
+
 @bot.event
 async def on_typing(channel, user, when):
     """Someone typing to this account: the Chats tab and Big Picture show their dots, as they show the bot's."""
@@ -4673,6 +5637,11 @@ async def on_message(message):
             remove_blocked(message.author.id)
         except Exception:
             pass
+
+    # A Nitro gift in a DM, before anything else: it expires, it is nothing to do with whether this one gets a
+    # reply, and whoever sent it may be someone the bot ignores. On its own task, so a slow look-up holds nothing up.
+    if isinstance(message.channel, discord.DMChannel) and gift_code(message.content or ""):
+        asyncio.create_task(gift_arrived(message))
 
     # owner priority trigger: owner's own message starting with PRIORITY_PREFIX; must stay outside the selfbot guard, it fires on messages FROM the owner
     if message.author.id == OWNER_ID and message.content.startswith(PRIORITY_PREFIX):

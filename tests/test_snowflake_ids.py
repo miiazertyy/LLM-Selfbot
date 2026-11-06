@@ -253,7 +253,7 @@ check("and so does Escape", 'e.key === "Escape"' in _av)
 check("it asks the CDN for a bigger copy rather than upscaling",
       'u.searchParams.set("size", "1024")' in _av)
 check("a link that is not a sized CDN url is left alone", "else return src;" in _av)
-check("a dead link falls back to the glyph", "onerror={() => (broken = true)}" in _av)
+check("a dead link falls back to the glyph, after one more try", "onerror={failed}" in _av and "broken = true;" in _av)
 check("and a dead BIG link falls back to the small one",
       "onerror={() => (bigBroken = true)}" in _av)
 check("the overlay is portalled out of its card",

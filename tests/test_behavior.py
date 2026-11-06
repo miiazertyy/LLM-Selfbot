@@ -4,6 +4,7 @@ import asyncio
 import base64
 import json
 import random
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -372,7 +373,7 @@ class _FakeBot:
 
 def _load_resolver(bot):
     ns = {"discord": type("d", (), {"Forbidden": _Forbidden, "NotFound": _NotFound}),
-          "bot": bot}
+          "bot": bot, "re": re}
     exec(compile(_ru_src, "resolve_user", "exec"), ns)
     return ns
 
@@ -505,7 +506,7 @@ check("a stopped runner still shows what it last said",
 check("selector drift is checked when it is ready", "await reportSelectorHealth(bot)" in _run)
 check("and again after every reload, when a new build arrives",
       _run.count("reportSelectorHealth(bot)") >= 2)
-check("dotenv is kept out of the Logs tab", _run.count("quiet: true") == 2)
+check("dotenv is kept out of the Logs tab", len(re.findall(r"dotenv\.config\(\{[^}]*quiet: true", _run)) == 2)
 
 
 print()
@@ -546,7 +547,7 @@ print("== the Chats sweep answers inside the panel's timeout ==")
 _we_src = _rsrc[_rsrc.index("def _preview_text("):]
 _we_src = _we_src[:_we_src.index("def _waiting_entry(")] + \
     _we_src[_we_src.index("def _waiting_entry("):].split("\n\n\n")[0]
-_we_ns = {"_sticker_names": lambda m: ""}
+_we_ns = {"_sticker_names": lambda m: "", "re": re}
 exec(compile(_we_src, "_waiting_entry", "exec"), _we_ns)
 _we = _we_ns["_waiting_entry"]
 

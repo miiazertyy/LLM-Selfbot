@@ -178,12 +178,17 @@ def _encode(ffmpeg: str, src, dst, info: dict, side: int, video: list, audio_kbp
     # What went wrong, if it does: read beside the progress, so neither pipe fills up and stalls ffmpeg.
     reader = threading.Thread(target=lambda: errors.append(proc.stderr.read()), daemon=True)
     reader.start()
+    shown = -1
     for raw in proc.stdout:
         line = raw.decode("utf-8", "replace").strip()
         if progress and duration and line.startswith("out_time_us="):
             done = _num(line.split("=", 1)[1]) / 1e6
             lo, hi = span
-            progress(int(lo + (hi - lo) * max(0.0, min(1.0, done / duration))))
+            pct = int(lo + (hi - lo) * max(0.0, min(1.0, done / duration)))
+            # ffmpeg 8 says N/A now and then (read as 0): the bar never goes back to the start.
+            if pct > shown:
+                shown = pct
+                progress(pct)
     proc.wait()
     reader.join(timeout=5)
     if proc.returncode != 0:
@@ -269,11 +274,13 @@ def poster(src, dst, width: int = 640) -> Path:
     return dst
 
 
-def sheet(src, count: int = 6, width: int = 480) -> bytes:
+def sheet(src, count: int = 6, width: int = 480, upto: float = 0.0) -> bytes:
     """Frames from across the video, in order, on one picture: left to right, then down. A vision model reads one
-    picture, so this is how it sees what happens in a video."""
-    from PIL import Image, ImageDraw
+    picture, so this is how it sees what happens in a video. `upto`: only its first so many seconds (0, all of it)."""
+    from PIL import Image
     duration = probe(src)["duration"]
+    if upto > 0:
+        duration = min(duration, upto)
     if duration <= 0.5:
         times = [0.0]
     else:
@@ -287,6 +294,13 @@ def sheet(src, count: int = 6, width: int = 480) -> bytes:
             continue
     if not shots:
         raise VideoError("No picture could be taken from that video.")
+    return board(shots)
+
+
+def board(shots: list) -> bytes:
+    """Pictures (PIL images) on one JPEG in order, each numbered in its corner: a video's frames, or the photos of a
+    TikTok photo post (app/utils/tiktokwatch.py)."""
+    from PIL import Image, ImageDraw
     cols = 1 if len(shots) == 1 else 2 if len(shots) <= 4 else 3
     rows = math.ceil(len(shots) / cols)
     w = max(s.width for s in shots)
@@ -307,10 +321,14 @@ def sheet(src, count: int = 6, width: int = 480) -> bytes:
 
 
 def sound(src, seconds: int = 90) -> bytes | None:
-    """Its sound, the first `seconds` of it, small enough to be transcribed: None when it has none."""
+    """Its sound, the first `seconds` of it, small enough to be transcribed: None when it has none. `src` may be
+    sound alone too (a TikTok's own sound track, app/utils/tiktokwatch.py)."""
     ffmpeg, _ = tools()
-    if not probe(src)["audio"]:
-        return None
+    try:
+        if not probe(src)["audio"]:
+            return None
+    except VideoError:
+        pass  # no picture in it: ffmpeg says below whether there is any sound
     out = _run([ffmpeg, "-hide_banner", "-nostdin", "-i", str(src), "-vn", "-t", str(int(seconds)), "-ac", "1",
                 "-ar", "16000", "-c:a", "libmp3lame", "-b:a", "48k", "-f", "mp3", "pipe:1"], 120)
     return out.stdout if out.returncode == 0 and len(out.stdout or b"") > 2000 else None

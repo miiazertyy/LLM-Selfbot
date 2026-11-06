@@ -11,10 +11,12 @@
    * No card of its own: every widget sits on the Dashboard's one surface, and
    * the seams between them are the Dashboard's to draw.
    */
-  import { slide } from "svelte/transition";
+  import { fly, slide } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
   import Icon from "../components/Icon.svelte";
   import { motionEnabled, type WidgetInstance } from "../stores";
+  import { play } from "../uisound";
+  import { unroll } from "../unroll";
   import { WIDGETS, setOption, updateWidget } from "./widgets";
 
   let {
@@ -33,6 +35,8 @@
   const collapsed = $derived(!!inst.collapsed);
   let menu = $state(false);
   let menuEl: HTMLElement | null = $state(null);
+  /** Its settings fading out once closed: the widget stays raised over the next one until they have gone. */
+  let menuLeaving = $state(false);
 
   /** What it is set to, as short chips next to the title: "30 days · Top 5". */
   const chips = $derived(
@@ -65,7 +69,7 @@
 </script>
 
 <section class="widget group/widget relative" class:is-collapsed={collapsed} class:is-arranging={arranging}
-         class:is-raised={menu}>
+         class:is-raised={menu || menuLeaving}>
   <header class="flex items-center gap-2 px-4 py-3">
     {#if arranging}
       <span class="-ml-1 cursor-grab text-faint active:cursor-grabbing" title="Drag to move">
@@ -85,13 +89,18 @@
 
     <div class="widget-tools flex shrink-0 items-center gap-0.5">
       {#if def?.options?.length}
-        <div class="relative" bind:this={menuEl}>
-          <button class="widget-btn" class:is-on={menu} onclick={() => (menu = !menu)}
+        <!-- A flex box, not a line of text, so the menu hangs from the button and not from the room a line keeps for
+             letters' tails under it. -->
+        <div class="relative flex" bind:this={menuEl}>
+          <button class="widget-btn" class:is-on={menu} onclick={() => { if (!menu) play("open"); menu = !menu; }}
                   title="What it shows" aria-label="Widget settings" aria-expanded={menu}>
             <Icon name="settings" size={13} />
           </button>
           {#if menu}
-            <div class="widget-menu glass floating pop absolute right-0 top-full z-30 mt-1.5 w-60 rounded-xl p-3">
+            <!-- Unrolls out of the cog (app.css .unroll), one setting after another. -->
+            <div class="widget-menu glass floating unroll absolute right-0 top-full z-30 mt-1.5 w-60 rounded-xl p-3" use:unroll
+                 out:fly={{ y: -4, duration: $motionEnabled ? 150 : 0, opacity: 0 }}
+                 onoutrostart={() => (menuLeaving = true)} onoutroend={() => (menuLeaving = false)}>
               {#each def.options as o}
                 <div class="mb-2.5 last:mb-0">
                   <div class="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-faint">{o.label}</div>

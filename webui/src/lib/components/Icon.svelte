@@ -1,5 +1,6 @@
 <script module lang="ts">
-  import { DISCORD_MARK, SNAPCHAT_GHOST } from "../brands";
+  import { DISCORD_MARK, SNAPCHAT_GHOST, TIKTOK_MARK, INSTAGRAM_MARK, X_MARK, REDDIT_SNOO, WHATSAPP_MARK,
+           MINECRAFT_CUBE, IMESSAGE_BUBBLE, TELEGRAM_PLANE } from "../brands";
   /* Allocated once for the whole app. These were instance-level, so the
      ~60-entry path table was rebuilt for every <Icon> mounted, and
      {#key route} destroys and recreates every icon on each navigation. */
@@ -50,6 +51,21 @@
     // rounded controller outline, the brow and the chin, and the two eyes.
     // Discord's own mark (see brands.ts), solid.
     discord: DISCORD_MARK,
+    // TikTok's own note (brands.ts), solid like the other two.
+    tiktok: TIKTOK_MARK,
+    // Instagram's camera (brands.ts): three closed outlines, filled with evenodd so the ring stays a ring.
+    instagram: INSTAGRAM_MARK,
+    // X's own mark (brands.ts), solid.
+    x: X_MARK,
+    // Reddit's own snoo (brands.ts), solid.
+    reddit: REDDIT_SNOO,
+    // WhatsApp's bubble (brands.ts), solid too.
+    whatsapp: WHATSAPP_MARK,
+    // Minecraft as a block (brands.ts), solid like the other marks.
+    minecraft: MINECRAFT_CUBE,
+    // iMessage as a speech bubble (brands.ts), solid too.
+    imessage: IMESSAGE_BUBBLE,
+    telegram: TELEGRAM_PLANE,
 
     // ── Chrome / actions ─────────────────────────────────────────────────
     search: "M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14ZM20 20l-4-4",
@@ -101,6 +117,12 @@
     type: "M5 7.5V5h14v2.5M12 5v14M9 19h6",
     clock: "M12 20.5a8.5 8.5 0 1 0 0-17 8.5 8.5 0 0 0 0 17ZM12 7.5V12l3 2",
     smile: "M12 20.5a8.5 8.5 0 1 0 0-17 8.5 8.5 0 0 0 0 17ZM9 10h.01M15 10h.01M8.4 14a4.6 4.6 0 0 0 7.2 0",
+    // A like: TikTok's heart, the same weight as the rest.
+    heart: "M12 20s-7.5-4.6-7.5-10.1A4.4 4.4 0 0 1 12 7.2a4.4 4.4 0 0 1 7.5 2.7C19.5 15.4 12 20 12 20Z",
+    // Saved: TikTok's Favorites, a ribbon.
+    bookmark: "M7 3.5h10a1 1 0 0 1 1 1V20.5l-6-4.2-6 4.2V4.5a1 1 0 0 1 1-1Z",
+    // A Nitro gift in a DM: a box with its ribbon across and the bow on top.
+    gift: "M4 11.5h16M4 11.5v8a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-8M3.5 7.5h17a.5.5 0 0 1 .5.5v3a.5.5 0 0 1-.5.5h-17a.5.5 0 0 1-.5-.5V8a.5.5 0 0 1 .5-.5ZM12 7.5v13M12 7.5S10.8 3.5 8.6 3.5a2 2 0 0 0 0 4ZM12 7.5s1.2-4 3.4-4a2 2 0 0 1 0 4Z",
     // Tray with an arrow rising out of it: the drop zone, without an emoji.
     upload: "M12 16V4M8 8l4-4 4 4M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3",
     // For the right-click menu's edits. Copy: one page over another.
@@ -125,6 +147,8 @@
     edit: "M4 20h4L19 9a2.5 2.5 0 0 0-3.5-3.5L4 16.5V20ZM14.5 6.5l3 3",
     grip: "M9 6h.01M9 12h.01M9 18h.01M15 6h.01M15 12h.01M15 18h.01",
     undo: "M4 9h10a5 5 0 0 1 0 10h-6M4 9l4-4M4 9l4 4",
+    // An arrow turning back over a message: answering that one.
+    reply: "M9.5 6 4 11.5l5.5 5.5M4 11.5h9.5a6.5 6.5 0 0 1 6.5 6.5v.5",
     // A tray with an arrow into it, for messages coming in.
     inbox: "M4 13.5h4.2l1.6 2.5h4.4l1.6-2.5H20M12 4v7.5M8.8 8.3 12 11.5l3.2-3.2M4 13.5 5.8 8H7M20 13.5 18.2 8H17M4 13.5V18a1.5 1.5 0 0 0 1.5 1.5h13A1.5 1.5 0 0 0 20 18v-4.5",
     // A paper plane, for replies going out.
@@ -133,6 +157,10 @@
     keyboard: "M4 6.5h16A1.5 1.5 0 0 1 21.5 8v8a1.5 1.5 0 0 1-1.5 1.5H4A1.5 1.5 0 0 1 2.5 16V8A1.5 1.5 0 0 1 4 6.5ZM6.5 10h.01M10 10h.01M13.5 10h.01M17 10h.01M8 14h8",
     // A capsule mic on a stand, for hearing voice messages.
     mic: "M12 3.5a3 3 0 0 1 3 3v5a3 3 0 0 1-6 0v-5a3 3 0 0 1 3-3ZM5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21M9 21h6",
+    // Who is in a call: muted, deafened, camera on (ServerTree).
+    micOff: "M12 3.5a3 3 0 0 1 3 3v5a3 3 0 0 1-6 0v-5a3 3 0 0 1 3-3ZM5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21M9 21h6M4 4l16 16",
+    headphonesOff: "M4.5 18v-5.5a7.5 7.5 0 0 1 15 0V18M4.5 14H7a1 1 0 0 1 1 1v3.5a1 1 0 0 1-1 1H5.5a1 1 0 0 1-1-1V14ZM19.5 14H17a1 1 0 0 0-1 1v3.5a1 1 0 0 0 1 1h1.5a1 1 0 0 0 1-1V14ZM4 4l16 16",
+    camera: "M5 6.5h8.5A1.5 1.5 0 0 1 15 8v8a1.5 1.5 0 0 1-1.5 1.5H5A1.5 1.5 0 0 1 3.5 16V8A1.5 1.5 0 0 1 5 6.5ZM15 10.5l5.5-3v9l-5.5-3",
     // A speaker with two waves, for speaking.
     volume: "M4 9.5h3l4.5-4v13L7 14.5H4v-5ZM15 9a4 4 0 0 1 0 6M17.8 6.5a7.5 7.5 0 0 1 0 11",
     // A screen on a foot, for "this computer".
@@ -142,6 +170,7 @@
     // Arrows up and down, for "tried in this order".
     order: "M8 4v16M8 4 4.5 7.5M8 4l3.5 3.5M16 20V4M16 20l-3.5-3.5M16 20l3.5-3.5",
     // Someone asking to be friends: a person, and a plus beside them.
+    phone: "M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 1.9.7 2.8a2 2 0 0 1-.4 2.1L8.1 9.9a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.8.7a2 2 0 0 1 1.7 2Z",
     userPlus: "M10 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7ZM3.5 20v-1a6.5 6.5 0 0 1 11-4.7M18 13.5v6M15 16.5h6",
     // For a zone or a language that is no one country: UTC, Esperanto.
     globe: "M12 20.5a8.5 8.5 0 1 0 0-17 8.5 8.5 0 0 0 0 17ZM3.8 9.5h16.4M3.8 14.5h16.4M12 3.5c2.3 2.4 3.4 5.2 3.4 8.5s-1.1 6.1-3.4 8.5M12 3.5C9.7 5.9 8.6 8.7 8.6 12s1.1 6.1 3.4 8.5",
@@ -161,7 +190,10 @@
   // at its old size it sat in the bottom right of the box, looking shrunk
   // beside the other icons.
   paths.key = "M11.45 7.55a4.55 4.55 0 1 1 4.55 4.55c-.65 0-1.3-.13-1.82-.39L12.1 13.79V16H9.5v2.6H6.9v2.6H3v-3.38l7.54-7.54c-.26-.52-.39-1.17-.39-1.82ZM16 6.38h.01";
-  const FILLED = new Set(["github", "discord", "snapchat"]);
+  const FILLED = new Set(["github", "discord", "snapchat", "tiktok", "instagram", "x", "reddit", "whatsapp",
+                          "minecraft", "imessage", "telegram"]);
+  // Marks whose holes are subpaths, so the winding rule has to be the one that leaves them open.
+  const EVENODD = new Set(["instagram"]);
   /**
    * Marks drawn edge to edge on the grid, pulled in to the 2 to 22 the rest
    * keep to: a line along the very edge is half cut off by the box.
@@ -169,6 +201,12 @@
   const INSET: Record<string, string> = {
     snapchat: "translate(1.2 1.2) scale(0.9)",
     discord: "translate(1.2 1.2) scale(0.9)",
+    tiktok: "translate(1.2 1.2) scale(0.9)",
+    x: "translate(1.2 1.2) scale(0.9)",
+    reddit: "translate(1.2 1.2) scale(0.9)",
+    whatsapp: "translate(1.2 1.2) scale(0.9)",
+    // Not Instagram's or Minecraft's: both are drawn inside 2 to 22 already (brands.ts), and pulling them in a second
+    // time drew Instagram's camera a sixth smaller than the marks beside it.
   };
 </script>
 
@@ -190,6 +228,8 @@
 
   /** Marks that are a solid shape rather than a line drawing. */
   const solid = $derived(FILLED.has(name));
+  /** And of those, the ones whose holes are subpaths: filled the other way round, so a ring stays a ring. */
+  const evenodd = $derived(EVENODD.has(name));
 </script>
 
 <svg
@@ -206,5 +246,12 @@
   class={cls}
   aria-hidden="true"
 >
-  <path d={paths[name] ?? paths.dashboard} transform={INSET[name]} />
+  <path d={paths[name] ?? paths.dashboard} transform={INSET[name]} fill-rule={evenodd ? "evenodd" : undefined} />
 </svg>
+
+<style>
+  /* An icon keeps its size. In a row with a label that does not quite fit, a flex item shrinks by default, and an
+     SVG is the one that gives: in a narrow window "Snapchat" and "Instagram" squeezed their marks down to 2 px and
+     0 px beside them, while the shorter "Discord" and "TikTok" kept theirs. */
+  svg { flex-shrink: 0; }
+</style>

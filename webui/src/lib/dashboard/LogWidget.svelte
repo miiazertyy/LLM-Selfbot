@@ -13,6 +13,7 @@
   import LogRow from "../components/LogRow.svelte";
   import { chatAccounts } from "../chats";
   import { foldRows, sourceInfo, type LogLine } from "../logrows";
+  import { socialsOn, sourceOn } from "../socials";
   import { openMenuAt, copyText } from "../contextmenu";
 
   /** Right-click on a line: copy it, or open the whole log. */
@@ -42,7 +43,7 @@
   let open = $state<Set<number>>(new Set());
 
   const rows = $derived.by(() => {
-    const all = foldRows(lines);
+    const all = foldRows(lines).filter((r) => sourceOn($socialsOn, r.source));
     const picked = filter === "replies" ? all.filter((r) => r.level === "reply")
       : filter === "problems" ? all.filter((r) => r.level === "error" || r.level === "warn")
       : all;

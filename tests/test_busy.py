@@ -49,7 +49,9 @@ check("describing pictures", 'begin("pictures", "Describing pictures")' in read(
 check("a Local AI model download, after leaving Settings",
       'trackUntil("settings", `Downloading' in read("lib/components/LocalAI.svelte"))
 check("installing Snapchat support",
-      'trackUntil("settings", "Installing Snapchat support"' in read("lib/components/SnapchatSetup.svelte"))
+      'trackUntil("settings", `Installing ${brand} support`' in read("lib/components/SnapchatSetup.svelte")
+      and 'const brand = $derived(wa ? "WhatsApp" : rd ? "Reddit" : xx ? "X" : ig ? "Instagram" : tt ? "TikTok"'
+      in read("lib/components/SnapchatSetup.svelte"))
 check("starting and stopping accounts", 'track("accounts"' in read("pages/Accounts.svelte"))
 check("export and import", read("pages/System.svelte").count('track("system"') == 2)
 

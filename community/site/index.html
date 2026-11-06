@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LLMSelfbot community profiles</title>
+<style>
+  :root { color-scheme: dark; --bg: #0b0b10; --card: #14141c; --ink: #ecebf3; --muted: #9a99ab; --edge: rgb(255 255 255 / 0.08); --accent: #a78bfa; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--ink); background:
+         radial-gradient(1200px 600px at 20% -10%, rgb(167 139 250 / 0.14), transparent 60%), var(--bg); }
+  main { max-width: 1100px; margin: 0 auto; padding: 32px 16px 64px; }
+  h1 { margin: 0; font-size: 26px; letter-spacing: -0.01em; }
+  .sub { margin: 4px 0 20px; color: var(--muted); }
+  .stats { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 18px; }
+  .stat { padding: 10px 14px; border-radius: 14px; background: var(--card); box-shadow: inset 0 0 0 1px var(--edge); }
+  .stat b { display: block; font-size: 20px; }
+  .stat span { color: var(--muted); font-size: 12px; }
+  .bar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+  .bar input { flex: 1; min-width: 200px; padding: 9px 12px; border: 0; border-radius: 10px; color: var(--ink);
+               background: var(--card); box-shadow: inset 0 0 0 1px var(--edge); outline: none; }
+  .bar button { padding: 8px 12px; border: 0; border-radius: 10px; color: var(--muted); background: var(--card);
+                box-shadow: inset 0 0 0 1px var(--edge); cursor: pointer; }
+  .bar button[aria-pressed="true"] { color: var(--ink); box-shadow: inset 0 0 0 1px rgb(167 139 250 / 0.6); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
+  .card { display: flex; flex-direction: column; gap: 8px; padding: 14px; border: 0; border-radius: 18px; text-align: left;
+          color: var(--ink); cursor: pointer; background: linear-gradient(160deg, color-mix(in srgb, var(--pc) 16%, transparent), transparent 55%), var(--card);
+          box-shadow: inset 0 0 0 1px var(--edge); transition: transform 0.2s ease, box-shadow 0.2s ease; }
+  .card:hover { transform: translateY(-2px); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--pc) 45%, transparent), 0 12px 30px -16px var(--pc); }
+  .head { display: flex; align-items: center; gap: 10px; }
+  .face { width: 46px; height: 46px; flex-shrink: 0; border-radius: 999px; object-fit: cover; background: var(--pc);
+          box-shadow: 0 0 0 2px color-mix(in srgb, var(--pc) 60%, transparent); }
+  .name { font-weight: 650; }
+  .by, .line, .meta { color: var(--muted); font-size: 12.5px; }
+  .tags { display: flex; flex-wrap: wrap; gap: 4px; }
+  .tag { padding: 1px 8px; border-radius: 999px; font-size: 11px; color: var(--muted); box-shadow: inset 0 0 0 1px var(--edge); }
+  dialog { width: min(720px, 94vw); max-height: 88vh; padding: 0; border: 0; border-radius: 20px; color: var(--ink);
+           background: var(--card); box-shadow: 0 30px 80px -20px #000, inset 0 0 0 1px var(--edge); }
+  dialog::backdrop { background: rgb(0 0 0 / 0.6); }
+  .d { padding: 20px; overflow: auto; max-height: 88vh; }
+  .d h2 { margin: 0; }
+  pre { white-space: pre-wrap; word-break: break-word; padding: 12px; border-radius: 12px; background: rgb(0 0 0 / 0.3);
+        box-shadow: inset 0 0 0 1px var(--edge); font: 12.5px/1.5 ui-monospace, Consolas, monospace; }
+  .thumbs { display: flex; flex-wrap: wrap; gap: 6px; }
+  .thumbs img { width: 96px; height: 96px; object-fit: cover; border-radius: 10px; }
+  .chart { display: flex; align-items: flex-end; gap: 2px; height: 60px; }
+  .chart i { flex: 1; min-height: 2px; border-radius: 2px; background: var(--accent); opacity: 0.8; }
+  .close { float: right; border: 0; background: none; color: var(--muted); font-size: 22px; cursor: pointer; }
+  .empty { color: var(--muted); padding: 30px 0; }
+  .add { margin-top: 12px; padding: 10px 12px; border-radius: 12px; color: var(--muted); background: rgb(167 139 250 / 0.08); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Community profiles</h1>
+  <p class="sub">Made by people using LLMSelfbot. Add one from the app: Profiles, Community.</p>
+  <div class="stats" id="stats"></div>
+  <div class="bar">
+    <input id="q" placeholder="Search profiles" aria-label="Search profiles">
+    <button data-sort="popular" aria-pressed="true">Popular</button>
+    <button data-sort="new" aria-pressed="false">New</button>
+    <button data-sort="trending" aria-pressed="false">Trending</button>
+    <button id="adult" aria-pressed="false">Show 18+</button>
+  </div>
+  <div class="grid" id="grid"></div>
+  <p class="empty" id="empty" hidden>Nothing here yet.</p>
+</main>
+<dialog id="dlg"><div class="d" id="dbody"></div></dialog>
+<script>
+  // Everything from a profile is put on the page as text, never as HTML.
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+  const compact = (n) => n < 1000 ? String(n) : n < 10000 ? (n / 1000).toFixed(1).replace(/\.0$/, "") + "K" : Math.round(n / 1000) + "K";
+  let data = { profiles: [], totals: {} }, stats = { profiles: {} }, sort = "popular", adult = false;
+  const safeColor = (c) => /^#[0-9a-fA-F]{6}$/.test(c || "") ? c : "#a78bfa";
+
+  function render() {
+    const q = document.getElementById("q").value.trim().toLowerCase();
+    let list = data.profiles.filter((p) => (adult || !p.adult) &&
+      (!q || [p.name, p.tagline, p.author, ...(p.tags || [])].join(" ").toLowerCase().includes(q)));
+    const by = { popular: (a, b) => b.downloads - a.downloads, new: (a, b) => String(b.created).localeCompare(String(a.created)),
+                 trending: (a, b) => b.week - a.week };
+    list.sort(by[sort]);
+    const grid = document.getElementById("grid");
+    grid.replaceChildren(...list.map(card));
+    document.getElementById("empty").hidden = list.length > 0;
+  }
+
+  function card(p) {
+    const b = el("button", "card");
+    b.style.setProperty("--pc", safeColor(p.color));
+    const head = el("div", "head");
+    const face = el("img", "face"); face.alt = ""; if (p.avatar) face.src = p.avatar;
+    const who = el("div");
+    who.append(el("div", "name", p.name), el("div", "by", "by " + (p.author || "someone")));
+    head.append(face, who);
+    b.append(head);
+    if (p.tagline) b.append(el("div", "line", p.tagline));
+    const tags = el("div", "tags");
+    for (const t of p.tags || []) tags.append(el("span", "tag", t));
+    if (p.adult) tags.append(el("span", "tag", "18+"));
+    b.append(tags, el("div", "meta", `${compact(p.downloads)} downloads · v${p.version}${p.app ? " · app " + p.app : ""}`));
+    b.addEventListener("click", () => open(p));
+    return b;
+  }
+
+  async function open(p) {
+    const d = document.getElementById("dbody");
+    const close = el("button", "close", "×"); close.setAttribute("aria-label", "Close");
+    close.addEventListener("click", () => document.getElementById("dlg").close());
+    d.replaceChildren(close, el("h2", null, p.name), el("p", "by", `by ${p.author || "someone"} · v${p.version}${p.app ? `, made with app ${p.app}` : ""} · ${compact(p.downloads)} downloads, ${compact(p.week)} this week`));
+    if (p.description) d.append(el("p", null, p.description));
+    const daily = ((stats.profiles || {})[p.slug] || {}).daily || [];
+    if (daily.length) {
+      const max = Math.max(1, ...daily);
+      const chart = el("div", "chart");
+      for (const v of daily.slice(-30)) { const i = el("i"); i.style.height = Math.max(3, (v / max) * 100) + "%"; i.title = String(v); chart.append(i); }
+      d.append(chart);
+    }
+    if (p.thumbs && p.thumbs.length) {
+      const t = el("div", "thumbs");
+      for (const src of p.thumbs) { const img = el("img"); img.alt = ""; img.loading = "lazy"; img.src = src; t.append(img); }
+      d.append(t);
+    }
+    try {
+      const text = await (await fetch(`profiles/${p.slug}/persona.txt`)).text();
+      d.append(el("h3", null, "Its text"), el("pre", null, text));
+      const settings = await (await fetch(`profiles/${p.slug}/settings.json`)).json();
+      const keys = Object.keys(settings);
+      if (keys.length) d.append(el("h3", null, "Its settings"), el("pre", null, keys.map((k) => `${k}: ${JSON.stringify(settings[k])}`).join("\n")));
+    } catch {}
+    d.append(el("div", "add", "To add it: open LLMSelfbot, Profiles, Community, and find " + p.name + "."));
+    document.getElementById("dlg").showModal();
+  }
+
+  for (const b of document.querySelectorAll("[data-sort]")) b.addEventListener("click", () => {
+    sort = b.dataset.sort;
+    for (const x of document.querySelectorAll("[data-sort]")) x.setAttribute("aria-pressed", String(x === b));
+    render();
+  });
+  document.getElementById("adult").addEventListener("click", (e) => { adult = !adult; e.currentTarget.setAttribute("aria-pressed", String(adult)); render(); });
+  document.getElementById("q").addEventListener("input", render);
+
+  (async () => {
+    try { data = await (await fetch("index.json", { cache: "no-cache" })).json(); } catch {}
+    try { stats = await (await fetch("stats.json", { cache: "no-cache" })).json(); } catch {}
+    const t = data.totals || {};
+    const s = document.getElementById("stats");
+    for (const [n, label] of [[t.profiles || 0, "profiles"], [t.downloads || 0, "downloads"], [t.week || 0, "this week"]]) {
+      const box = el("div", "stat"); box.append(el("b", null, compact(n)), el("span", null, label)); s.append(box);
+    }
+    render();
+  })();
+</script>
+</body>
+</html>

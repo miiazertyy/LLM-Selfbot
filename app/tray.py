@@ -110,7 +110,13 @@ def snapshot() -> dict:
     sup = _STATE.get("supervisor")
     kids = []
     try:
-        kids = [c for c in (sup.status() if sup else []) if c.get("role") in ("discord", "snapchat")]
+        # Not the accounts of a social switched off in Settings: the app shows it nowhere (app/utils/socials.py).
+        from app.platforms import registry
+        from app.utils import socials
+        on = socials.on()
+        kids = [c for c in (sup.status() if sup else [])
+                if (c.get("role") in registry.IDS and (c.get("role") != "telegram" or c.get("account")))
+                and on.get(c.get("role"), True)]
     except Exception:
         pass
     paused = {}

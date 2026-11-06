@@ -1,30 +1,35 @@
 /**
- * Big Picture Mode's director: what the centre stage shows, and when it moves on.
+ * Big Picture Mode's director: which page is up, who is on stage, and when it moves on.
  *
- * Nobody drives Big Picture; it follows the bots. This decides, from the live
- * queue and the clock alone, which conversation is in the spotlight:
+ * Big Picture is a set of pages (Now, People, Accounts, Today, ...), and left
+ * alone it walks through them by itself, the same pages anyone can walk into
+ * and use. Nobody has to drive it: this decides, from the live queue and the
+ * clock alone.
  *
- *   1. one whose reply the AI is writing or typing out (the part worth watching),
- *   2. else one whose message has only just arrived, for long enough to see it land,
- *   3. else none: a reply that is only waiting, for its timer or its pace, is
- *      no reason to hold the stage, so the scenes play meanwhile and the queue
- *      down the left says who is waiting.
+ *   1. Someone whose reply the AI is writing or typing goes on stage, on Now.
+ *      That is the part worth watching.
+ *   2. Else someone whose message has only just arrived, for long enough to see
+ *      it land.
+ *   3. Else nobody: a reply that is only waiting, for its timer or its pace, is
+ *      no reason to hold the screen, so the tour plays meanwhile and the queue
+ *      says who is waiting.
  *
  * A spotlight is never taken away while its reply is written or typed, and
  * never within a few seconds of arriving, so the stage does not flicker. When
  * its reply goes out and the row leaves the queue, it stays up a moment longer
- * so the sent message is seen. The rest of the time the stage cycles through
- * the scenes: the caller says which (cycleFor builds the list from what there
- * is to show), and each stays up for its own SCENE_TIME.
+ * so the sent message is seen.
  *
- * The scene on show is fixed when it starts. The list can change under it,
+ * The page on show is fixed when it starts. The tour can change under it,
  * because a friend request arrived or the summaries finished loading, and the
- * scene you are looking at does not swap for another mid-sentence: the new
- * list only decides what comes next.
+ * page you are looking at does not swap for another: the new list only decides
+ * what comes next.
  *
- * Anything done by hand holds the stage: a click on a card, a chapter picked,
- * the pointer moving over the stage, Space. A held idle scene's clock stops
- * while it is held, so letting go never lands on a scene already out of time.
+ * Nothing is taken from under anyone. Anything done by hand holds the screen: a
+ * press, a key, the pointer moving. A page's clock stops while it is held, so
+ * letting go never lands on one already out of time, and the Now tab says
+ * someone is being answered rather than the screen going to them. Space stays
+ * put until it is pressed again. autoState says which of those it is, for the
+ * button that shows it.
  *
  * Pure functions of plain data, no DOM and no stores, so it runs under Node in
  * tests/bigpicture_director.mjs.
@@ -43,12 +48,14 @@ export type Row = {
   ts?: number;
 };
 
+export type Page = "now" | "people" | "accounts" | "today" | "persona" | "pictures" | "minecraft" | "inbox";
+
 /**
- * The idle scene on show. `scene` numbers every showing this visit, never
- * reused, so the stage can key its change on it; `pos` is its place in the
- * list, `name` what it is, `at` when the director last looked at it.
+ * The page on show when nobody is on stage. `scene` numbers every showing this
+ * visit, never reused, so the screen can key its change on it; `pos` is its
+ * place in the tour, `name` what it is, `at` when the director last looked at it.
  */
-export type Idle = { scene: number; since: number; pos: number; name: Scene; at: number };
+export type Idle = { scene: number; since: number; pos: number; name: Page; at: number };
 
 export type DirectorState = {
   spotlight: string | null;
@@ -56,13 +63,15 @@ export type DirectorState = {
   since: number;
   /** When the spotlight was last seen in the queue: it leaves the queue once answered. */
   lastSeen: number;
-  /** Space: hold the stage on the current conversation or scene, whatever happens elsewhere. */
+  /** Space: stay here, whatever happens elsewhere, until it is pressed again. */
   pinned: boolean;
-  /** A click, an arrow key or the pointer moving holds the stage for a while too, then the director takes over again. */
+  /** Something done by hand holds the screen until this moment, then the director takes over again. */
   manualUntil: number;
-  /** With nothing to show, the idle scene cycle: which one, and since when. */
+  /** How long that hold was for: how far round the ring has to run. */
+  holdFor: number;
+  /** With nobody on stage, the page on show: which one, and since when. */
   idle: Idle | null;
-  /** How many scenes have been shown this visit. */
+  /** How many pages have been shown this visit. */
   shown: number;
 };
 
@@ -70,61 +79,55 @@ export type DirectorState = {
 export const HOLD_MIN = 8;
 /** Seconds an answered conversation stays up, so the reply that went out is seen. */
 export const AFTER_DONE = 6;
-/** Seconds a click or an arrow key holds the stage before the director takes over again. */
-export const MANUAL_HOLD = 25;
-/** Seconds the pointer moving over the stage holds it, after the last movement. */
+/** Seconds after the last thing done by hand before Auto comes back. */
+export const MANUAL_HOLD = 45;
+/** Seconds the pointer moving holds the screen, when nothing has been pressed: nothing slides away from under a click. */
 export const HOVER_HOLD = 8;
-/** Seconds each idle scene stays up. */
-export const IDLE_SCENE = 8;
-/** Seconds a message that has just arrived is news: long enough to see it land, then the scenes again. */
+/** Seconds a message that has just arrived is news: long enough to see it land, then the tour again. */
 export const FRESH = 12;
 /** How recent an arrival nobody is answering still ranks high in the queue, in seconds. */
 export const RECENT = 15 * 60;
 
-export type Scene =
-  | "recent" | "today" | "people" | "memory"
-  | "accounts" | "pictures" | "friends" | "persona" | "health";
-/** The idle scenes when there is nothing to show but the day's own. */
-export const SCENES: readonly Scene[] = ["recent", "today", "people"];
-/** With summaries of people to show (from Memory), one of them comes round every other scene, first. */
-export const MEMORY_CYCLE: readonly Scene[] = ["memory", "today", "memory", "recent", "memory", "people"];
-/** Seconds each scene stays up: a summary and the last few messages take longer to read than a number. */
-export const SCENE_TIME: Record<Scene, number> = {
-  recent: IDLE_SCENE, today: IDLE_SCENE, people: IDLE_SCENE, memory: 13,
-  accounts: 10, pictures: 12, friends: 10, persona: 12, health: 9,
+/** Seconds each page stays up on the tour: a summary and the last few messages take longer to read than a number. */
+export const PAGE_TIME: Record<Page, number> = {
+  now: 10, people: 13, today: 10, accounts: 10, persona: 12, pictures: 12, inbox: 10,
+  // Watching it play: it takes a few seconds to draw the world, and then it is the best thing on the screen.
+  minecraft: 24,
 };
 
-/**
- * Worth seeing before anything else when there is one: somebody asking to be a
- * friend, something broken. The rest take turns, a number between two pictures.
- */
-const URGENT: readonly Scene[] = ["friends", "health"];
-const ROUND: readonly Scene[] = ["today", "accounts", "recent", "pictures", "people", "persona"];
+/** The tabs, in their order along the top. The last two only while there is something to show in them. */
+export const TABS: readonly Page[] = ["now", "people", "accounts", "today", "persona", "pictures", "minecraft", "inbox"];
+
+/** The tabs there are right now: `have` says whether Minecraft has a world to show and whether anything needs you. */
+export function tabsFor(have: { minecraft?: boolean; inbox?: boolean }): Page[] {
+  return TABS.filter((p) => (p === "minecraft" ? have.minecraft : p === "inbox" ? have.inbox : true));
+}
 
 /**
- * The idle cycle from what there is to show. `today` is always there, since
- * the numbers always exist. A person from Memory comes round between the
- * others: every other scene while the list is short, every third once it is
- * long, so the rest still get their turn.
+ * The tour, from what there is to show. It starts at home, Now, and anything
+ * that needs you comes next. Today is always there, since the numbers always
+ * exist. A person comes round between the others: every other page while the
+ * list is short, every third once it is long, so the rest still get their turn.
  */
-export function cycleFor(have: Partial<Record<Scene, boolean>>): Scene[] {
-  const others = [...URGENT, ...ROUND].filter((s) => s === "today" || have[s]);
-  if (!have.memory) return others;
+export function tourFor(have: Partial<Record<Page, boolean>>): Page[] {
+  const others = (["now", "inbox", "today", "accounts", "minecraft", "pictures", "persona"] as Page[])
+    .filter((p) => p === "now" || p === "today" || have[p]);
+  if (!have.people) return others;
   const every = others.length > 4 ? 2 : 1;
-  const out: Scene[] = [];
-  others.forEach((s, i) => {
-    if (i % every === 0) out.push("memory");
-    out.push(s);
+  const out: Page[] = [];
+  others.forEach((p, i) => {
+    out.push(p);
+    if (i % every === every - 1) out.push("people");
   });
   return out;
 }
 
 export function initial(now: number): DirectorState {
-  return { spotlight: null, since: now, lastSeen: now, pinned: false, manualUntil: 0, idle: null, shown: 0 };
+  return { spotlight: null, since: now, lastSeen: now, pinned: false, manualUntil: 0, holdFor: 0, idle: null, shown: 0 };
 }
 
 /** A reply being written or typed out: the AI answering, the thing worth the stage. */
-const answering = (r: Row) => r.phase === "live" && (r.step === 2 || r.step >= 4);
+export const answering = (r: Row) => r.phase === "live" && (r.step === 2 || r.step >= 4);
 
 /** How much a conversation deserves the stage right now. 0 or less: not at all. */
 export function score(r: Row, now: number): number {
@@ -132,7 +135,7 @@ export function score(r: Row, now: number): number {
   if (r.phase === "live" && r.step >= 4) return 100;   // typing, or next to send
   if (r.phase === "live" && r.step === 2) return 95;   // being written
   // Only just arrived: news, for a few seconds. A reply that is only waiting,
-  // for its timer (1) or its pace (3), is not; the scenes play meanwhile.
+  // for its timer (1) or its pace (3), is not; the tour plays meanwhile.
   const age = r.ts ? now - r.ts : Infinity;
   if (age < FRESH) return (r.phase === "live" ? 60 : 40) + 10 * (1 - Math.max(0, age) / FRESH);
   return 0;
@@ -140,8 +143,7 @@ export function score(r: Row, now: number): number {
 
 /**
  * How far along a conversation is, for the order of the queue: after what is
- * on stage, the reply that fires soonest, then the newest arrival. The order
- * the rail is drawn in and ←/→ step through.
+ * on stage, the reply that fires soonest, then the newest arrival.
  */
 function interest(r: Row, now: number): number {
   if (r.phase === "off") return -1;
@@ -156,75 +158,93 @@ function interest(r: Row, now: number): number {
   return 0;
 }
 
-/** The queue in the order the director ranks it: the order ←/→ step through. */
-export function ranked(rows: Row[], now: number): Row[] {
+/** The queue in the order the director ranks it. */
+export function ranked<T extends Row>(rows: T[], now: number): T[] {
   return rows
     .filter((r) => r.phase !== "off")
     .slice()
     .sort((a, b) => score(b, now) - score(a, now) || interest(b, now) - interest(a, now) || (b.ts ?? 0) - (a.ts ?? 0));
 }
 
+export type QueueGroups<T extends Row> = {
+  /** Being written or typed right now. */
+  answering: T[];
+  /** Will be answered by itself, the soonest first. */
+  next: T[];
+  /** Will not be, unless someone says so: what came in while it was off, what failed or was skipped. Newest first. */
+  waiting: T[];
+};
+
+/** The queue as it is read down the left: who is being answered, who is next, and who is waiting on you. */
+export function groupQueue<T extends Row>(rows: T[], now: number): QueueGroups<T> {
+  const live = ranked(rows, now);
+  return {
+    answering: live.filter(answering),
+    next: live.filter((r) => r.phase === "live" && !answering(r)),
+    waiting: live.filter((r) => r.phase === "needs").sort((a, b) => (b.ts ?? 0) - (a.ts ?? 0)),
+  };
+}
+
 function spotlightOn(state: DirectorState, key: string, now: number): DirectorState {
   return { ...state, spotlight: key, since: now, lastSeen: now, idle: null };
 }
 
-/** A scene by its place in the list, as a new showing: counted, and its clock started. */
-function sceneAt(state: DirectorState, pos: number, cycle: readonly Scene[], now: number): DirectorState {
-  const len = Math.max(1, cycle.length);
+/** A page by its place in the tour, as a new showing: counted, and its clock started. */
+function pageAt(state: DirectorState, pos: number, tour: readonly Page[], now: number): DirectorState {
+  const len = Math.max(1, tour.length);
   const at = ((pos % len) + len) % len;
   const n = (state.shown ?? 0) + 1;
   return {
     ...state,
     spotlight: null,
     shown: n,
-    idle: { scene: n, since: now, pos: at, name: cycle[at] ?? "today", at: now },
+    idle: { scene: n, since: now, pos: at, name: tour[at] ?? "now", at: now },
   };
 }
 
 /**
- * Where the scene on show sits in the list as it is now. Usually where it
- * started; if the list changed under it, wherever that scene is now; and if it
- * has left the list (the last friend request answered), `there` is false and
- * `at` is the place it had, which the scene after it has moved up into.
+ * Where the page on show sits in the tour as it is now. Usually where it
+ * started; if the tour changed under it, wherever that page is now; and if it
+ * has left the tour (the last friend request answered), `there` is false and
+ * `at` is the place it had, which the page after it has moved up into.
  */
-function placeOf(idle: Idle, cycle: readonly Scene[]): { at: number; there: boolean } {
-  const len = Math.max(1, cycle.length);
-  if (cycle[((idle.pos % len) + len) % len] === idle.name) return { at: idle.pos, there: true };
-  const i = cycle.indexOf(idle.name);
+function placeOf(idle: Idle, tour: readonly Page[]): { at: number; there: boolean } {
+  const len = Math.max(1, tour.length);
+  if (tour[((idle.pos % len) + len) % len] === idle.name) return { at: idle.pos, there: true };
+  const i = tour.indexOf(idle.name);
   return i >= 0 ? { at: i, there: true } : { at: idle.pos, there: false };
 }
 
-/** The scene after the one on show, in the list as it is now. */
-function nextPos(idle: Idle, cycle: readonly Scene[]): number {
-  const p = placeOf(idle, cycle);
+/** The page after the one on show, in the tour as it is now. */
+function nextPos(idle: Idle, tour: readonly Page[]): number {
+  const p = placeOf(idle, tour);
   return p.there ? p.at + 1 : p.at;
 }
 
-function idleOn(state: DirectorState, now: number, cycle: readonly Scene[]): DirectorState {
+function idleOn(state: DirectorState, now: number, tour: readonly Page[]): DirectorState {
   const idle = state.idle;
-  if (!idle) return sceneAt(state, 0, cycle, now);
-  if (now - idle.since >= SCENE_TIME[idle.name]) return sceneAt(state, nextPos(idle, cycle), cycle, now);
-  const next = { ...idle, at: now };
-  return { ...state, spotlight: null, idle: next };
+  if (!idle) return pageAt(state, 0, tour, now);
+  if (now - idle.since >= PAGE_TIME[idle.name]) return pageAt(state, nextPos(idle, tour), tour, now);
+  return { ...state, spotlight: null, idle: { ...idle, at: now } };
 }
 
-/** Held: the scene's clock stands still, so it has the same time left when let go. */
+/** Held: the page's clock stands still, so it has the same time left when let go. */
 function frozen(state: DirectorState, now: number): DirectorState {
   const idle = state.idle;
   if (!idle) return state;
   return { ...state, idle: { ...idle, since: idle.since + Math.max(0, now - idle.at), at: now } };
 }
 
-/** One tick: the queue as it is now, and the state it leaves the stage in. */
-export function tick(state: DirectorState, rows: Row[], now: number, cycle: readonly Scene[] = SCENES): DirectorState {
+/** One tick: the queue as it is now, and the state it leaves the screen in. */
+export function tick(state: DirectorState, rows: Row[], now: number, tour: readonly Page[] = ["now", "today"]): DirectorState {
   const byKey = new Map(rows.map((r) => [r.key, r]));
   const cur = state.spotlight ? byKey.get(state.spotlight) : undefined;
-  let s = cur ? { ...state, lastSeen: now } : state;
+  const s = cur ? { ...state, lastSeen: now } : state;
   const held = s.pinned || now < s.manualUntil;
 
   // Held by hand: stays put, even once it is answered.
   if (s.spotlight && held) return s;
-  // A scene held by hand stays too, with its clock stopped, even with someone waiting.
+  // A page held by hand stays too, with its clock stopped, even with someone being answered.
   if (!s.spotlight && s.idle && held) return frozen(s, now);
 
   const best = ranked(rows, now).find((r) => score(r, now) > 0);
@@ -242,62 +262,70 @@ export function tick(state: DirectorState, rows: Row[], now: number, cycle: read
     }
   }
   if (best) return spotlightOn(s, best.key, now);
-  return idleOn(s, now, cycle);
+  return idleOn(s, now, tour);
 }
 
-/** A click on a queue card: that one, held for a while. */
+/** Someone chosen by hand: them, on stage, held for a while. */
 export function pick(state: DirectorState, key: string, now: number): DirectorState {
-  return { ...spotlightOn(state, key, now), manualUntil: now + MANUAL_HOLD };
-}
-
-/** ←/→: the next or previous conversation in rank order, or the next idle scene when there are none. */
-export function step(state: DirectorState, rows: Row[], dir: 1 | -1, now: number, cycle: readonly Scene[] = SCENES): DirectorState {
-  const order = ranked(rows, now);
-  if (!order.length) {
-    const idle = state.idle;
-    if (!idle) return sceneAt(state, 0, cycle, now);
-    return sceneAt(state, dir === 1 ? nextPos(idle, cycle) : placeOf(idle, cycle).at - 1, cycle, now);
-  }
-  const at = order.findIndex((r) => r.key === state.spotlight);
-  const next = order[(at + dir + order.length) % order.length] ?? order[0];
-  return { ...spotlightOn(state, next.key, now), manualUntil: now + MANUAL_HOLD };
+  return { ...spotlightOn(state, key, now), manualUntil: now + MANUAL_HOLD, holdFor: MANUAL_HOLD };
 }
 
 /**
- * A chapter picked by hand: that scene, now, even over a conversation, held for
- * a while before the director takes over again. Where a scene comes round more
- * than once (a memory), the first place it has in the list.
+ * A page chosen by hand: that one, now, even over a conversation, held for a
+ * while before the director takes over again. Where it comes round more than
+ * once (People), the first place it has in the tour; a page the tour does not
+ * visit (nothing in it yet) still opens.
  */
-export function showScene(state: DirectorState, name: Scene, cycle: readonly Scene[], now: number): DirectorState {
-  const pos = cycle.indexOf(name);
-  const s = sceneAt(state, pos < 0 ? 0 : pos, pos < 0 ? [name] : cycle, now);
-  return { ...s, manualUntil: now + MANUAL_HOLD };
+export function showPage(state: DirectorState, name: Page, tour: readonly Page[], now: number): DirectorState {
+  const pos = tour.indexOf(name);
+  const s = pageAt(state, pos < 0 ? 0 : pos, pos < 0 ? [name] : tour, now);
+  return { ...s, manualUntil: now + MANUAL_HOLD, holdFor: MANUAL_HOLD };
 }
 
-/** Back to what is happening: the hold is let go, and the next tick puts the liveliest conversation up. */
+/** Back to what is happening: the hold is let go, and the next tick puts up the liveliest conversation. */
 export function live(state: DirectorState): DirectorState {
-  return { ...state, pinned: false, manualUntil: 0 };
+  return { ...state, pinned: false, manualUntil: 0, holdFor: 0 };
 }
 
-/** The pointer moving over the stage, or a button pressed on it: nothing changes under it for a few seconds. */
+/**
+ * A sign of someone being there: nothing changes for a few seconds. Someone who
+ * has already pressed something is driving, and stays driving for as long as
+ * they keep doing anything at all.
+ */
 export function hold(state: DirectorState, now: number, secs = HOVER_HOLD): DirectorState {
-  const until = now + secs;
-  return until > state.manualUntil ? { ...state, manualUntil: until } : state;
+  const len = now < state.manualUntil ? Math.max(secs, state.holdFor) : secs;
+  const until = now + len;
+  return until > state.manualUntil ? { ...state, manualUntil: until, holdFor: len } : state;
 }
 
-/** Space: hold or let go. Letting go hands the stage straight back to the director. */
+/** Space: stay here, or let go. Letting go hands the screen straight back to the director. */
 export function togglePin(state: DirectorState): DirectorState {
-  return { ...state, pinned: !state.pinned, manualUntil: 0 };
+  return { ...state, pinned: !state.pinned, manualUntil: 0, holdFor: 0 };
 }
 
-/** The idle scene on show, by name. */
-export function sceneOf(state: DirectorState, _cycle: readonly Scene[] = SCENES): Scene | null {
-  return state.idle?.name ?? null;
+/** The page on show. */
+export function pageOf(state: DirectorState): Page {
+  return state.spotlight ? "now" : state.idle?.name ?? "now";
 }
 
-/** How far through its time the idle scene on show is, 0 to 1. */
-export function sceneProgress(state: DirectorState, now: number): number {
+/** How far through its time the page on show is, 0 to 1. */
+export function pageProgress(state: DirectorState, now: number): number {
   const idle = state.idle;
   if (!idle) return 0;
-  return Math.max(0, Math.min(1, (now - idle.since) / SCENE_TIME[idle.name]));
+  return Math.max(0, Math.min(1, (now - idle.since) / PAGE_TIME[idle.name]));
+}
+
+export type AutoState =
+  /** The director has the screen. */
+  | { mode: "auto"; left: 0; of: 0 }
+  /** Someone has: Auto comes back in `left` seconds of the `of` it was given. */
+  | { mode: "held"; left: number; of: number }
+  /** Space: staying here until it is pressed again. */
+  | { mode: "pinned"; left: 0; of: 0 };
+
+/** Who has the screen, for the button that says so. */
+export function autoState(state: DirectorState, now: number): AutoState {
+  if (state.pinned) return { mode: "pinned", left: 0, of: 0 };
+  if (now < state.manualUntil) return { mode: "held", left: state.manualUntil - now, of: state.holdFor || MANUAL_HOLD };
+  return { mode: "auto", left: 0, of: 0 };
 }

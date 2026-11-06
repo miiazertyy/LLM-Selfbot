@@ -110,7 +110,8 @@ async function launchChrome(options) {
       return await puppeteer.launch(options);
     } catch (err) {
       const msg = String((err && err.message) || err);
-      if (attempt >= 3 || !/Failed to launch the browser process/i.test(msg)) throw err;
+      // Also when a Chrome left on this profile still holds it (the account was stopped, its Chrome went on).
+      if (attempt >= 3 || !/Failed to launch the browser process|browser is already running/i.test(msg)) throw err;
       console.warn(`[SnapBot] Chrome did not start (try ${attempt}); closing any Chrome left on this profile and trying again.`);
       closeChromeOn(options.userDataDir);
       await delay(3000 * attempt);
@@ -124,7 +125,11 @@ function delay(time) {
   });
 }
 
+// The Snapchat for Web build this was written against. Only its major and minor are compared: a patch release
+// never moves the page's classes, and warning on every one of them is noise.
 const lastTestedVersion = "v13.64.0";
+// Said once a run, not on every console line Snapchat prints.
+let saidVersion = false;
 
 // ── save-in-chat budget ──────────────────────────────────────────────────────
 // Saving a message means hovering its bubble and waiting for Snapchat's hover
@@ -144,6 +149,8 @@ export default class SnapBot {
     this.browser = null;
     this._seenVoice = new Set(); // voice-message srcs already grabbed this session
     this._seenImage = new Set(); // inline-image keys already grabbed this session
+    this._seenVideo = new Set(); // inline-video keys already grabbed this session
+    this.lastSnapVideo = null;   // the video (or its frames) of the snap openAndScreenshotSnap last opened
     // Bounded: this grew one entry per message seen, for the life of the
     // process. _rememberSig() trims the oldest, which is safe because a
     // signature only has to outlive the bubbles still on screen.
@@ -160,7 +167,7 @@ export default class SnapBot {
         // stated. The runner leaves this to here because the per-profile pick
         // lives here.
         args: obj.headless
-          ? [...(obj.args || []), `--window-size=${winW},${winH}`]
+          ? [...(obj.args || []), `--window-size=${winW},${winH}`, "--mute-audio"]
           : obj.args,
         // Persistent profile per account = stable fingerprint + fewer logins.
         // Lives in the writable data dir (cookies/profile are state, not code).
@@ -178,7 +185,29 @@ export default class SnapBot {
         defaultViewport: obj.headless ? { width: winW, height: winH } : null,
         // executablePath: "/usr/bin/google-chrome",  // for docker
       };
+      // Its own proxy, set when it was added. Chrome takes the address on its command line and the login page by page.
+      const proxyText = String(process.env.SNAP_PROXY || "").trim();
+      let proxyLogin = null;
+      if (proxyText) {
+        try {
+          const u = new URL(proxyText.includes("://") ? proxyText : `http://${proxyText}`);
+          options.args = [...(options.args || []), `--proxy-server=${u.protocol}//${u.host}`];
+          if (u.username) proxyLogin = { username: decodeURIComponent(u.username), password: decodeURIComponent(u.password || "") };
+        } catch {
+          options.args = [...(options.args || []), `--proxy-server=${proxyText}`];
+        }
+      }
       this.browser = await launchChrome(options);
+      if (proxyLogin) {
+        const give = async (target) => {
+          try {
+            const page = await target.page();
+            if (page) await page.authenticate(proxyLogin);
+          } catch { /* a target with no page, or one gone already */ }
+        };
+        this.browser.on("targetcreated", give);
+        await Promise.all(this.browser.targets().map(give));
+      }
 
       // Load saved cookies if present; first run has none, which is fine.
       let cookiesLoaded = false;
@@ -287,16 +316,17 @@ export default class SnapBot {
           const text = msg.text();
           if (text.includes("Snapchat")) {
             const version = text.match(/v\d+\.\d+\.\d+/);
-            if (version) {
-              console.log("Snapchat for Web Build info:", text);
-              if (version[0] != lastTestedVersion) {
-                console.warn(
-                  `⚠️  Warning: Some methods were last tested on version ${lastTestedVersion} \n\n` +
-                  `Detected current version is ${version[0]}\n\n` +
-                  `Some features might not work properly.\n` +
-                  `If you encounter issues, please try updating the project using 'git pull'.\n` +
-                  `If the problem persists, consider raising an issue or contacting the developer.`
-                );
+            if (version && !saidVersion) {
+              // Once per run, and on one line: the log keeps the first line of a message only, so a warning
+              // spread over five of them never said which version it had actually found - and it said it 443
+              // times in a day. What matters is the major and minor: that is where the page's classes move.
+              saidVersion = true;
+              const pair = (v) => v.split(".").slice(0, 2).join(".");
+              if (pair(version[0]) === pair(lastTestedVersion)) {
+                console.log(`Snapchat for Web ${version[0]}, which this was built against.`);
+              } else {
+                console.warn(`⚠️  Snapchat for Web is ${version[0]}; this was built against ${lastTestedVersion}. `
+                  + `If it stops finding things on the page, that is the first thing to look at.`);
               }
             }
           }
@@ -675,6 +705,15 @@ export default class SnapBot {
     try { path = new URL(url).pathname; } catch (_) { /* ignore */ }
     const onAppPath = path.startsWith("/web");
 
+    // "Too many tabs" is not logged out. On that screen the chat list never renders, so every check below said
+    // "not signed in" - and the runner signed in again, authenticated fine, came back to the same screen and
+    // reported "Login failed. Check the credentials." for an account whose login was never wrong. Taken back
+    // first, here, so the start-up check, the post-login check and the refresh recovery all see the real state.
+    if (onAppPath && (await this.takeSessionBack())) {
+      console.log("[Snap] Another tab had Snapchat open; took the session back before checking the login.");
+      await delay(3000);
+    }
+
     // A login form or the "Log in to Snapchat" landing copy → logged OUT.
     try {
       const loginInput = await this.page.$(
@@ -818,6 +857,35 @@ export default class SnapBot {
    * and a browser notification permission is exactly the kind of thing this
    * account should not be granting.
    */
+  /**
+   * "Oops! Too many tabs... Snapchat can only be open in one tab at a time. Click anywhere to get back to chatting
+   * or calling in this one!"
+   *
+   * Snapchat keeps one web session per account. Opening web.snapchat.com anywhere else takes it, and this tab is
+   * left on that screen - where the chat list renders empty, which reads exactly like nobody waiting. Nothing used
+   * to look for it, so the account sat there answering no one while its card said it was running.
+   *
+   * It has no button, so handlePopup cannot help: the page wants a click anywhere, and a synthetic one is ignored
+   * because the listener wants a trusted event. True when it found the screen and took the session back.
+   */
+  async takeSessionBack() {
+    try {
+      const stuck = await this.page.evaluate(() => {
+        const txt = (document.body && document.body.innerText) || "";
+        // The app follows the account's language, as handlePopup's list does.
+        return /too many tabs|one tab at a time|trop d.onglets|un seul onglet|zu viele tabs|demasiadas pesta|muitas abas|troppe schede/i
+          .test(txt);
+      });
+      if (!stuck) return false;
+      const box = await this.page.evaluate(() => ({ w: window.innerWidth, h: window.innerHeight }));
+      await this.page.mouse.click(Math.round(box.w / 2), Math.round(box.h / 2));
+      await delay(2500);
+      return true;
+    } catch {
+      return false;   // the page went away mid-check; the next pass looks again
+    }
+  }
+
   async handlePopup(maxSteps = 6) {
     // Never on the sign-in flow. "Next" there is the login form's own submit
     // button, and the first version of this clicked it six times in a row on
@@ -1160,7 +1228,12 @@ export default class SnapBot {
         } catch { /* try the next input */ }
       }
       if (!uploaded) {
-        console.warn(`[captureSnap] Composer opened but found no file input that takes ${isVideo ? "a video" : "a picture"}.`);
+        // Snapchat for Web v13.79 made the camera capture-only: lenses and a shutter, no gallery, no file input
+        // while it is open. There is nothing to upload into, so this is not a selector that needs tuning.
+        console.warn(`[captureSnap] The camera takes no ${isVideo ? "video" : "picture"} from a file on this version `
+          + "of Snapchat for Web (capture only). A picture can still go as an ordinary chat picture: "
+          + "Settings, Snapchat, \"Send pictures as chat pictures\".");
+        this.lastSnapRefusal = "no-upload";
         return false;
       }
       await delay(isVideo ? 5000 : 2500); // let the preview render (a video has to load first)
@@ -1364,6 +1437,36 @@ export default class SnapBot {
   }
 
   /**
+   * The picture into the chat's own box, as dragging one onto it does: an ordinary picture in the conversation,
+   * not a tap-to-view Snap. The camera cannot take a file any more (see captureSnap), so this is the only way one
+   * reaches anybody; it is used when the account is set to allow it.
+   */
+  async sendChatPicture({ imagePath, caption }) {
+    const inputs = await this.page.$$('input[type="file"]');
+    let put = false;
+    for (const inp of inputs) {
+      try {
+        const accept = await inp.evaluate((e) => e.getAttribute("accept") || "");
+        if (accept && !/image|\*/.test(accept)) continue;
+        await inp.uploadFile(imagePath);
+        put = true;
+        break;
+      } catch { /* not that one */ }
+    }
+    if (!put) return false;
+    await delay(2500);
+    if (caption) {
+      try {
+        const box = await this._findChatInput();
+        if (box) { await box.click(); await this.page.keyboard.type(String(caption).slice(0, 200), { delay: 60 }); }
+      } catch { /* the picture matters more than the words with it */ }
+    }
+    await this.page.keyboard.press("Enter");
+    await delay(2000);
+    return true;
+  }
+
+  /**
    * Send a picture file as a Snap to a single recipient (by display name),
    * mirroring how the Discord side attaches a photo when asked for a selfie.
    * Failures are non-fatal; the text reply is sent separately.
@@ -1374,9 +1477,22 @@ export default class SnapBot {
     if (!name) throw new Error("No recipient name provided");
 
     // Real Snap (tap-to-view): upload the image INTO the camera composer.
+    this.lastSnapRefusal = "";
     const composed = await this.captureSnap({ path: imagePath, caption: caption || "", chat });
     if (!composed) {
-      throw new Error("camera composer didn't open, snap not sent");
+      // The camera on this version takes no file at all. Rather than send nothing, the picture can go into the
+      // chat as a plain one - a different thing, so only when the account is set to allow it.
+      if (this.lastSnapRefusal === "no-upload" && this.allowChatPicture) {
+        const sent = await this.sendChatPicture({ imagePath, caption });
+        if (sent) {
+          console.log("[Snap] Sent as a chat picture: this version of Snapchat for Web takes no picture into the camera.");
+          return;
+        }
+      }
+      throw new Error(this.lastSnapRefusal === "no-upload"
+        ? "Snapchat for Web takes no picture into its camera any more; turn on \"Send pictures as chat pictures\" "
+          + "in Settings, Snapchat, to send it as an ordinary chat picture instead"
+        : "camera composer didn't open, snap not sent");
     }
     try {
       await delay(1000);
@@ -1596,6 +1712,82 @@ export default class SnapBot {
     return done;
   }
 
+  /**
+   * Send a friend request by username, for the panel's Chats tab: Snapchat's own add friends panel opened, the username
+   * typed into its search, and Add pressed on the one result whose username is exactly it, never a near match or the
+   * first one shown. { ok: true }, or { ok: false, reason } said plainly.
+   */
+  async addFriendByUsername(username) {
+    const want = String(username || "").trim().replace(/^@/, "").toLowerCase();
+    if (!/^[a-z0-9][a-z0-9._-]{1,29}$/.test(want)) return { ok: false, reason: "That is not a Snapchat username" };
+    // Every input on the page now is marked: the panel's own search is the one that is new.
+    await this.page.evaluate(() => document.querySelectorAll("input").forEach((e) => e.setAttribute("data-llm-had", "1"))).catch(() => {});
+    const opened = await this.page.evaluate(() => {
+      const label = (b) => `${b.getAttribute("title") || ""} ${b.getAttribute("aria-label") || ""}`.toLowerCase();
+      const btn = [...document.querySelectorAll("button, [role='button']")].find((b) => b.offsetWidth > 0 &&
+        /add friends?|find friends|ajouter des amis|view friend requests|voir les demandes/.test(label(b)));
+      if (!btn) return false;
+      btn.click();
+      return true;
+    }).catch(() => false);
+    if (!opened) return { ok: false, reason: "Snapchat's add friends panel was not there" };
+    await delay(1300);
+    const found = await this.page.evaluate(() => {
+      const usable = (e) => e.offsetWidth > 0 && e.offsetHeight > 0 && !/checkbox|radio|file|hidden/.test(e.type);
+      const all = [...document.querySelectorAll("input")].filter(usable);
+      const pick = all.find((e) => !e.hasAttribute("data-llm-had")) || all.find((e) => e.closest("[role='dialog']"));
+      document.querySelectorAll("[data-llm-had]").forEach((e) => e.removeAttribute("data-llm-had"));
+      if (!pick) return false;
+      pick.setAttribute("data-llm-add", "1");
+      return true;
+    }).catch(() => false);
+    const close = async () => {
+      try { await this.page.keyboard.press("Escape"); } catch { /* closed already */ }
+      await delay(400);
+      await this.page.evaluate(() => document.querySelectorAll("[data-llm-add]").forEach((e) => e.removeAttribute("data-llm-add"))).catch(() => {});
+    };
+    if (!found) {
+      await close();
+      return { ok: false, reason: "Snapchat's add friends search was not there" };
+    }
+    const box = await this.page.$("input[data-llm-add]");
+    await this._clearSearch(box);
+    await box.type(want, { delay: typeDelay() });
+    await delay(2200);
+    const outcome = await this.page.evaluate((want) => {
+      const visible = (el) => el.offsetWidth > 0 && el.offsetHeight > 0;
+      const isIt = (t) => (t || "").trim().toLowerCase().replace(/^@/, "") === want;
+      const text = (b) => `${b.textContent || ""} ${b.getAttribute("aria-label") || ""}`.trim().toLowerCase();
+      for (const el of document.querySelectorAll("span, div, p")) {
+        // Its own words, not a box holding a whole result.
+        if (!visible(el) || el.children.length || !isIt(el.textContent)) continue;
+        for (let row = el.parentElement, k = 0; row && k < 6; row = row.parentElement, k++) {
+          const buttons = [...row.querySelectorAll("button, [role='button']")].filter(visible);
+          if (!buttons.length) continue;
+          const add = buttons.find((b) => /^(\+\s*)?(add|ajouter)\b/.test(text(b)) && !/added|ajout/.test(text(b)));
+          if (add) {
+            add.click();
+            return "added";
+          }
+          if (buttons.some((b) => /\b(requested|pending|demand|en attente)/.test(text(b)))) return "pending";
+          if (buttons.some((b) => /\b(chat|added|friends|ajout|amis)\b/.test(text(b)))) return "already";
+        }
+        return "no-button";
+      }
+      return "none";
+    }, want).catch(() => "none");
+    await delay(900);
+    await this._clearSearch(box);
+    await close();
+    if (outcome === "added") return { ok: true };
+    return { ok: false, reason: {
+      pending: "A request to them is already waiting",
+      already: "You are already friends",
+      "no-button": "Snapchat showed them with no Add button",
+      none: "Nobody with that username in Snapchat's search",
+    }[outcome] || "Snapchat did not take it" };
+  }
+
   async listRecipients() {
     await this.page.waitForSelector(
       "div.ReactVirtualized__Grid__innerScrollContainer"
@@ -1610,10 +1802,20 @@ export default class SnapBot {
           const titleSpan = row.querySelector("span[id^='title-']");
           if (!titleSpan) return null;
           const img = row.querySelector("img");
+          const id = titleSpan.id.replace(/^title-/, "");
+          // Its status line too: someone typing, or calling, shows there.
+          const status = (row.querySelector(`#status-${id}`)?.textContent || "").toLowerCase();
+          let call = "";
+          if (!/missed|ended|declined|manqu|termin|refus/.test(status)) {
+            if (/\bis calling|calling you|^calling\b|incoming (video |voice )?call|\bringing\b|t.appelle|appel entrant/.test(status)) call = "ringing";
+            else if (/\bin (a |the )?(video )?call\b|\bon (a )?call\b|joined (the )?call|call in progress|ongoing call|en appel|appel en cours|dans l.appel|a rejoint l.appel/.test(status)) call = "in_call";
+          }
           return {
-            id: titleSpan.id.replace(/^title-/, ""),
+            id,
             name: (titleSpan.textContent || "").trim(),
             avatar: img ? img.currentSrc || img.src || "" : "",
+            typing: /\btyping|is writing|\u00e9crit|en train d.\u00e9crire/.test(status),
+            call,
           };
         })
         .filter(Boolean)
@@ -1660,6 +1862,7 @@ export default class SnapBot {
 
           let unread = false;
           let typing = false;
+          let call = "";
           try {
             const titleWeight = parseInt(getComputedStyle(titleSpan).fontWeight) || 400;
             if (titleWeight >= 600) unread = true;
@@ -1669,6 +1872,11 @@ export default class SnapBot {
               const statusWeight = parseInt(getComputedStyle(statusEl).fontWeight) || 400;
               const statusText = (statusEl.textContent || "").toLowerCase();
               typing = /\btyping|is writing|\u00e9crit|en train d.\u00e9crire/.test(statusText);
+              // A call going on, as the line says it (see callOf, which this mirrors inside the page).
+              if (!/missed|ended|declined|manqu|termin|refus/.test(statusText)) {
+                if (/\bis calling|calling you|^calling\b|incoming (video |voice )?call|\bringing\b|t.appelle|appel entrant/.test(statusText)) call = "ringing";
+                else if (/\bin (a |the )?(video )?call\b|\bon (a )?call\b|joined (the )?call|call in progress|ongoing call|en appel|appel en cours|dans l.appel|a rejoint l.appel/.test(statusText)) call = "in_call";
+              }
               if (statusWeight >= 600) unread = true;
               if (/\bnew\b|received|sent you/.test(statusText)) unread = true;
               if (/opened|delivered|^sent\b|sending|tap to chat/.test(statusText)) {
@@ -1684,10 +1892,11 @@ export default class SnapBot {
           const avatar = img ? img.currentSrc || img.src || "" : "";
 
           // Keep first-seen order; if any pass flags it unread, keep it unread.
-          if (!byId.has(id)) byId.set(id, { id, name, unread, avatar, typing });
+          if (!byId.has(id)) byId.set(id, { id, name, unread, avatar, typing, call });
           else {
             if (unread) byId.get(id).unread = true;
             if (typing) byId.get(id).typing = true;
+            if (call) byId.get(id).call = call;
           }
         }
       };
@@ -2163,6 +2372,151 @@ export default class SnapBot {
   }
 
   /**
+   * A video shown in the open conversation after our last reply (one they sent, a video snap saved in the chat): the
+   * video itself, fetched from inside the page (a blob: link only resolves there), as a file; or, when the page will
+   * not give the file (a stream), frames taken at points across it. { video } or { frames }, or null.
+   */
+  async extractInlineVideo(chatId, name) {
+    let info;
+    try {
+      info = await this.page.evaluate((chatId) => {
+        const container = document.querySelector(`#cv-${chatId}`);
+        if (!container) return null;
+        let lastMe = null;
+        for (const b of container.querySelectorAll(".KB4Aq")) {
+          try {
+            if (getComputedStyle(b).borderColor === "rgb(242, 60, 87)") lastMe = b;
+          } catch { /* ignore */ }
+        }
+        const vids = [...container.querySelectorAll("video")].filter((v) => {
+          const r = v.getBoundingClientRect();
+          return r.width >= 100 && r.height >= 100;
+        });
+        if (!vids.length) return null;
+        const last = vids[vids.length - 1];
+        if (lastMe && !(lastMe.compareDocumentPosition(last) & Node.DOCUMENT_POSITION_FOLLOWING)) return null;
+        last.setAttribute("data-llm-video", "1");
+        const r = last.getBoundingClientRect();
+        return { src: last.currentSrc || last.src || "", key: last.currentSrc || last.src || last.poster
+                 || `${Math.round(r.x)},${Math.round(r.y)},${Math.round(r.width)},${Math.round(r.height)}` };
+      }, chatId);
+    } catch {
+      return null;
+    }
+    if (!info) return null;
+    try {
+      if (this._seenVideo.has(info.key)) return null;
+      this._seenVideo.add(info.key);
+      if (this._seenVideo.size > 200) this._seenVideo = new Set([...this._seenVideo].slice(-100));
+      const file = info.src ? await this._videoFile(info.src, name) : "";
+      if (file) return { video: file };
+      const frames = await this._videoFrames('[data-llm-video="1"]', name, 4);
+      return frames.length ? { frames } : null;
+    } finally {
+      await this.page.evaluate(() => document.querySelectorAll("[data-llm-video]").forEach((e) => e.removeAttribute("data-llm-video"))).catch(() => {});
+    }
+  }
+
+  /** A video's file, fetched from inside the page where its blob: link resolves; "" when it will not come (a stream). */
+  async _videoFile(src, name) {
+    let data = null;
+    try {
+      data = await this.page.evaluate(async (src) => {
+        try {
+          const r = await fetch(src);
+          const buf = await r.arrayBuffer();
+          if (buf.byteLength < 2000 || buf.byteLength > 40000000) return null;
+          const bytes = new Uint8Array(buf);
+          let binary = "";
+          for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+          return { b64: btoa(binary), type: r.headers.get("content-type") || "" };
+        } catch {
+          return null;
+        }
+      }, src);
+    } catch {
+      return "";
+    }
+    if (!data || !data.b64) return "";
+    const type = (data.type || "").split(";")[0].trim().toLowerCase();
+    const ext = type.includes("webm") ? ".webm" : type.includes("quicktime") ? ".mov" : ".mp4";
+    await fsPromise.mkdir(TEMP_DIR, { recursive: true });
+    const filePath = path.join(TEMP_DIR, _mediaName("video", name, ext));
+    await fsPromise.writeFile(filePath, Buffer.from(data.b64, "base64"));
+    return filePath;
+  }
+
+  /**
+   * Frames of a video on the page, at points across it (seeked to each, then a picture of it), when its file will
+   * not come: so the AI sees what happens in it, not one moment. Paths of the frames, in order.
+   */
+  async _videoFrames(selector, name, count = 4) {
+    const out = [];
+    let duration = 0;
+    try {
+      duration = await this.page.evaluate((sel) => {
+        const v = document.querySelector(sel);
+        return v && Number.isFinite(v.duration) ? v.duration : 0;
+      }, selector);
+    } catch {
+      return out;
+    }
+    await fsPromise.mkdir(TEMP_DIR, { recursive: true });
+    for (let i = 0; i < count; i++) {
+      try {
+        if (duration > 0.5) {
+          await this.page.evaluate((sel, t) => new Promise((resolve) => {
+            const v = document.querySelector(sel);
+            if (!v) return resolve(false);
+            const done = () => resolve(true);
+            v.addEventListener("seeked", done, { once: true });
+            setTimeout(done, 2000);
+            try { v.pause(); v.currentTime = t; } catch { resolve(false); }
+          }), selector, duration * (0.08 + (0.84 * i) / Math.max(1, count - 1)));
+        } else {
+          // No length to seek through (a stream): it plays, and a picture is taken every second or so.
+          await this.page.evaluate((sel) => { const v = document.querySelector(sel); if (v) { v.muted = true; v.play().catch(() => {}); } }, selector);
+          await delay(1100);
+        }
+        const el = await this.page.$(selector);
+        if (!el) break;
+        const file = path.join(TEMP_DIR, _mediaName(`frame${i}`, name, ".jpg"));
+        await el.screenshot({ path: file, type: "jpeg", quality: 80 });
+        out.push(file);
+      } catch {
+        break;
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Spotlights shared in the open conversation after our last reply, by the links their cards carry (Python
+   * watches them from Snapchat's public page, app/utils/videowatch.py).
+   */
+  async extractSpotlightLinks(chatId) {
+    try {
+      return await this.page.evaluate((chatId) => {
+        const container = document.querySelector(`#cv-${chatId}`);
+        if (!container) return [];
+        let lastMe = null;
+        for (const b of container.querySelectorAll(".KB4Aq")) {
+          try {
+            if (getComputedStyle(b).borderColor === "rgb(242, 60, 87)") lastMe = b;
+          } catch { /* ignore */ }
+        }
+        const links = [...container.querySelectorAll("a[href]")].filter((a) => {
+          if (lastMe && !(lastMe.compareDocumentPosition(a) & Node.DOCUMENT_POSITION_FOLLOWING)) return false;
+          return /snapchat\.com\/(spotlight\/|t\/)|(?:t|story)\.snapchat\.com\//i.test(a.href);
+        }).map((a) => a.href.split("#")[0]);
+        return [...new Set(links)].slice(0, 2);
+      }, chatId);
+    } catch {
+      return [];
+    }
+  }
+
+  /**
    * Cheap check: does the currently-open conversation contain an UNOPENED snap?
    * Looks for the on-screen cue ("Click to view" / "New Snap") after our last
    * reply, so we only fire the slower open+screenshot when there's something.
@@ -2306,6 +2660,31 @@ export default class SnapBot {
       await delay(800); // let the snap finish painting
       mediaBox = (await findFullscreenMedia()) || mediaBox;
 
+      // A video snap: the video itself, or frames across it when the page will not give the file, for Python to
+      // watch (app/utils/videowatch.py). The still below is kept as well, for when that is off or fails.
+      this.lastSnapVideo = null;
+      try {
+        const src = await this.page.evaluate(() => {
+          const minW = window.innerWidth * 0.5, minH = window.innerHeight * 0.5;
+          const v = [...document.querySelectorAll("video")].find((el) => {
+            const r = el.getBoundingClientRect();
+            return r.width >= minW && r.height >= minH;
+          });
+          if (!v) return null;
+          v.setAttribute("data-llm-video", "1");
+          return v.currentSrc || v.src || "";
+        });
+        if (src !== null) {
+          const file = src ? await this._videoFile(src, name) : "";
+          if (file) this.lastSnapVideo = { video: file };
+          else {
+            const frames = await this._videoFrames('[data-llm-video="1"]', name, 4);
+            if (frames.length) this.lastSnapVideo = { frames };
+          }
+        }
+      } catch { /* the still is enough */ }
+      await this.page.evaluate(() => document.querySelectorAll("[data-llm-video]").forEach((e) => e.removeAttribute("data-llm-video"))).catch(() => {});
+
       const snapDir = TEMP_DIR;
       await fsPromise.mkdir(snapDir, { recursive: true });
       const snapPath = path.join(snapDir, _mediaName("snap", name, ".jpg"));
@@ -2375,12 +2754,16 @@ export default class SnapBot {
     }
   }
 
-  async saveCookies(username) {
+  async saveCookies(username, { quiet = false } = {}) {
     try {
       const cookies = await this.browser.cookies();
+      // Never an empty file over a good one: a browser with nothing to give is not a session to keep.
+      if (!cookies.length) return;
       const cookiePath = path.join(DATA_DIR, "config", `${username}-cookies.json`);
-      fs.writeFileSync(cookiePath, JSON.stringify(cookies, null, 2));
-      console.log(`[SnapBot] Saved ${cookies.length} cookie(s) to ${cookiePath}`);
+      // Whole or not at all: written beside it and moved over, so a kill mid-write leaves the last good one.
+      fs.writeFileSync(`${cookiePath}.tmp`, JSON.stringify(cookies, null, 2));
+      fs.renameSync(`${cookiePath}.tmp`, cookiePath);
+      if (!quiet) console.log(`[SnapBot] Saved ${cookies.length} cookie(s) to ${cookiePath}`);
     } catch (error) {
       console.error("Error in saving cookies", error);
     }
@@ -2567,6 +2950,44 @@ export default class SnapBot {
     await delay(900);
     await page.mouse.move(8, 8).catch(() => {});
     return { ok: true, name: state.name };
+  }
+
+  /**
+   * Snapchat's own Reply on one message of the open conversation (index: where readConversation reads it): hover
+   * it, press Reply in the toolbar that appears over it (React, Save, Reply, Copy, Delete), and what is typed next
+   * goes as its answer. Found by its label; by its place in the toolbar where it has none. True when pressed.
+   */
+  async startReply(chatId, index, ownName = "") {
+    const page = this.page;
+    await this.readConversation(chatId, ownName, index);
+    const el = await page.$("[data-llm-react]");
+    if (!el) return false;
+    await el.evaluate((e) => e.scrollIntoView({ block: "center" })).catch(() => {});
+    await delay(250);
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await page.mouse.move(8, 8).catch(() => {});
+      await el.hover().catch(() => {});
+      await delay(350 + attempt * 200);
+      const pressed = await el.evaluate((e) => {
+        const block = e.closest("li");
+        const shown = (b) => b.offsetWidth > 0 && !b.hasAttribute("data-tooltip") && b.querySelector("svg");
+        const bar = block && [...block.querySelectorAll("div")]
+          .find((d) => [...d.children].filter((c) => c.tagName === "BUTTON" && shown(c)).length >= 3);
+        if (!bar) return false;
+        const buttons = [...bar.children].filter((c) => c.tagName === "BUTTON" && shown(c));
+        const said = (b) => `${b.getAttribute("aria-label") || ""} ${b.getAttribute("title") || ""} ${b.innerText || ""}`;
+        const btn = buttons.find((b) => /\b(reply|répondre|repondre)\b/i.test(said(b))) || (buttons.length >= 5 ? buttons[2] : null);
+        if (!btn) return false;
+        btn.click();
+        return true;
+      }).catch(() => false);
+      if (pressed) {
+        await delay(500);
+        await page.mouse.move(8, 8).catch(() => {});
+        return true;
+      }
+    }
+    return false;
   }
 
   async extractChatData(userId) {

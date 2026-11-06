@@ -6,6 +6,7 @@ from collections import deque
 from fastapi import APIRouter, HTTPException, Request
 
 from app.core import ipc
+from app.platforms import registry
 from app.utils.paths import DATA_DIR
 # connect_raw() instead of a bare sqlite3.connect(): a plain connection sets no busy_timeout, so these queries failed with "database is locked" rather than waiting whenever a bot runner happened to be writing.
 from app.utils.db import connect_raw
@@ -21,7 +22,7 @@ def _resolve_target(request: Request, explicit=None):
         if not meta:
             raise HTTPException(status_code=404, detail=f"unknown target {explicit}")
         return meta["target"]
-    targets = ipc.discover_targets()
+    targets = ipc.shown_targets()
     if not targets:
         raise HTTPException(status_code=503, detail="no accounts configured")
     return next(iter(targets.values()))["target"]
@@ -71,23 +72,56 @@ _CHATS_LOCKS: dict = {}
 
 # Live events from each runner (see emit_chat_event), the last few per account, so a sweep that was already under way when one arrived does not put back what the event changed.
 _CHAT_EVENTS: dict = {}
+# The calls going on now, per account and person, as the runners say them: given with the list, so a page opened during
+# one shows it, and kept live by the same events.
+_CALLS: dict = {}
+# A TikTok account's LIVE as it goes: whether it is on, and its last lines and what the persona said, for a page (the
+# LIVE view, the OBS page) opened in the middle of one.
+_LIVE: dict = {}
+# Someone else's LIVE the account is visiting as a viewer, the same way: whose, since when, its chat and its lines.
+_VISITS: dict = {}
 _MSG_FIELDS = ("text", "attachments", "stickers", "embeds")
-_MSG_KEYS = _MSG_FIELDS + ("mid",)
+_MSG_KEYS = _MSG_FIELDS + ("mid", "gift")
+
+
+# Each browser platform's IPC target prefix: account 1 is the bare prefix, the rest carry their number.
+_WEB_PREFIX = registry.TARGETS
 
 
 def _ipc_target_for(web_id: str):
-    """discord_2 -> 2, snapchat_2 -> "snap2": the key _CHATS_CACHE uses."""
+    """discord_2 -> 2, snapchat_2 -> "snap2", tiktok_1 -> "tiktok", instagram_2 -> "insta2": the key _CHATS_CACHE
+    uses."""
     platform, _, n = str(web_id).partition("_")
     if platform == "discord" and n.isdigit():
         return int(n)
-    if platform == "snapchat" and n.isdigit():
-        return "snap" if n == "1" else f"snap{n}"
+    prefix = _WEB_PREFIX.get(platform)
+    if prefix and n.isdigit():
+        return prefix if n == "1" else f"{prefix}{n}"
     return None
 
 
 def _snap_number(tgt) -> int:
-    """"snap" -> 1, "snap2" -> 2."""
-    return int(str(tgt)[4:] or 1)
+    """"snap" -> 1, "snap2" -> 2; "tiktok" -> 1, "tiktok3" -> 3; "insta" -> 1, "insta2" -> 2; "imsg2" -> 2.
+    The longest prefixes first, and X's one letter last of all."""
+    t = str(tgt)
+    for prefix in sorted(registry.TARGETS.values(), key=len, reverse=True):
+        if t.startswith(prefix):
+            return int(t[len(prefix):] or 1)
+    return 1
+
+
+def _web_platform(tgt) -> str:
+    """"snapchat", "tiktok" or "instagram" for a browser account's target, "" for Discord's."""
+    if not isinstance(tgt, str):
+        return ""
+    for platform, prefix in _WEB_PREFIX.items():
+        if tgt.startswith(prefix):
+            return platform
+    return ""
+
+
+# The browser platforms' tables in the database (app/utils/db.py WEB_TABLES).
+_WEB_TABLE = registry.TABLES
 
 
 # What a server conversation's row carries beyond a person's: see server_row() in the runner.
@@ -119,9 +153,11 @@ def apply_event(body: dict, evt: dict) -> dict:
         users[idx] = {**users[idx], **{k: evt[k] for k in _MSG_KEYS if k in evt}}
     elif kind == "msg":
         fresh = {k: evt[k] for k in _MSG_KEYS if k in evt}
-        # A message with no attachments must clear the last one's pictures.
+        # A message with no attachments must clear the last one's pictures, and one that is not a gift must clear
+        # the gift the last one was, or the row goes on saying "Sent a Nitro gift".
         for k in _MSG_FIELDS[1:]:
             fresh.setdefault(k, [])
+        fresh.setdefault("gift", None)
         fresh.update(snippet=evt.get("snippet", ""), ts=evt.get("ts") or 0,
                      ignored=bool(evt.get("ignored")))
         if evt.get("kind") == "server":
@@ -154,6 +190,34 @@ def apply_chat_event(web_id: str, evt: dict) -> None:
     # Typing lapses in seconds, and comes every few while someone types: not worth replaying, and it would crowd out what is.
     if evt.get("t") == "typing":
         return
+    if evt.get("t") in ("live", "live_say", "live_state", "attention"):
+        live = _LIVE.setdefault(tgt, {"on": False, "feed": deque(maxlen=80)})
+        if evt["t"] == "live_state":
+            live["on"] = bool(evt.get("live"))
+        elif evt["t"] != "attention":
+            live["feed"].append({**{k: v for k, v in evt.items() if k != "target"}, "at": time.time()})
+        return
+    if evt.get("t") in ("visit", "visit_say", "visit_said", "visit_state"):
+        visit = _VISITS.setdefault(tgt, {"on": False, "host": "", "name": "", "why": "", "since": 0.0,
+                                         "feed": deque(maxlen=80)})
+        if evt["t"] == "visit_state":
+            on = bool(evt.get("on"))
+            if on:
+                visit["feed"].clear()
+                visit["since"] = time.time()
+            visit.update(on=on, host=str(evt.get("host") or ""), name=str(evt.get("name") or ""),
+                         why=str(evt.get("why") or ""))
+        elif evt["t"] != "visit_said":
+            visit["feed"].append({**{k: v for k, v in evt.items() if k != "target"}, "at": time.time()})
+        return
+    if evt.get("t") == "call":
+        calls = _CALLS.setdefault(tgt, {})
+        uid = str(evt.get("uid", ""))
+        if isinstance(evt.get("call"), dict):
+            calls[uid] = {**evt["call"], "uid": uid}
+        else:
+            calls.pop(uid, None)
+        return
     _CHAT_EVENTS.setdefault(tgt, deque(maxlen=200)).append((time.time(), evt))
     hit = _CHATS_CACHE.get(tgt)
     if hit:
@@ -180,13 +244,13 @@ async def _chats_payload(tgt, fresh: bool = False) -> dict:
                 return hit["body"]
             raise HTTPException(status_code=504, detail="runner did not respond")
         users = _stringify_ids(result.get("users", []), "id")
-        if isinstance(tgt, str) and tgt.startswith("snap"):
+        if _is_snap(tgt):
             from app.utils import snappeople
-            n = _snap_number(tgt)
+            n, plat = _snap_number(tgt), _web_platform(tgt)
             for u in users:
-                u["avatar"] = u.get("avatar") or snappeople.avatar_url(n, u.get("id", ""))
+                u["avatar"] = u.get("avatar") or snappeople.avatar_url(n, u.get("id", ""), plat)
                 if not u.get("name") or str(u.get("name")) == str(u.get("id")):
-                    u["name"] = snappeople.name_of(n, u.get("id", "")) or u.get("name")
+                    u["name"] = snappeople.name_of(n, u.get("id", ""), plat) or u.get("name")
         profiles = await asyncio.to_thread(_profiles_for, [u.get("id") for u in users])
         for u in users:
             meta = profiles.get(u.get("id")) or {}
@@ -237,7 +301,48 @@ async def warm_chats() -> None:
 @router.get("/api/chats")
 async def chats(request: Request, target: str = "", fresh: bool = False):
     tgt = _resolve_target(request, target)
-    return await _chats_payload(tgt, fresh=fresh)
+    body = await _chats_payload(tgt, fresh=fresh)
+    # Calls are as they are now, not as the cached list last was.
+    return {**body, "calls": list(_CALLS.get(tgt, {}).values())}
+
+
+@router.get("/api/live/{web_id}")
+def live_feed(web_id: str):
+    """A TikTok account's LIVE: whether it is on, what was said and answered lately (newest last), and how the OBS
+    page shows the answers (tiktok.live.overlay_*, as the account's persona has them)."""
+    from app.utils import livecohost, personas
+    from app.utils.helpers import load_config
+    tgt = _ipc_target_for(web_id)
+    if not isinstance(tgt, str) or not tgt.startswith("tiktok"):
+        raise HTTPException(status_code=404, detail="not a TikTok account")
+    live = _LIVE.get(tgt) or {"on": False, "feed": []}
+    visit = _VISITS.get(tgt) or {}
+    try:
+        with personas.scope(personas.persona_of(web_id)):
+            shown = livecohost.overlay(livecohost.settings(((load_config() or {}).get("tiktok") or {}).get("live")))
+    except Exception:
+        shown = livecohost.overlay(livecohost.settings(None))
+    return {"live": bool(live["on"]), "feed": list(live["feed"]), "overlay": shown,
+            # A LIVE it is visiting as a viewer, when it is in one.
+            "visit": {"on": bool(visit.get("on")), "host": visit.get("host", ""), "name": visit.get("name", ""),
+                      "why": visit.get("why", ""), "since": visit.get("since", 0.0),
+                      "feed": list(visit.get("feed") or [])}}
+
+
+@router.get("/api/live/{web_id}/audio/{name}")
+def live_audio(web_id: str, name: str):
+    """One spoken answer of the persona's on a LIVE, as the bridge made it (a short wav)."""
+    import re as _re
+    from fastapi.responses import FileResponse
+    from app.utils.paths import DATA_DIR
+    if not _re.fullmatch(r"\d{1,2}_[0-9a-f]{32}_\d{1,2}\.wav", name) or not web_id.startswith("tiktok_"):
+        raise HTTPException(status_code=404, detail="no such audio")
+    if name.split("_", 1)[0] != web_id.split("_", 1)[1]:
+        raise HTTPException(status_code=404, detail="no such audio")
+    path = DATA_DIR / "cache" / "live_audio" / name
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="no such audio")
+    return FileResponse(path, media_type="audio/wav", headers={"Cache-Control": "private, max-age=3600"})
 
 
 @router.get("/api/chats/archive")
@@ -247,24 +352,30 @@ def archive(request: Request, limit: int = 40, target: str = ""):
     With a target, one account's only: a Discord account's people, or a Snapchat account's chats (its own log, by
     chat id, named as Snapchat names them). Rows from before the log knew its account count as the first one's."""
     # Plain def: it only reads sqlite, and as async it did that on the event loop every page shares, during the startup warm-up of every tab.
+    # With no account named it is Discord's whole log: nothing, when Discord is switched off (app/utils/socials.py).
+    from app.utils import socials
+    if not target and not socials.shown("discord"):
+        return {"conversations": []}
     tgt = _resolve_target(request, target) if target else None
-    snap = isinstance(tgt, str) and tgt.startswith("snap")
+    snap = _is_snap(tgt)
+    plat = _web_platform(tgt)
+    table = _WEB_TABLE.get(plat, "snap")
     n = 0
     if tgt is not None:
-        n = int(tgt[4:] or 1) if snap else int(tgt)
+        n = _snap_number(tgt) if snap else int(tgt)
     cap = max(1, min(limit, 200))
     conn = connect_raw()
     try:
         try:
             if snap:
                 rows = conn.execute(
-                    """
+                    f"""
                     SELECT s.chat_id,
-                           (SELECT s2.username FROM message_log_snap s2 WHERE s2.chat_id = s.chat_id
+                           (SELECT s2.username FROM message_log_{table} s2 WHERE s2.chat_id = s.chat_id
                             ORDER BY s2.ts DESC LIMIT 1) AS name,
                            COUNT(*)  AS total,
                            MAX(s.ts) AS last_ts
-                    FROM message_log_snap s
+                    FROM message_log_{table} s
                     WHERE s.account = ? OR (s.account IS NULL AND ? = 1)
                     GROUP BY s.chat_id
                     ORDER BY last_ts DESC
@@ -302,9 +413,9 @@ def archive(request: Request, limit: int = 40, target: str = ""):
         meta = profiles.get(str(uid), {}) if not snap else {}
         out.append({
             "id": str(uid),
-            "name": meta.get("display_name") or name or (snappeople.name_of(n, uid) if snap else "") or str(uid),
+            "name": meta.get("display_name") or name or (snappeople.name_of(n, uid, plat) if snap else "") or str(uid),
             "username": meta.get("username", ""),
-            "avatar": snappeople.avatar_url(n, uid) if snap else meta.get("avatar", ""),
+            "avatar": snappeople.avatar_url(n, uid, plat) if snap else meta.get("avatar", ""),
             "messages": total,
             "last_ts": last_ts,
         })
@@ -322,11 +433,135 @@ def snap_picture(account: int, chat_id: str):
     return FileResponse(path, headers={"Cache-Control": "public, max-age=604800"})
 
 
+@router.get("/api/chats/web-picture/{platform}/{account}/{chat_id}")
+def web_picture(platform: str, account: int, chat_id: str):
+    """A TikTok, Instagram, X or Snapchat chat's picture, as its runner saved it off the chat list
+    (app/utils/snappeople.py)."""
+    from fastapi.responses import FileResponse
+    from app.utils import snappeople
+    if platform not in registry.BRIDGED:
+        raise HTTPException(status_code=404, detail="no picture")
+    path = snappeople.picture_path(account, chat_id, platform)
+    if not path:
+        raise HTTPException(status_code=404, detail="no picture")
+    return FileResponse(path, headers={"Cache-Control": "public, max-age=604800"})
+
+
+@router.get("/api/chats/tiktok-card")
+async def tiktok_card(url: str = ""):
+    """What a shared TikTok is, for its card in a conversation (any platform's): its caption, whose it is and its
+    cover, from TikTok's public oEmbed (app/utils/tiktoklinks.py), and what the persona saw and heard in it once it
+    has watched it (app/utils/tiktokwatch.py). Only TikTok links are asked about."""
+    import asyncio
+    from app.utils import tiktoklinks, tiktokwatch
+    links = tiktoklinks.links_in(url)
+    if not links or links[0] != url.strip().rstrip(".,);!?\"'"):
+        raise HTTPException(status_code=400, detail="not a TikTok link")
+    info = await tiktoklinks.lookup(links[0])
+    if not info:
+        raise HTTPException(status_code=404, detail="TikTok did not say")
+    cover = info.get("thumbnail_url", "")
+    vid = tiktokwatch.video_id(links[0]) or info.get("id", "")
+    watched = await asyncio.to_thread(tiktokwatch.cached, vid) if vid else None
+    return {
+        "url": links[0],
+        "title": info.get("title", ""),
+        "author": info.get("author_unique_id", ""),
+        "author_name": info.get("author_name", ""),
+        "cover": cover if cover.startswith("https://") else "",
+        "seen": (watched or {}).get("seen", ""),
+        "said": (watched or {}).get("said", ""),
+    }
+
+
+def _post_card(url: str, found: dict, where_key: str, by_key: str) -> dict:
+    """One shape for a Reddit card and an X one: they carry the same things under different names."""
+    media = [m for m in (found.get("media") or []) if isinstance(m, dict) and m.get("url")]
+    cover = str((media[0].get("url") if media else "") or "")
+    return {
+        "url": url,
+        "author": str(found.get(by_key) or "").lstrip("@").removeprefix("u/"),
+        "title": str(found.get("title") or "")[:300],
+        "text": " ".join(str(found.get("text") or "").split())[:600],
+        "where": str(found.get(where_key) or "").removeprefix("r/"),
+        "score": int(found.get("score") or (found.get("counts") or {}).get("likes") or 0),
+        "comments": int(found.get("comments") or (found.get("counts") or {}).get("replies") or 0),
+        "cover": cover if cover.startswith("https://") else "",
+        "seen": str(found.get("seen") or ""),
+        "at": found.get("at") or 0,
+    }
+
+
+@router.get("/api/chats/reddit-card")
+async def reddit_card(url: str = ""):
+    """What a shared Reddit post is, for its card in a conversation (any platform's): its title, whose it is,
+    which subreddit and what it scored. Reddit stopped taking new API apps and shows a signed-out visitor less
+    every month, so this is what the account's own signed-in browser read (app/utils/redditwatch.py) - already
+    kept, or asked for once. With no Reddit account running there is nothing to ask and no card is drawn."""
+    from app.utils import redditwatch
+    links = redditwatch.links(url)
+    if not links or redditwatch.post_id(url) != redditwatch.post_id(links[0]):
+        raise HTTPException(status_code=400, detail="not a Reddit link")
+    found = redditwatch.cached(links[0]) or await redditwatch.watch(links[0])
+    if not found:
+        raise HTTPException(status_code=404, detail="nothing could read it")
+    return _post_card(links[0], found, "subreddit", "author")
+
+
+@router.get("/api/chats/x-card")
+async def x_card(url: str = ""):
+    """And the same for a shared X post: X's free tier cannot read one either, so it is what the account's own
+    signed-in browser read (app/utils/xwatch.py)."""
+    from app.utils import xwatch
+    links = xwatch.links(url)
+    if not links or xwatch.post_id(url) != xwatch.post_id(links[0]):
+        raise HTTPException(status_code=400, detail="not an X link")
+    found = xwatch.cached(links[0]) or await xwatch.watch(links[0])
+    if not found:
+        raise HTTPException(status_code=404, detail="nothing could read it")
+    return _post_card(links[0], found, "", "handle")
+
+
+@router.get("/api/chats/instagram-card")
+async def instagram_card(url: str = ""):
+    """What a shared Instagram post or reel is, for its card in a conversation (any platform's): its caption, whose
+    it is and its picture, from the embed page anyone can read (app/utils/instagramlinks.py), and what the persona
+    saw and heard in it once it has watched it (app/utils/instagramwatch.py). Only Instagram links are asked about."""
+    import asyncio
+    from app.utils import instagramlinks, instagramwatch
+    links = instagramlinks.links_in(url)
+    if not links or links[0] != url.strip().rstrip(".,);!?\"'"):
+        raise HTTPException(status_code=400, detail="not an Instagram link")
+    watched = await asyncio.to_thread(instagramwatch.seen_for, links[0])
+    info = watched or await instagramlinks.lookup(links[0])
+    if not info:
+        # A story, or a post Instagram will not embed: the card says what the link is and no more.
+        kind = instagramlinks.kind_of(links[0])
+        if not kind:
+            raise HTTPException(status_code=404, detail="Instagram did not say")
+        return {"url": links[0], "kind": kind, "title": "", "author": instagramlinks.story_of(links[0])[0],
+                "author_name": "", "cover": "", "seen": "", "said": "", "private": True}
+    cover = str(info.get("thumbnail") or "")
+    return {
+        "url": links[0],
+        "kind": str(info.get("kind") or instagramlinks.kind_of(links[0]) or "post"),
+        "title": str(info.get("caption") or ""),
+        "author": str(info.get("author") or ""),
+        "author_name": str(info.get("name") or ""),
+        "cover": cover if cover.startswith("https://") else "",
+        "seen": str(info.get("seen") or ""),
+        "said": str(info.get("said") or ""),
+        "likes": int(info.get("likes") or 0),
+        "views": int(info.get("views") or 0),
+    }
+
+
 @router.get("/api/friends")
 async def friends(request: Request, target: str = ""):
-    """Friend requests waiting on this account: Discord's from its API, Snapchat's read off its own requests panel."""
+    """Friend requests waiting on this account: Discord's from its API, Snapchat's read off its own requests panel,
+    TikTok's message requests off its inbox."""
     tgt = _resolve_target(request, target)
-    if isinstance(tgt, str) and tgt.startswith("snap"):
+    if _is_snap(tgt):
         # Read off Snapchat's own requests panel, between the bot's steps: slower than Discord's.
         result = await ipc.send_and_wait(tgt, "friends_pending", timeout=60.0)
         if result is None:
@@ -343,12 +578,82 @@ async def friends(request: Request, target: str = ""):
             "supported": True, "target": tgt}
 
 
+@router.get("/api/chats/servers")
+async def servers(request: Request, target: str = ""):
+    """The servers this account is in, with the text channels it may read, under the category they sit in.
+
+    The Chats tab lists the channels someone has spoken to it in; this is the rest of them, so one can be walked
+    into and typed in whether or not anyone is waiting there. Discord's servers hold channels and come out of the
+    gateway's own cache, so asking costs nothing; Telegram has no server, so its groups and the channels it
+    follows are arranged the same way under the account itself. The others have nothing of the kind and say so."""
+    tgt = _resolve_target(request, target)
+    # Snapchat, TikTok's and Instagram's reading is slower: it goes to the account, which answers between its steps.
+    result = await ipc.send_and_wait(tgt, "guilds", {}, timeout=40.0 if _is_snap(tgt) else 20.0)
+    if result is None:
+        raise HTTPException(status_code=504, detail="the account did not answer; is it running?")
+    if not result.get("ok"):
+        raise HTTPException(status_code=502, detail=result.get("reason", "could not read them"))
+    return {"guilds": result.get("guilds", []), "supported": not result.get("unsupported"), "target": tgt}
+
+
+@router.get("/api/chats/voice")
+async def voice_people(request: Request, target: str = "", guild: str = "", first: str = ""):
+    """Who is in each voice channel of one server, asked every few seconds while the list of channels is open. `first`:
+    the channels on screen, whose names it looks for first. Discord is the only platform here with voice channels, so
+    the others answer with none. Only looks: nothing joins a call."""
+    tgt = _resolve_target(request, target)
+    if ipc.platform_of(tgt) != "discord":
+        return {"channels": {}, "supported": False, "target": tgt}
+    if not guild.isdigit():
+        raise HTTPException(status_code=400, detail="which server?")
+    looking = [c for c in first.split(",") if c.isdigit()][:50]
+    result = await ipc.send_and_wait(tgt, "voice_people", {"guild": guild, "first": looking}, timeout=12.0)
+    if result is None:
+        raise HTTPException(status_code=504, detail="the account did not answer; is it running?")
+    if not result.get("ok"):
+        raise HTTPException(status_code=502, detail=result.get("reason", "could not read them"))
+    return {"channels": result.get("channels", {}), "supported": True, "target": tgt}
+
+
+@router.post("/api/gifts/accept")
+async def gift_accept(request: Request):
+    """Take the Nitro gift in a message, from the Chats tab. The account itself redeems it, so it is taken by the
+    account the gift was sent to; the message it is in says afterwards what became of it."""
+    body = await request.json()
+    code = str(body.get("code") or "").strip()
+    if not code or len(code) > 64 or not code.isalnum():
+        raise HTTPException(status_code=400, detail="which gift?")
+    tgt = _resolve_target(request, body.get("target", ""))
+    if ipc.platform_of(tgt) != "discord":
+        raise HTTPException(status_code=400, detail="Nitro gifts are a Discord thing")
+    result = await ipc.send_and_wait(tgt, "gift_accept", {
+        "code": code, "mid": str(body.get("mid") or ""), "user_id": str(body.get("user_id") or "")}, timeout=30.0)
+    if result is None:
+        raise HTTPException(status_code=504, detail="runner did not respond")
+    return result
+
+
 @router.post("/api/friends/{action}")
 async def friend_action(request: Request, action: str):
-    """Accept or decline a request now, instead of on the background timer. The automatic accept deliberately waits, spread over hours, so the account does not look like a script; that is right when nobody is watching and wrong when you are looking straight at the request, so this takes it immediately."""
-    if action not in ("accept", "decline"):
-        raise HTTPException(status_code=400, detail="accept or decline")
+    """Accept or decline a request now, instead of on the background timer. The automatic accept deliberately waits, spread over hours, so the account does not look like a script; that is right when nobody is watching and wrong when you are looking straight at the request, so this takes it immediately.
+
+    `add`: send one, by username (the Chats tab's "Add a friend"): Discord's by its API, Snapchat's through its own
+    add friends search."""
+    if action not in ("accept", "decline", "add"):
+        raise HTTPException(status_code=400, detail="accept, decline or add")
     body = await request.json()
+    if action == "add":
+        username = str(body.get("username") or "").strip().lstrip("@")
+        if not username or len(username) > 64 or any(ch.isspace() for ch in username):
+            raise HTTPException(status_code=400, detail="a username, without spaces")
+        tgt = _resolve_target(request, body.get("target", ""))
+        # iMessage's: a conversation started with a number or an email, and the first thing said in it.
+        text = str(body.get("text") or "").strip()[:2000]
+        result = await ipc.send_and_wait(tgt, "friend_add", {"username": username, **({"text": text} if text else {})},
+                                         timeout=90.0 if _is_snap(tgt) else 25.0)
+        if result is None:
+            raise HTTPException(status_code=504, detail="runner did not respond")
+        return result
     user_id = body.get("user_id")
     if user_id is None:
         raise HTTPException(status_code=400, detail="user_id required")
@@ -378,7 +683,7 @@ async def reply(request: Request):
     if user_id is None:
         raise HTTPException(status_code=400, detail="user_id required")
     tgt = _resolve_target(request, target)
-    if (isinstance(tgt, str) and tgt.startswith("snap")) or _server_row_id(user_id):
+    if _is_snap(tgt) or _server_row_id(user_id):
         user_id = str(user_id)
     else:
         try:
@@ -420,8 +725,9 @@ def _server_row_id(raw) -> bool:
 
 
 def _user_id_for(tgt, raw):
-    """Discord ids are ints on the runner's side; Snapchat chat ids and server rows ("ch<channel id>") stay strings."""
-    if (isinstance(tgt, str) and tgt.startswith("snap")) or _server_row_id(raw):
+    """Discord ids are ints on the runner's side; Snapchat and TikTok chat ids and server rows ("ch<channel id>") stay
+    strings."""
+    if _is_snap(tgt) or _server_row_id(raw):
         return str(raw)
     try:
         return int(raw)
@@ -474,8 +780,10 @@ async def chat_message(request: Request):
     if body.get("user_id") is None:
         raise HTTPException(status_code=400, detail="user_id required")
     tgt = _resolve_target(request, body.get("target", ""))
-    if isinstance(tgt, str) and tgt.startswith("snap"):
-        raise HTTPException(status_code=400, detail="Snapchat messages cannot be fetched again")
+    if _is_snap(tgt):
+        from app.utils.compat import FEATURES as _F
+        raise HTTPException(status_code=400,
+                            detail=f"{_F.get(_web_platform(tgt), 'Snapchat')} messages cannot be fetched again")
     result = await ipc.send_and_wait(tgt, "chat_message",
                                      {"user_id": _user_id_for(tgt, body["user_id"])}, timeout=25.0)
     if result is None:
@@ -529,7 +837,10 @@ def _dm_of(request: Request, body: dict):
 
 
 def _is_snap(tgt) -> bool:
-    return isinstance(tgt, str) and tgt.startswith("snap")
+    """An account the shared bridge runs, Snapchat's, TikTok's, Instagram's, X's, Reddit's, Minecraft's or
+    iMessage's: slower to answer, known by string ids, and its conversations read from what is kept."""
+    return isinstance(tgt, str) and tgt.startswith(("snap", "tiktok", "insta", "mc", "imsg", "tg", "x",
+                                                    "reddit", "wa"))
 
 
 def _query(body: dict) -> dict:
@@ -580,7 +891,7 @@ async def chat_search_discord(request: Request):
     body = await request.json()
     tgt, uid, acct = _dm_of(request, body)
     if _is_snap(tgt):
-        raise HTTPException(status_code=400, detail="Snapchat has no search of its own: what is kept is searched")
+        raise HTTPException(status_code=400, detail="Only Discord has a search of its own: what is kept is searched")
     q = _query(body)
     if not (q["words"] or q["has"] or q["mine"] is not None or q["before"] or q["after"]):
         raise HTTPException(status_code=400, detail="nothing to search for")
@@ -608,10 +919,11 @@ async def chat_search_all(request: Request):
     if _is_snap(tgt):
         # Not people with a Discord profile: named and pictured from its own chat list.
         from app.utils import snappeople
-        n = _snap_number(tgt)
+        n, plat = _snap_number(tgt), _web_platform(tgt)
 
         def named() -> dict:
-            return {u: {"display_name": snappeople.name_of(n, u), "username": "", "avatar": snappeople.avatar_url(n, u)}
+            return {u: {"display_name": snappeople.name_of(n, u, plat), "username": "",
+                        "avatar": snappeople.avatar_url(n, u, plat)}
                     for u in {m["uid"] for m in found}}
 
         return {"ok": True, "messages": found, "people": await asyncio.to_thread(named)}
@@ -707,6 +1019,12 @@ async def send_message(request: Request):
     payload = {"user_id": str(uid), "text": text}
     if files:
         payload["files"] = files
+    # A reply to one message of theirs (or of its own): Discord's own reply, Snapchat's and TikTok's Reply on it.
+    reply_to = str(body.get("reply_to") or "").strip()
+    if reply_to:
+        if len(reply_to) > 80 or not reply_to.replace("-", "").replace("_", "").isalnum():
+            raise HTTPException(status_code=400, detail="which message?")
+        payload["reply_to"] = reply_to
     # Uploading takes longer than typing does; Snapchat types it out, between the bot's own steps.
     wait = 160.0 if _is_snap(tgt) else (90.0 if files else 30.0)
     result = await ipc.send_and_wait(tgt, "send_message", payload, timeout=wait)
@@ -723,10 +1041,10 @@ def ignored_list(request: Request, target: str = ""):
     database, so it shows even while the account is stopped. Plain def: it is sqlite."""
     tgt = _resolve_target(request, target)
     from app.utils import db
-    if isinstance(tgt, str) and tgt.startswith("snap"):
+    if _is_snap(tgt):
         # Named and pictured as the Chats tab names them, not by their chat ids.
         from app.utils import snappeople
-        ids = [str(i) for i in db.get_ignored_users_snap()]
+        ids = [str(i) for i in db.get_ignored_users_web(_web_platform(tgt))]
         info = snappeople.describe(ids)
         return {"people": [{"id": i, "name": (info.get(i) or {}).get("name") or "Someone", "username": "",
                             "avatar": (info.get(i) or {}).get("avatar") or ""} for i in ids]}
@@ -752,9 +1070,9 @@ async def ignore_set(request: Request):
     tgt = _resolve_target(request, web_id)
     uid = _user_id_for(tgt, body["user_id"])
     from app.utils import db
-    snap = isinstance(tgt, str) and tgt.startswith("snap")
+    snap = _is_snap(tgt)
     if snap:
-        (db.add_ignored_user_snap if want else db.remove_ignored_user_snap)(str(uid))
+        (db.add_ignored_user_web if want else db.remove_ignored_user_web)(_web_platform(tgt), str(uid))
     else:
         (db.add_ignored_user if want else db.remove_ignored_user)(int(uid))
     await ipc.send_and_wait(tgt, "ignore_add" if want else "ignore_remove", {"user_id": uid}, timeout=6.0)
@@ -896,8 +1214,8 @@ def memory_list(request: Request, persona: str = ""):
         entry["last_seen"] = last.get(uid, 0)
         entry["fact_count"] = len(entry["facts"])
         out.append(entry)
-    # Snapchat's people (their ids are chat ids, not numbers): named, pictured and counted from what Snapchat's runner
-    # read and the bot logged, as Discord's are from the profile cache.
+    # Snapchat's and TikTok's people (their ids are chat ids, not numbers): named, pictured and counted from what their
+    # runners read and the bot logged, as Discord's are from the profile cache.
     snap_ids = [e["user_id"] for e in out if not str(e["user_id"]).isdigit()]
     if snap_ids:
         from app.utils import snappeople
@@ -910,7 +1228,21 @@ def memory_list(request: Request, persona: str = ""):
                 e["messages"] = e.get("messages") or i["messages"]
                 e["first_seen"] = e.get("first_seen") or i["first_seen"]
                 e["last_seen"] = e.get("last_seen") or i["last_seen"]
-                e["platform"] = "snapchat"
+                e["platform"] = i.get("platform") or "snapchat"
+    # The same person on another platform: their ids, so the page can show who, and unlink one that was wrong.
+    from app.utils.memory import linked_people as _groups
+
+    linked = _groups()
+    keys_of = {str(e["user_id"]): set(e["facts"]) for e in out}
+    for e in out:
+        e["same_as"] = linked.get(str(e["user_id"]), [])
+        # Linked, what it knows about them is the whole person's, so the count beside their name is too: the same
+        # number the facts below it come to, rather than this one account's share of them.
+        if e["same_as"]:
+            whole = set(e["facts"])
+            for other in e["same_as"]:
+                whole |= keys_of.get(other, set())
+            e["fact_count"] = len(whole)
     out.sort(key=lambda u: (u["last_seen"], u["fact_count"]), reverse=True)
     # The last thing it learned about anyone: what the brain at the top of the page opens.
     newest = max(out, key=lambda u: u["learned_at"], default=None)
@@ -920,6 +1252,54 @@ def memory_list(request: Request, persona: str = ""):
         latest = {"user_id": newest["user_id"], "name": newest.get("display_name") or newest.get("username") or "",
                   "key": key, "value": newest["facts"].get(key, ""), "at": newest["learned_at"]}
     return {"users": out, "latest": latest}
+
+
+# Linking is about who someone is, not about one persona's memory of them, and the whole point of it is that it
+# reaches the other platforms, so every running account is told, whoever it speaks as.
+_EVERY_PLATFORM = registry.IDS
+
+
+def _person_changed(request: Request, uid: str) -> None:
+    from app.web import live
+    live.push(request, "memory_changed", {"user_id": uid}, persona=None, platforms=_EVERY_PLATFORM)
+
+
+@router.post("/api/memory/link")
+async def memory_link(request: Request):
+    """Say two accounts are one person. From then on what is remembered about either is remembered about both, on
+    every persona: who someone is does not change with who is talking to them.
+
+    Nothing is merged on disk, so unlinking gives each of them back exactly what it had."""
+    import asyncio as _aio
+    from app.utils.memory import link_people
+    body = await request.json()
+    a, b = str(body.get("user_id") or "").strip(), str(body.get("other_id") or "").strip()
+    if not a or not b:
+        raise HTTPException(status_code=400, detail="which two?")
+    try:
+        ids = await _aio.to_thread(link_people, a, b)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    # Both sides are now one person to every running account, whatever persona it speaks as.
+    for uid in ids:
+        _person_changed(request, uid)
+    return {"ok": True, "group": ids}
+
+
+@router.post("/api/memory/unlink")
+async def memory_unlink(request: Request):
+    """Take one account back out of a person: it was not them after all. It keeps its own facts."""
+    import asyncio as _aio
+    from app.utils.memory import person_ids, unlink_person
+    body = await request.json()
+    uid = str(body.get("user_id") or "").strip()
+    if not uid:
+        raise HTTPException(status_code=400, detail="which one?")
+    was = await _aio.to_thread(person_ids, uid)
+    await _aio.to_thread(unlink_person, uid)
+    for other in was or [uid]:
+        _person_changed(request, other)
+    return {"ok": True}
 
 
 @router.get("/api/memory/{uid}")
@@ -942,10 +1322,14 @@ async def memory_put(request: Request, uid: str, persona: str = ""):
     tone = body.get("persona")
 
     def write():
-        from app.utils.memory import set_memory, clear_persona, set_persona
+        from app.utils.memory import delete_memory, person_ids, set_memory, clear_persona, set_persona
         if key:
             # Written by hand: not something the bot learned.
             set_memory(uid, key, str(value), persona=pid, learned=False)
+            # On a linked person the same key may also sit under one of their other accounts, with a time on it;
+            # that one would win the next read and quietly undo this. What you typed is the answer, so it goes.
+            for other in (person_ids(uid) or [])[1:]:
+                delete_memory(other, key, persona=pid)
         if tone is not None:
             if tone:
                 set_persona(uid, tone, persona=pid)
@@ -965,18 +1349,23 @@ async def memory_delete(request: Request, uid: str, persona: str = ""):
     key = body.get("key", "")
 
     def forget():
-        from app.utils.memory import delete_memory
+        from app.utils.memory import delete_memory, person_ids
+        # One fact can have been learned on any of the accounts that are this person: it goes from all of them, or
+        # the next read would bring it straight back from the other one.
+        whole = person_ids(uid) or [uid]
         if key:
-            delete_memory(uid, key, persona=pid)
+            for one in whole:
+                delete_memory(one, key, persona=pid)
             return
         from app.utils.memory import clear_memory
-        clear_memory(uid, persona=pid)
-        # Forgetting someone includes what they talked about.
-        try:
-            from app.utils.db import delete_summary
-            delete_summary(uid, persona=pid)
-        except Exception:
-            pass
+        for one in whole:
+            clear_memory(one, persona=pid)
+            # Forgetting someone includes what they talked about.
+            try:
+                from app.utils.db import delete_summary
+                delete_summary(one, persona=pid)
+            except Exception:
+                pass
 
     # A write to the database, on a thread rather than holding the event loop while it waits for the lock.
     await _aio.to_thread(forget)
@@ -1078,8 +1467,17 @@ async def memory_summary(request: Request, uid: str, force: bool = False, cached
             if again and again.get("settings_sig") == sig:
                 return _summary_out(again, cached=True)
 
-        # A Discord id is a number; a Snapchat chat id is not. Each account only knows its own platform's conversations.
-        want_snap = not uid.isdigit()
+        # A Discord id is a number; a Snapchat or TikTok chat id is not. Each account only knows its own platform's
+        # conversations. (snappeople.platform_of_user's rule, said here: nothing on this loop calls into snappeople.)
+        want_platform = ("discord" if str(uid).isdigit() else "tiktok" if str(uid).startswith("tt_")
+                         else "instagram" if str(uid).startswith(("ig_", "igg_"))
+                         else "minecraft" if str(uid).startswith(("mc_", "mcs_"))
+                         else "imessage" if str(uid).startswith(("im_", "img_"))
+                         else "telegram" if str(uid).startswith(("tg_", "tgg_"))
+                         else "x" if str(uid).startswith(("x_", "xg_"))
+                         else "reddit" if str(uid).startswith(("rd_", "rdg_"))
+                         else "whatsapp" if str(uid).startswith(("wa_", "wag_")) else "snapchat")
+        want_snap = want_platform != "discord"
         payload = {
             "user_id": uid if want_snap else int(uid),
             "count": s["messages"],
@@ -1094,8 +1492,7 @@ async def memory_summary(request: Request, uid: str, force: bool = False, cached
             targets = {}
         for web_id, meta in targets.items():
             target = meta["target"]
-            is_snap = isinstance(target, str) and target.startswith("snap")
-            if is_snap != want_snap:
+            if ipc.platform_of(target) != want_platform:
                 continue
             # Only an account speaking as this persona writes its summary: another's is another person's view.
             if personas.persona_of(web_id) != pid:

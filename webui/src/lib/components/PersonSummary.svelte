@@ -28,8 +28,10 @@
    * when you ask. The model call takes a few seconds, which is why there is a
    * proper loading state rather than an empty box.
    */
+  import { untrack } from "svelte";
   import { api } from "../api";
   import { track } from "../busy";
+  import { smoothHeight } from "../smoothheight";
   import Icon from "./Icon.svelte";
   import SummaryText from "./SummaryText.svelte";
 
@@ -38,6 +40,15 @@
 
   let data = $state<Summary | null>(null);
   let loading = $state(false);
+  let inner: HTMLElement | null = $state(null);
+  /** How tall the one before was, kept while this person's is written: what is under the card stays where it is and
+   *  moves once, when the words come, rather than up to make room for the wait and down again. */
+  let held = $state(0);
+  $effect.pre(() => {
+    void uid;
+    void persona;
+    held = untrack(() => inner?.offsetHeight ?? 0);
+  });
   let error = $state("");
   /** The request that is allowed to land. Anything older is for someone else. */
   let ticket = 0;
@@ -88,7 +99,8 @@
 {#if data?.enabled === false}
   <!-- Turned off in Settings: take up no room at all. -->
 {:else}
-  <div class="glass summary-card relative overflow-hidden rounded-2xl p-4">
+  <div class="glass summary-card relative overflow-hidden rounded-2xl p-4" use:smoothHeight>
+    <div bind:this={inner} style:min-height={loading && !data?.summary && held ? `${held}px` : null}>
     <div class="mb-2.5 flex items-center gap-2">
       <span class="flex h-6 w-6 items-center justify-center rounded-lg bg-accent/15 text-accent">
         <Icon name="sparkle" size={13} />
@@ -138,6 +150,7 @@
         <button class="shrink-0 text-accent hover:underline" onclick={() => load(true)}>Try again</button>
       </div>
     {/if}
+    </div>
   </div>
 {/if}
 

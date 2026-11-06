@@ -11,10 +11,11 @@
    *
    * An option can say more than its name: an icon, a flag, or a badge with its
    * initial (a voice, a person), and a line underneath saying what it means.
-   * The chosen one's mark shows on the closed box too. The list springs open
-   * from the box, its rows settling in one after another, and one highlight
-   * glides from row to row under the pointer or the arrow keys rather than
-   * rows lighting up on their own. A long list gets a box to search it.
+   * The chosen one's mark shows on the closed box too. The list unrolls out
+   * of the box like every menu (lib/unroll.ts), its rows coming in as its
+   * edge reaches them, and one highlight glides from row to row under the
+   * pointer or the arrow keys rather than rows lighting up on their own. A
+   * long list gets a box to search it.
    *
    * When its tab opens, the value types itself in as its row drops into place
    * (cascade.ts's whenShown), the way a person types it: each letter there at
@@ -25,8 +26,11 @@
    */
   import { onMount, tick } from "svelte";
   import { get } from "svelte/store";
+  import { fly } from "svelte/transition";
   import Icon from "./Icon.svelte";
+  import PopupMark from "./PopupMark.svelte";
   import { play } from "../uisound";
+  import { unroll } from "../unroll";
   import { motionEnabled } from "../stores";
   import { onScreen, whenShown } from "../cascade";
   import { focusStill, showInList } from "../inlist";
@@ -51,6 +55,10 @@
     placeholder = "Choose",
     width = "",
     size = "md",
+    prefix = "",
+    listWidth = 192,
+    search = undefined,
+    listMax = 300,
   }: {
     value?: string | number;
     options?: Option[];
@@ -59,6 +67,14 @@
     /** Extra classes for the trigger, e.g. a fixed width. */
     width?: string;
     size?: "sm" | "md";
+    /** A quiet word in the box before the value, saying what it is ("Mood"), where nothing beside it does. */
+    prefix?: string;
+    /** The least the open list is wide, in px, when its lines under the names want more room than the box has. */
+    listWidth?: number;
+    /** A box to search the list: on its own over eight options. Off for a list read at a glance (an order to sort by). */
+    search?: boolean;
+    /** The most the open list is tall, in px, before it scrolls: a few more than eight can show whole. */
+    listMax?: number;
   } = $props();
 
   let open = $state(false);
@@ -85,8 +101,8 @@
   let query = $state("");
 
   const selected = $derived(options.find((o) => o.value === value));
-  /** Enough options to be worth searching. */
-  const searchable = $derived(options.length > 8);
+  /** Enough options to be worth searching, unless it was said. */
+  const searchable = $derived(search ?? options.length > 8);
   const shown = $derived.by(() => {
     const q = query.trim().toLowerCase();
     if (!q) return options;
@@ -94,6 +110,9 @@
   });
 
   /** A name's own colour, the same every time: its letters, turned into a hue. */
+  /** A country's flag (two regional letters), which the flags font draws; any other mark is an emoji. */
+  const FLAG = /[\u{1F1E6}-\u{1F1FF}]/u;
+
   function hueOf(text: string): number {
     let h = 0;
     for (const ch of text) h = (h * 31 + ch.charCodeAt(0)) % 360;
@@ -183,15 +202,18 @@
     // than the room there is: rows with a line under the name are taller, and
     // a list sized for plain rows ran off the bottom of the window.
     const r = root?.getBoundingClientRect();
-    const rowH = options.some((o) => o.hint) ? 52 : 38;
-    const extra = 12 + (options.length > 8 ? 46 : 0);
-    const tall = Math.min(300, options.length * rowH) + extra;
+    // A row's line under its name runs to two lines rather than being cut off with an ellipsis.
+    const hinted = options.some((o) => o.hint);
+    const rowH = hinted ? 62 : 38;
+    const extra = 12 + (searchable ? 46 : 0);
+    const tall = Math.min(listMax, options.length * rowH) + extra;
     const below = r ? window.innerHeight - r.bottom - 14 : tall;
     const aboveRoom = r ? r.top - 14 : 0;
     up = !!r && below < tall && aboveRoom > below;
-    room = Math.max(120, Math.min(300, (up ? aboveRoom : below) - extra));
+    room = Math.max(120, Math.min(listMax, (up ? aboveRoom : below) - extra));
     if (r) {
-      const width = Math.max(r.width, 192);
+      // Wide enough that what each one does reads in a line or two.
+      const width = Math.min(Math.max(r.width, listWidth, hinted ? 300 : 0), window.innerWidth - 16);
       pos = { left: Math.max(8, Math.min(r.left, window.innerWidth - width - 8)), width,
               top: r.bottom + 6, bottom: window.innerHeight - r.top + 6 };
     }
@@ -278,7 +300,7 @@
   {#if o.icon}
     <span class="sel-mark is-icon" class:is-small={small}><Icon name={o.icon} size={small ? 12 : 14} /></span>
   {:else if o.mark}
-    <span class="sel-mark is-glyph" class:is-small={small}>{o.mark}</span>
+    <span class="sel-mark is-glyph" class:is-emoji={!FLAG.test(o.mark)} class:is-small={small}>{o.mark}</span>
   {:else if o.badge}
     <span class="sel-mark is-badge" class:is-small={small} style="--hue: {hueOf(o.label)}">{o.label.charAt(0).toUpperCase()}</span>
   {/if}
@@ -294,6 +316,7 @@
     onclick={() => (open ? close() : openMenu())}
     onkeydown={onKey}
   >
+    {#if prefix}<span class="sel-prefix">{prefix}</span>{/if}
     {#if selected}{@render markOf(selected, true)}{/if}
     <span class="min-w-0 flex-1 truncate text-left {selected ? '' : 'text-faint'}">
       {#if typing !== null}
@@ -303,11 +326,13 @@
         <span aria-hidden="true" class="sel-typed">{label.slice(0, typing)}<span class="sel-cursor"></span></span>
       {:else}{selected?.label ?? placeholder}{/if}
     </span>
-    <span class="sel-caret" class:is-open={open}><Icon name="chevron" size={13} /></span>
+    <span class="sel-caret" class:is-open={open}><PopupMark /></span>
   </button>
 
   {#if open}
-    <div class="sel-menu glass floating" class:is-up={up} bind:this={menuEl} use:portal data-sound="self"
+    <!-- Unrolls out of the box like every menu (app.css .unroll), its rows coming in as the edge reaches them. -->
+    <div class="sel-menu glass floating unroll" class:is-up={up} bind:this={menuEl} use:portal use:unroll={".sel-opt"}
+         out:fly={{ y: up ? 4 : -4, duration: $motionEnabled ? 150 : 0, opacity: 0 }} data-sound="self"
          style="left: {pos.left}px; width: {pos.width}px; {up ? `bottom: ${pos.bottom}px` : `top: ${pos.top}px`}">
       {#if searchable}
         <label class="sel-search">
@@ -328,7 +353,6 @@
             class="sel-opt"
             class:is-active={i === active}
             class:is-picked={o.value === value}
-            style="--i: {Math.min(i, 10)}"
             onmouseenter={() => (active = i)}
             onclick={() => choose(o)}
           >
@@ -352,6 +376,9 @@
     position: relative;
     display: inline-block;
   }
+  /* The closed box is a button like the rest (app.css, "Buttons with depth": tinted with the theme, nothing else),
+     with Apple's pop-up mark at its end. It had a border and a face of its own, and a chevron on a disc of the
+     accent: an old web control ("legacy ugly"). Open, its tint stays deepened as when pointed at. */
   .sel-trigger {
     display: flex;
     width: 100%;
@@ -359,23 +386,15 @@
     gap: 8px;
     padding: 7px 10px 7px 12px;
     border-radius: 11px;
-    border: 1px solid var(--color-edge);
-    background:
-      linear-gradient(180deg, rgb(255 255 255 / 0.035), transparent 70%),
-      rgb(0 0 0 / 0.22);
     font-size: 13px;
     color: var(--color-ink);
-    transition: border-color 0.16s var(--swift), box-shadow 0.16s var(--swift), background-color 0.16s var(--swift);
   }
   .sel-trigger.is-sm { padding: 5px 8px 5px 10px; font-size: 12px; }
-  .sel-trigger:has(.sel-mark) { padding-left: 7px; }
-  .sel-trigger:hover { border-color: color-mix(in srgb, var(--color-accent) 40%, var(--color-edge)); }
-  .sel-trigger.is-open,
-  .sel-trigger:focus-visible {
-    outline: none;
-    border-color: color-mix(in srgb, var(--color-accent) 60%, transparent);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 14%, transparent);
-  }
+  .sel-trigger:has(.sel-mark) { padding-left: 8px; }
+  .sel-trigger:has(.sel-prefix) { padding-left: 10px; }
+  .sel-prefix { flex-shrink: 0; font-size: 0.92em; color: var(--color-faint); }
+  .sel-trigger.is-open::before { --d3-lit: 1; }
+  .sel-trigger:focus-visible { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 50%, transparent); }
 
   /* Typing the value in: letters appear whole, as typed ones do, and a text
      cursor sits right against the last one, thin and in the text's colour,
@@ -394,18 +413,22 @@
     background: var(--color-ink);
   }
 
-  /* The chevron is a right-pointing arrow; a quarter turn makes it point down
-     when closed and up when open, the way a dropdown caret should. */
+  /* Apple's pop-up mark (PopupMark: a chevron up over a chevron down), quiet, taking the theme's colour when the box
+     is pointed at or open. */
   .sel-caret {
-    display: inline-flex;
+    display: inline-grid;
+    width: 14px;
     flex-shrink: 0;
+    place-items: center;
     color: var(--color-faint);
-    transform: rotate(90deg);
-    transition: transform 0.2s var(--spring), color 0.16s ease;
+    transition: color 0.16s ease;
   }
-  .sel-caret.is-open { transform: rotate(-90deg); color: var(--color-accent); }
+  .sel-trigger:hover .sel-caret,
+  .sel-caret.is-open { color: var(--color-accent); }
 
-  /* ── An option's mark: an icon tile, a flag, or a name's badge ───────────── */
+  /* ── An option's mark: an icon, a flag, or a name's badge ─────────────────── */
+  /* An icon or a flag stands as itself, in the theme's colour, the way Apple's menus show their symbols: each one in a
+     tile of its own made the list a column of little boxes. */
   .sel-mark {
     display: inline-grid;
     width: 26px;
@@ -417,17 +440,19 @@
     line-height: 1;
   }
   .sel-mark.is-small { width: 20px; height: 20px; border-radius: 6px; font-size: 11.5px; }
-  .sel-mark.is-icon {
-    color: var(--color-accent);
-    background: color-mix(in srgb, var(--color-accent) 13%, transparent);
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 18%, transparent);
-  }
+  .sel-mark.is-icon { color: var(--color-accent); }
   .sel-mark.is-glyph {
     font-family: "Twemoji Country Flags", var(--font-sans, inherit);
     font-size: 16px;
-    background: rgb(255 255 255 / 0.05);
   }
   .sel-mark.is-glyph.is-small { font-size: 13px; }
+  /* An emoji that is not a flag (a mood's face): drawn with the system's emoji font from the start. Left to fall back
+     from the flags font, it sat on the app font's baseline instead, high in its tile (1.75px at 13px, measured), and
+     Segoe UI Emoji's own face sits a little low in its box: the padding brings it to the middle, to the pixel. */
+  .sel-mark.is-glyph.is-emoji {
+    font-family: "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif;
+    padding-bottom: 0.1em;
+  }
   .sel-mark.is-badge {
     border-radius: 999px;
     font-weight: 700;
@@ -437,27 +462,15 @@
   }
 
   /* ── The list ───────────────────────────────────────────────────────────── */
+  /* The open list: the menus' own material (app.css .glass.floating) with a soft shadow, no ring of the accent or
+     glow round it. It unrolls out of the box (app.css .unroll), not springs. */
   .sel-menu {
     position: fixed;
     min-width: 12rem;
     z-index: 1000;
     padding: 5px;
     border-radius: 14px;
-    box-shadow: 0 22px 50px -20px rgb(0 0 0 / 0.75), inset 0 0 0 1px rgb(255 255 255 / 0.05);
-    transform-origin: top;
-    animation: sel-in 0.24s var(--spring) both;
-  }
-  .sel-menu.is-up {
-    transform-origin: bottom;
-    animation-name: sel-in-up;
-  }
-  @keyframes sel-in {
-    from { opacity: 0; transform: translateY(-6px) scale(0.96); }
-    to { opacity: 1; transform: none; }
-  }
-  @keyframes sel-in-up {
-    from { opacity: 0; transform: translateY(6px) scale(0.96); }
-    to { opacity: 1; transform: none; }
+    box-shadow: 0 22px 50px -20px rgb(0 0 0 / 0.7);
   }
 
   .sel-search {
@@ -487,7 +500,7 @@
     overflow-y: auto;
     overscroll-behavior: contain;
   }
-  /* One highlight for the whole list, gliding to whichever row is active. */
+  /* One highlight for the whole list, gliding to whichever row is active: a tint of the theme, no outline. */
   .sel-glide {
     position: absolute;
     top: 0;
@@ -496,8 +509,7 @@
     border-radius: 10px;
     pointer-events: none;
     opacity: 0;
-    background: color-mix(in srgb, var(--color-accent) 14%, transparent);
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 20%, transparent);
+    background: color-mix(in srgb, var(--color-accent) 15%, transparent);
     transition: transform 0.26s var(--spring), height 0.2s var(--swift), opacity 0.15s ease;
   }
   .sel-glide.is-on { opacity: 1; }
@@ -514,11 +526,6 @@
     font-size: 13px;
     color: var(--color-ink);
     text-align: left;
-    animation: sel-row 0.26s var(--swift) calc(var(--i, 0) * 18ms) both;
-  }
-  @keyframes sel-row {
-    from { opacity: 0; transform: translateY(-4px); }
-    to { opacity: 1; transform: none; }
   }
   .sel-opt-label {
     display: block;
@@ -529,21 +536,25 @@
     transition: transform 0.2s var(--spring);
   }
   .sel-opt.is-active .sel-opt-label { transform: translateX(2px); }
+  /* What it does, in full over up to two lines: cut off with an ellipsis it read "Only this computer can open the p…". */
   .sel-opt-hint {
-    display: block;
+    display: -webkit-box;
     margin-top: 1px;
     overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
     font-size: 11px;
+    line-height: 1.4;
     color: var(--color-faint);
+    text-wrap: pretty;
   }
   .sel-opt.is-picked .sel-opt-label { color: var(--color-accent); }
   .sel-tick {
     display: inline-flex;
     flex-shrink: 0;
     color: var(--color-accent);
-    animation: sel-tick 0.3s var(--jelly) both;
+    animation: sel-tick 0.25s var(--swift) both;
   }
   @keyframes sel-tick {
     from { opacity: 0; transform: scale(0.4); }

@@ -30,7 +30,9 @@ _COLLECT = (
     "groq",
     "openai",         # the local AI provider speaks the OpenAI API
     "discord",        # discord.py-self
-    "telegram",       # python-telegram-bot
+    "telegram",       # python-telegram-bot: the bot that controls the app
+    "telethon",       # the persona's own Telegram account
+    "python_socks",   # how Telethon reaches an account's proxy
     "uvicorn",
     "fastapi",
     "starlette",
@@ -56,6 +58,8 @@ _HIDDEN = [
     # Roles the exe re-invokes itself as.
     "app.platforms.discord_runner",
     "app.platforms.snapchat_bridge",
+    "app.platforms.telegram.client",
+    "app.platforms.telegram.signin",
     "app.telegram_bot.telegram_controller",
     "app.web.server",
     "app.web.supervisor",
@@ -71,6 +75,8 @@ _HIDDEN = [
     "uvicorn.loops.asyncio",
     "uvicorn.logging",
     "websockets",
+    # A realtime voice's connection in Try a call (app/voice/engines/realtime.py), imported only when one starts.
+    "websockets.asyncio.client",
     "wsproto",
     "h11",
     # FastAPI multipart uploads (pictures, backup restore).
@@ -182,6 +188,13 @@ def build_parts(root, gui=True):
         (str(root / "resources"), "resources"),
         # Node runner source; _sync_node_runner() mirrors it into DATA_DIR.
         (str(root / "app" / "platforms" / "snapchat"), "app/platforms/snapchat"),
+        # Minecraft's runner and the app's part of its bot, which minecraft/worker.sync_runner() writes beside
+        # mindcraft. Its Python is collected with the rest of the app; these are not Python, so they are data.
+        (str(root / "app" / "platforms" / "minecraft" / "minecraft_runner.mjs"), "app/platforms/minecraft"),
+        (str(root / "app" / "platforms" / "minecraft" / "agent_hooks.mjs"), "app/platforms/minecraft"),
+        (str(root / "app" / "platforms" / "minecraft" / "ms_signin.mjs"), "app/platforms/minecraft"),
+        (str(root / "app" / "platforms" / "minecraft" / "ms_skin.mjs"), "app/platforms/minecraft"),
+        (str(root / "app" / "platforms" / "minecraft" / "proxy_connect.mjs"), "app/platforms/minecraft"),
     ]
 
     return datas, binaries, hiddenimports, excludes

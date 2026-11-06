@@ -75,6 +75,42 @@ check("page drift is a warning on a working account", k.live && k.alert?.tone ==
 k = c.condition(snap, srt("awaiting-verification", "old", true), live());
 check("a stale report is not presented as current", k.label === "Online", k.label);
 
+// ── A platform that suspended the account ────────────────────────────────────
+const ig = { id: "instagram_1", platform: "instagram", index: 1, username: "chloe", password_set: true };
+const irt = (state, detail = "") =>
+  rt({ id: "instagram_1", platform: "instagram", target: "insta", web: { state, detail, at: 1, stale: false } });
+k = c.condition(ig, irt("logged-out", "Instagram has suspended this account. Nothing here can undo that; it looks again every 6 hours."), live());
+check("suspended: said so plainly, with no login to check", k.label === "Suspended" && k.tone === "bad"
+      && k.alert?.action?.kind === "logs" && /suspended/.test(k.line), JSON.stringify(k));
+k = c.condition(ig, irt("logged-out", "Instagram did not take the login: wrong password. Check the password on the Accounts page."), live());
+check("a refused login still points at the login", k.label === "Logged out" && k.alert?.action?.kind === "edit", JSON.stringify(k));
+
+// ── Minecraft: states of its own, and no page to have changed ────────────────
+const mc = { id: "minecraft_1", platform: "minecraft", index: 1, username: "Alicia", host: "", port: "", auth: "offline" };
+const mrt = (state, detail = "", extra = {}) =>
+  rt({ id: "minecraft_1", platform: "minecraft", target: "mc", web: { state, detail, at: 1, stale: false, ...extra } });
+k = c.condition(mc, mrt("ready", "", { game: { doing: "collect blocks", health: 20 } }), live());
+check("Minecraft in the world: says what it is doing there", k.label === "In the world" && k.line === "Collect blocks"
+      && !k.alert && k.live, JSON.stringify(k));
+k = c.condition(mc, mrt("ready", "", { game: { doing: "idle", health: 5 } }), live());
+check("and when it is hurt", k.line === "Idle, 5/20 health", k.line);
+k = c.condition(mc, mrt("ready", "In the world on localhost:25565"), live());
+check("words beside ready are not a page that changed: a game has no page", !k.alert && k.label === "In the world",
+      JSON.stringify(k));
+k = c.condition(mc, mrt("ready"), live({ paused: true }));
+check("paused in the world", k.label === "Paused" && k.tone === "warn", JSON.stringify(k));
+k = c.condition(mc, mrt("needs-you", "Minecraft support is not installed. Install it in Settings, Minecraft."), live());
+check("not installed: one click to the installer", k.label === "Needs installing"
+      && k.alert?.action?.to === "minecraft/setup", JSON.stringify(k));
+k = c.condition(mc, mrt("needs-you", "Sign in at microsoft.com/link with the code ABCD1234"), live());
+check("a Microsoft sign-in, as a button that opens the browser with the code in it", k.label === "Sign in"
+      && /ABCD1234/.test(k.alert?.text ?? "") && k.alert?.action?.kind === "url"
+      && k.alert?.action?.to === "https://www.microsoft.com/link?otc=ABCD1234", JSON.stringify(k));
+k = c.condition(mc, mrt("logged-out", "Name Conflict: the name is in use. It tries again in 20 s."), live());
+check("not let in: why, and a way to check the server", k.label === "Not in the world"
+      && k.alert?.action?.kind === "edit", JSON.stringify(k));
+check("dot: in the world is online", c.presenceOf(mc, mrt("ready"), live()) === "online");
+
 // ── The dot ──────────────────────────────────────────────────────────────────
 check("dot: Discord shows its real presence", c.presenceOf(discord, rt(), live({ presence: "idle" })) === "idle");
 check("dot: stopped is offline", c.presenceOf(discord, rt({ state: "stopped" }), live()) === "offline");

@@ -169,7 +169,7 @@ chats = (web / "pages" / "Chats.svelte").read_text(encoding="utf-8")
 check("rows draw the whole message", "<MessageBody" in chats)
 mb = (web / "lib" / "components" / "MessageBody.svelte").read_text(encoding="utf-8")
 check("an old row's [attachment] reads as what it was, not as brackets",
-      "placeholder" in mb and "Sent an attachment" not in mb and "attachment|image|video" in mb)
+      "placeholder" in mb and "Sent an attachment" not in mb and "attachment|image|photo|video" in mb)
 check("with Cancel and Turn off", "cancel(selected!)" in chats and "flipIgnore(selected!)" in chats)
 app_svelte = (web / "App.svelte").read_text(encoding="utf-8")
 check("the live feed starts with the app", "startChatLive()" in app_svelte)

@@ -1,0 +1,85 @@
+<!doctype html>
+<!--
+    A Reddit thread, in the shape redditbot.js reads:
+
+      - the post itself is a <shreddit-post>, as on the feed
+      - every comment is a <shreddit-comment> whose facts are its attributes: thingid, author, depth, score,
+        permalink, created-timestamp
+      - what a comment says is light DOM, slotted in: div[slot="comment"]
+      - depth="0" is a top-level comment; the deeper ones are replies to it, and one of them is its own
+
+    Every word is x's and every address is made up.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>xxxxxx</title>
+  <style>
+    body { margin: 0; font: 14px/1.4 system-ui; }
+    shreddit-comment { display: block; padding: 8px 12px; }
+  </style>
+</head>
+<body>
+  <shreddit-app user-logged-in="true">
+    <div id="expand-user-drawer-button" role="button" aria-label="xxxxxx xxxx"></div>
+
+    <shreddit-post
+      id="t3_1abc2de"
+      author="xxxxxxxx"
+      subreddit-prefixed-name="r/xxxxxxx"
+      score="128"
+      comment-count="41"
+      permalink="/r/xxxxxxx/comments/1abc2de/xxxxx_xxxx/"
+      created-timestamp="2026-10-31T09:14:00.000Z"
+      post-title="xxxxx xxxx xxx">
+      <div slot="text-body"><p>xxxx xxxxxx xx xxxx xxxxx xxxxxxx.</p></div>
+    </shreddit-post>
+
+    <shreddit-comment
+      thingid="t1_kk11aa1"
+      author="xxxxxxx"
+      depth="0"
+      score="54"
+      permalink="/r/xxxxxxx/comments/1abc2de/xxxxx_xxxx/kk11aa1/"
+      created-timestamp="2026-10-31T09:40:00.000Z">
+      <div slot="comment"><p>xxxx xxxx xxxxxx xx xxx xxxxx.</p></div>
+    </shreddit-comment>
+
+    <shreddit-comment
+      thingid="t1_kk22bb2"
+      author="aliciamwwoff"
+      depth="1"
+      score="7"
+      permalink="/r/xxxxxxx/comments/1abc2de/xxxxx_xxxx/kk22bb2/"
+      created-timestamp="2026-10-31T09:52:00.000Z">
+      <div slot="comment"><p>xxxxx xx xxxxx, xx xxxxx xxx xx.</p></div>
+    </shreddit-comment>
+
+    <shreddit-comment
+      thingid="t1_kk33cc3"
+      author="xxxxxx"
+      depth="0"
+      score="2"
+      permalink="/r/xxxxxxx/comments/1abc2de/xxxxx_xxxx/kk33cc3/"
+      created-timestamp="2026-10-31T10:05:00.000Z">
+      <div slot="comment"><p>xxxxxxx xxxx.</p></div>
+    </shreddit-comment>
+
+    <!-- The box to write in, which is a Lexical editor and not a textarea. -->
+    <shreddit-composer>
+      <div contenteditable="true" role="textbox" aria-label="xxx x xxxxxxx"></div>
+      <button slot="submit-button" type="submit">xxxxxx</button>
+    </shreddit-composer>
+  </shreddit-app>
+
+  <script>
+    // The reply button on each comment, where Reddit keeps it: inside the comment's own shadow root.
+    for (const c of document.querySelectorAll("shreddit-comment")) {
+      const root = c.attachShadow({ mode: "open" });
+      const bar = document.createElement("div");
+      bar.innerHTML = '<button slot="reply-button" aria-label="xxxxx"></button>';
+      root.append(document.createElement("slot"), bar);
+    }
+  </script>
+</body>
+</html>

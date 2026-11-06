@@ -1,8 +1,11 @@
 <script module lang="ts">
   import { writable } from "svelte/store";
-  /** Notices dismissed this session, by level and title. Only info-level ones
-   *  can be: a problem that is hidden is still a problem. */
+  /** Notices and warnings dismissed this session, by level and title, until the app is reopened. Never a problem:
+   *  one that is hidden is still a problem. A warning came back on every page while it lasted (Groq rate limiting
+   *  an account, which on its free tier is most of the time), so it can be put away like a notice. */
   export const dismissedIssues = writable<Set<string>>(new Set());
+  export const issueKey = (i: { level: string; title: string }) => `${i.level}:${i.title}`;
+  export const dismissable = (level: string) => level !== "error";
 </script>
 
 <script lang="ts">
@@ -42,11 +45,11 @@
     memory: "Memory", pictures: "Pictures", logs: "Logs", settings: "Settings", system: "System",
   };
   const ORDER: Record<string, number> = { error: 0, warn: 1, info: 2 };
-  const key = (i: Issue) => `${i.level}:${i.title}`;
+  const key = (i: Issue) => issueKey(i);
 
   const shown = $derived(
     issues
-      .filter((i) => !(i.level === "info" && $dismissedIssues.has(key(i))))
+      .filter((i) => !(dismissable(i.level) && $dismissedIssues.has(key(i))))
       .slice()
       .sort((a, b) => (ORDER[a.level] ?? 3) - (ORDER[b.level] ?? 3)),
   );
@@ -153,7 +156,7 @@
               {action(issue)}<span class="note-arrow"><Icon name="chevron" size={12} /></span>
             </button>
           {/if}
-          {#if issue.level === "info"}
+          {#if dismissable(issue.level)}
             <button type="button" class="note-x" onclick={() => dismiss(issue)}
                     title="Hide until the app is reopened" aria-label="Dismiss">
               <Icon name="close" size={13} />

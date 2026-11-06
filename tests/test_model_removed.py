@@ -180,10 +180,9 @@ check("the panel shows why under the model, in full, rather than cut to the row"
       and "· did not answer" in mp)
 
 print("\n== the wait before a download ==")
-check("the button says it is looking the model up, with a spinner", "Looking it up" in la and 'class="lc-get-spin"' in la
-      and "let asking = $state(false);" in la)
-check("and the field shows a light running along it", ".lc-get.is-asking::after" in la and "@keyframes lc-ask-run" in la)
-check("pressed twice, it starts once", "if (!name || asking) return;" in la)
+search = src("webui/src/lib/components/ModelSearch.svelte")
+check("the button turns as it looks the model up", "let getting = $state(\"\");" in search and '{#if getting === r.repo}<span class="ms-spin is-small"' in search)
+check("pressed twice, it starts once", "if (getting) return;" in search)
 
 print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
 sys.exit(1 if FAIL else 0)

@@ -65,6 +65,10 @@ export const WIDGETS: Record<string, WidgetDef> = {
       default: "cards",
     }],
   },
+  thoughts: {
+    type: "thoughts", title: "Thoughts", icon: "sparkle", size: "half",
+    blurb: "What each account is thinking, as it thinks it.",
+  },
   people: {
     type: "people", title: "Most active people", icon: "memory", size: "half", multiple: true,
     blurb: "Who the bot talks to most, ranked.",
@@ -98,8 +102,8 @@ export const WIDGETS: Record<string, WidgetDef> = {
     options: [WINDOW],
   },
   platforms: {
-    type: "platforms", title: "Discord and Snapchat", icon: "chats", size: "half", multiple: true,
-    blurb: "How replies split between the two, against the window before.",
+    type: "platforms", title: "By platform", icon: "chats", size: "half", multiple: true,
+    blurb: "How replies split between the platforms.",
     options: [WINDOW],
   },
   waiting: {
@@ -164,6 +168,24 @@ export function normalise(layout: WidgetInstance[] | null): WidgetInstance[] {
                size: w.size === "full" || w.size === "half" ? w.size : def.size, options });
   }
   return out;
+}
+
+/**
+ * Something new on a Dashboard laid out before it existed, once: it would otherwise never be seen, on a page people set up
+ * once and leave. Taken off, it stays off.
+ */
+export function withNewOnes(layout: WidgetInstance[]): WidgetInstance[] {
+  let seen = true;
+  try {
+    seen = localStorage.getItem("dash.offered.thoughts") === "1";
+    localStorage.setItem("dash.offered.thoughts", "1");
+  } catch {
+    /* no storage: nothing to offer it from */
+  }
+  if (seen || layout.some((w) => w.type === "thoughts")) return layout;
+  const at = layout.findIndex((w) => w.type === "people");
+  const w = makeInstance("thoughts");
+  return at < 0 ? [...layout, w] : [...layout.slice(0, at), w, ...layout.slice(at)];
 }
 
 /** Change one placement and save. */

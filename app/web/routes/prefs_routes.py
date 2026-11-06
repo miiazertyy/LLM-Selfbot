@@ -28,6 +28,12 @@ ALLOWED = {
     "chatDrafts",
     # Whether a mouse wheel's notches glide (Settings, Appearance, Interface).
     "smoothScroll",
+    # The practice LIVE's screen: how blurred, how it fits and moves, and what each persona's shows.
+    "liveScreen",
+    # The health checks put away with "Don't show again" (System).
+    "hiddenChecks",
+    # How Memory's people are put in order and narrowed down: the sort and the filters, not the search.
+    "memoryView",
 }
 
 _lock = threading.Lock()

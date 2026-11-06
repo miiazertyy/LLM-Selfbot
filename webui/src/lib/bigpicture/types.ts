@@ -5,21 +5,27 @@ import type { Status } from "../chatstatus";
 /** One conversation in the queue, from any account. `key` is unique across accounts: "target:rowId". */
 export type QRow = { key: string; target: string; u: ChatUser; st: Status; account?: ChatAccount };
 
-/** The conversation on stage; `answered` once its reply has gone and it has left the queue. */
-export type Spot = QRow & { answered: boolean };
+/**
+ * The conversation on stage. `answered` once its reply has gone and it has left
+ * the queue; `browsing` when it was opened by hand and was never in the queue at
+ * all; `ignored` when the bot has been turned off for them from here.
+ */
+export type Spot = QRow & { answered: boolean; browsing?: boolean; ignored?: boolean };
 
-/** Something that just happened, for the feed. */
+/** Something that just happened, for the list on the right. */
 export type FeedItem = {
   id: number;
   kind: "arrive" | "write" | "sent" | "model" | "limit" | "friend" | "picture";
   text: string;
   avatar?: string;
   name?: string;
+  /** Which app it happened on, for its logo. */
+  platform?: string;
+  /** Whose conversation it was, so pressing it opens that. */
+  target?: string;
+  uid?: string;
   at: number;
 };
-
-/** A reasoning model's thought, from the logs. */
-export type Thought = { model: string; text: string; at: number };
 
 /** One line of the log, tidied (logrows.ts): who wrote it, and what. */
 export type LogLite = { id: number; at: number; level: string; text: string; who: string; avatar?: string; icon: string };
@@ -30,14 +36,24 @@ export type Active = { provider: string; model: string; at: number; ms: number; 
 /** One line of a conversation, as a Memory summary keeps it: whose, and what was said. */
 export type MemoryLine = { mine: boolean; text: string };
 
-/** Someone the idle "memory" scene shows: who they are, what you talk about, and how it last went. */
-export type MemoryPerson = {
+/** Someone it talks to, on any account. `key` is "target:id", as the queue's are. */
+export type Person = {
+  key: string;
+  /** The account the conversation is on. */
+  target: string;
   id: string;
   name: string;
   avatar?: string;
+  platform: string;
   /** Messages from them in the log, all time. */
   messages: number;
   last_ts?: number;
+  /** Messages from them this week. */
+  week?: number;
+};
+
+/** What a person's stored Memory summary says. */
+export type Remembered = {
   summary: string;
   generated_at?: number;
   /** How many messages the summary was written from. */
@@ -88,6 +104,20 @@ export type BPActivity = {
   last: { id: string; name: string; ts: number } | null;
 };
 
+/** The day's figures, on every platform together (api.statsDetail): nothing here is one platform's alone. */
+export type DayStats = {
+  replies: number;
+  /** The same stretch before it. */
+  repliesBefore: number;
+  people: number;
+  peopleBefore: number;
+  /** The last 24 hours, this hour last. */
+  hourly: { hour: number; count: number }[];
+  /** Replies on each platform. */
+  platform: Record<string, number>;
+  loaded: boolean;
+};
+
 /** Someone asking one of the accounts to be friends. */
 export type FriendReq = {
   id: string;
@@ -109,33 +139,20 @@ export type SentPicture = { to: string; avatar?: string; at: number };
 /** Something on the Health list, as the panel's own poll has it (stores.ts). */
 export type HealthIssue = { route: string; level: "error" | "warn" | "info"; title: string; detail: string };
 
-/** Everything the scenes about the rest of the app show: the accounts, the pictures, the requests, the persona, the health. */
-export type SceneWorld = {
-  accounts: BPAccount[];
-  activity: Record<string, BPActivity>;
-  /** The calendar day of each entry of an activity series, oldest first. */
-  dates: string[];
-  pictures: Picture[];
-  sent: Record<string, SentPicture>;
-  /** The Pictures preference says blurred, and they have not been shown this visit. */
-  picturesBlurred: boolean;
-  friends: FriendReq[];
-  friendGone: Record<string, "accept" | "decline">;
-  persona: { lines: string[]; name: string; face: BPAccount | null };
-  moods: string[];
-  issues: HealthIssue[];
-  /** Anything with an action on its way, by the id of what it is on. */
-  busy: Record<string, boolean>;
-};
-
-/** What can be done from those scenes. */
-export type SceneActions = {
-  onpause?: (a: BPAccount) => void;
-  onmood?: (a: BPAccount, mood: string, el: HTMLElement) => void;
-  onanswer?: (r: FriendReq, action: "accept" | "decline", el: HTMLElement | null) => void;
-  onreveal?: () => void;
-  /** Something chosen by hand in a scene: keep it up a while. */
-  onhold?: () => void;
+/** What can be done from the pages, kept by the view itself: it knows who is on stage and what is held. */
+export type PageActions = {
+  /** Put this conversation on stage, in the queue or not. */
+  open: (target: string, id: string, as?: { name: string; avatar?: string }) => void;
+  openPerson: (p: Person) => void;
+  /** Go to a page of the view. */
+  go: (page: import("./director").Page) => void;
   /** Leave Big Picture for a page of the app. */
-  onopen?: (route: string) => void;
+  leaveTo: (route: string) => void;
+  /** Something chosen by hand: keep this up a while. */
+  hold: () => void;
+  /** What the room is lit for on this page, or null for the page's own. */
+  light: (page: import("./director").Page, room: { seed: string; art?: string } | null) => void;
+  /** Esc: this page has something open to close first. Give it back null when it has not. */
+  onBack: (fn: (() => void) | null) => void;
+  reply: (target: string, id: string) => void;
 };

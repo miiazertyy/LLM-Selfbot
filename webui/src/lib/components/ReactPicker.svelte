@@ -21,17 +21,21 @@
   import { motionEnabled } from "../stores";
   import { DISCORD_REACTIONS, SNAP_REACTIONS } from "../chats";
 
-  let { anchor, snap = false, mine = [], onpick, onclose }: {
+  let { anchor, snap = false, set, any = false, mine = [], onpick, onclose }: {
     anchor: HTMLElement;
     /** Snapchat's eight, rather than Discord's any. */
     snap?: boolean;
+    /** The only reactions there are (a TikTok account's, say): these, and no "more". */
+    set?: readonly string[];
+    /** These few at a glance, and every emoji behind "more" (an Instagram account's picker searches them all). */
+    any?: boolean;
     /** The account's own reactions on the message: lit, and a press takes one back. */
     mine?: string[];
     onpick: (emoji: string, add: boolean) => void;
     onclose: () => void;
   } = $props();
 
-  const quick = $derived(snap ? SNAP_REACTIONS : DISCORD_REACTIONS);
+  const quick = $derived(set?.length ? set : snap ? SNAP_REACTIONS : DISCORD_REACTIONS);
   let more = $state(false);
   let box: HTMLElement | null = $state(null);
   let pos = $state({ left: 0, top: 0, up: true });
@@ -114,7 +118,7 @@
       <button type="button" class="rp-e" class:is-mine={mine.includes(e)} style="--i: {i}" onclick={(ev) => pick(e, ev.currentTarget)}
               title={mine.includes(e) ? "Take it back" : "React"} aria-pressed={mine.includes(e)}>{e}</button>
     {/each}
-    {#if !snap && !more}
+    {#if (any || (!snap && !set?.length)) && !more}
       <button type="button" class="rp-all-btn" style="--i: {quick.length}" onclick={showAll}
               title="Every emoji" aria-label="Every emoji"><Icon name="plus" size={15} /></button>
     {/if}

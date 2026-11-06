@@ -21,8 +21,8 @@ import { play, type UISound } from "./uisound";
 
 /**
  * One thing arriving with a pop of its own (a check mark, a ring): heard as it
- * pops, which is once its block has landed (what a block animates waits for
- * it), and only where it can be seen. `use:chime={"done"}`, or with the pop's
+ * pops, which is a moment into its block's drop (what a block animates waits
+ * that long), and only where it can be seen. `use:chime={"done"}`, or with the pop's
  * own CSS delay, `use:chime={{ sound: "done", delay: 450 }}`.
  */
 export function chime(node: HTMLElement, what: UISound | { sound: UISound; delay?: number } = "land") {
@@ -51,8 +51,9 @@ type Opts = {
   once?: boolean;
 };
 
-const PER_PX = 0.35;
-const MAX_WAIT = 350;
+// A second wave down the block, barely behind the first: the run starts as the block does.
+const PER_PX = 0.12;
+const MAX_WAIT = 120;
 
 /**
  * The part of the window a list's items can be seen in: the window, cut down by every box around them that scrolls

@@ -391,7 +391,7 @@
     {:else if off}
       <i></i>{words.none}
     {:else if now}
-      <i></i>{asleep ? words.on : words.off}{#if next != null} · {asleep ? words.goesOff : words.goesOn} in {duration(next)}{/if}
+      <i></i>{asleep ? words.on : words.off}{#if next != null}{" · "}{asleep ? words.goesOff : words.goesOn} in {duration(next)}{/if}
     {:else}
       <i></i>Unknown timezone
     {/if}

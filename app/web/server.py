@@ -9,11 +9,13 @@ from fastapi.staticfiles import StaticFiles
 
 from app.utils.paths import APP_DIR, seed_data_dir
 from app.web.logbus import bus
-from app.web.routes import (account_routes, appearance_routes, chat_routes,
-                            config_routes, env_routes, health_routes,
-                            local_routes, media_routes, models_routes, people_routes,
+from app.web.routes import (account_routes, appearance_routes, chat_routes, community_routes,
+                            config_routes, env_routes, fromchats_routes, health_routes,
+                            livedemo_routes, local_routes, media_routes, models_routes, people_routes,
                             persona_routes, stats_routes, status_routes, system_routes,
-                            prefs_routes, telegram_routes)
+                            prefs_routes, telegram_routes, tiktok_routes, instagram_routes, x_routes,
+                            reddit_routes, whatsapp_routes, minecraft_routes, call_routes,
+                            relay_routes, web_routes)
 
 
 # ── Stall watchdog ── every page is served from one event loop, so one handler doing slow work on it freezes the whole panel, including fetching the code for the next tab, which is what "the app freezes when loading things" looked like. From the outside that is indistinguishable from the app hanging, so this notices it happening and says which requests were being answered at the time, in the log, so the next one names itself instead of needing to be hunted down.
@@ -135,6 +137,14 @@ def create_app(supervisor=None):
     app.include_router(health_routes.router)
     app.include_router(people_routes.router)
     app.include_router(chat_routes.router)
+    app.include_router(livedemo_routes.router)
+    app.include_router(tiktok_routes.router)
+    app.include_router(instagram_routes.router)
+    app.include_router(x_routes.router)
+    app.include_router(reddit_routes.router)
+    app.include_router(whatsapp_routes.router)
+    app.include_router(call_routes.router)
+    app.include_router(minecraft_routes.router)
     app.include_router(media_routes.router)
     app.include_router(stats_routes.router)
     app.include_router(system_routes.router)
@@ -144,6 +154,13 @@ def create_app(supervisor=None):
     app.include_router(appearance_routes.router)
     app.include_router(telegram_routes.router)
     app.include_router(persona_routes.router)
+    # A persona from your own chats (app/utils/chatpersona.py).
+    app.include_router(fromchats_routes.router)
+    app.include_router(community_routes.router)
+    # The persona on the web: what it saw in its free time, and browsing now (app/utils/web).
+    app.include_router(web_routes.router)
+    # What an iPhone posts its messages to, for iMessage with no Mac: before the page's catch-all below.
+    app.include_router(relay_routes.router)
 
     @app.websocket("/api/ws")
     async def ws_endpoint(websocket: WebSocket):
@@ -170,6 +187,9 @@ def create_app(supervisor=None):
         asyncio.create_task(chat_routes.warm_chats())
         asyncio.create_task(_stall_watchdog())
         asyncio.create_task(_warm_ai())
+        # Its free time: a few times a day, each persona with an account running browses on its own.
+        from app.utils.web import freetime
+        asyncio.create_task(freetime.loop(app.state.supervisor))
 
     _mount_spa(app)
     return app
@@ -179,6 +199,11 @@ async def _warm_ai():
     """The AI clients set up once, on a thread, as the panel starts: the first thing to need them (describing a
     picture, a summary) set them up on the event loop otherwise, loading the OpenAI library while every page waited."""
     await asyncio.sleep(3)
+    try:
+        from app.utils import hfsearch
+        hfsearch.warm()
+    except Exception:
+        pass
     try:
         from app.utils.ai import init_ai
         await asyncio.to_thread(init_ai)

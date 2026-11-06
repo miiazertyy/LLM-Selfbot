@@ -17,6 +17,7 @@
   import { applyFont } from "./lib/fonts";
   import Toggle from "./lib/components/Toggle.svelte";
   import Icon from "./lib/components/Icon.svelte";
+  import { platformName } from "./lib/platforms";
   import Avatar from "./lib/components/Avatar.svelte";
   import Odometer from "./lib/components/Odometer.svelte";
 
@@ -36,7 +37,7 @@
   async function refresh() {
     try {
       const r = await api.accounts();
-      accounts = (r.accounts ?? []).filter((a: Account) => a.platform !== "telegram");
+      accounts = (r.accounts ?? []).filter((a: Account) => a.platform !== "controller");
       loaded = true;
       for (const a of accounts) {
         if (a.state !== "running") continue;
@@ -88,7 +89,7 @@
   });
   const waitingTotal = $derived(Object.values(waiting).reduce((n, x) => n + x, 0));
 
-  const nameOf = (a: Account) => a.display_name || a.username || `${a.platform === "snapchat" ? "Snapchat" : "Discord"} #${a.account ?? 1}`;
+  const nameOf = (a: Account) => a.display_name || a.username || `${platformName(a.platform)} #${a.account ?? 1}`;
   function stateOf(a: Account): { word: string; tone: string } {
     if (a.gave_up) return { word: "Stopped after crashing", tone: "bad" };
     if (a.state === "crashing") return { word: "Restarting", tone: "bad" };
@@ -146,7 +147,7 @@
       <span class="tp-logo"><img src="/favicon.png" alt="" /></span>
       <div class="min-w-0 flex-1">
         <div class="tp-title">LLMSelfbot</div>
-        <div class="tp-sub"><b><Odometer value={today} /></b> {today === 1 ? "reply" : "replies"} today{#if waitingTotal} · {waitingTotal} waiting{/if}</div>
+        <div class="tp-sub"><b><Odometer value={today} /></b> {today === 1 ? "reply" : "replies"} today{#if waitingTotal}{" · "}{waitingTotal} waiting{/if}</div>
       </div>
       <span class="tp-pill is-{summary.tone}"><i></i>{summary.word}</span>
     </header>
@@ -160,8 +161,8 @@
             <i class="tp-dot is-{s.tone}"></i>
           </span>
           <span class="min-w-0 flex-1">
-            <span class="tp-name">{nameOf(a)}<em>{a.platform === "snapchat" ? "Snapchat" : "Discord"} #{a.account ?? 1}</em></span>
-            <span class="tp-state">{s.word}{#if a.state === "running" && a.uptime} · up {upFor(a.uptime)}{/if}</span>
+            <span class="tp-name">{nameOf(a)}<em>{platformName(a.platform)} #{a.account ?? 1}</em></span>
+            <span class="tp-state">{s.word}{#if a.state === "running" && a.uptime}{" · "}up {upFor(a.uptime)}{/if}</span>
           </span>
           {#if a.state === "running"}
             <button type="button" class="tp-mini" title="Restart it" aria-label="Restart {nameOf(a)}" disabled={busy[a.id]} onclick={() => startOrRestart(a)}>

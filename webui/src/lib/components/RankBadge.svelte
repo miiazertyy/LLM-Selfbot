@@ -10,6 +10,9 @@
    * The rest are glass chips of the same size. The first three used to be flat
    * coloured dots and the rest bare faint digits.
    *
+   * Where it is only there to look at (the dashboard's leaderboard) a press
+   * spins it like a flicked coin, a ting as it stops and, on a medal, the shine.
+   *
    * An order (kind "step", a chain of models): the first in the accent, the
    * rest the same glass chips, no medals.
    */
@@ -17,6 +20,7 @@
   import { get } from "svelte/store";
   import { motionEnabled } from "../stores";
   import { afterLanding, onScreen, whenShown } from "../cascade";
+  import { play } from "../uisound";
 
   let {
     n,
@@ -28,12 +32,42 @@
     delay = 0,
     /** Kept for the places that pass it (Big Picture): the shine has no ting anywhere now. */
     quiet = false,
-  }: { n: number; size?: number; kind?: "rank" | "step"; shine?: boolean; delay?: number; quiet?: boolean } = $props();
+    /** A button: a press spins it. Off everywhere else, where a row's number has nothing to do. */
+    spins = false,
+  }: { n: number; size?: number; kind?: "rank" | "step"; shine?: boolean; delay?: number; quiet?: boolean; spins?: boolean } = $props();
 
   const medal = $derived(kind === "rank" && n >= 1 && n <= 3 ? (["gold", "silver", "bronze"] as const)[n - 1] : null);
 
   let el: HTMLElement | null = $state(null);
   let shining = $state(false);
+
+  let face: HTMLElement | null = $state(null);
+  let glance: HTMLElement | null = $state(null);
+  let whirl: Animation | undefined;
+  let sheen: Animation | undefined;
+  /** When a press's spin has all but stopped (ms): its ting lands there, not when the slow tail runs out. */
+  const LANDS = 430;
+
+  /** Pressed: three turns about its upright, fast then settling, a small pop as it goes. Only transform, and it ends. */
+  function spin() {
+    play("zip", { level: 0.6 });
+    if (medal) play("medal", { delay: LANDS, p: { gold: 1, silver: 0.5, bronze: 0 }[medal] });
+    else play("seat", { delay: LANDS, level: 0.6 });
+    if (!get(motionEnabled)) return;
+    const turned = (deg: number, s: number) => `perspective(${size * 4}px) rotateY(${deg}deg) scale(${s})`;
+    // Pressed again part way: it starts over. Its own element, so the coin's wink and the row's hover are left alone.
+    whirl?.cancel();
+    whirl = face?.animate(
+      [{ transform: turned(0, 1) }, { transform: turned(324, 1.25), offset: 0.3 }, { transform: turned(1080, 1) }],
+      { duration: 720, easing: "cubic-bezier(0.2, 0.75, 0.25, 1)" },
+    );
+    sheen?.cancel();
+    sheen = glance?.animate(
+      [{ opacity: 1, transform: "translateX(-70%)" }, { opacity: 1, transform: "translateX(70%)" }],
+      { duration: 600, delay: LANDS - 60, easing: "cubic-bezier(0.3, 0.1, 0.2, 1)" },
+    );
+  }
+
   onMount(() => {
     if (!medal || !shine || !get(motionEnabled)) return;
     whenShown(el).then(() => afterLanding(el, () => onScreen(el).then((seen) => {
@@ -42,8 +76,14 @@
   });
 </script>
 
-<span
+<svelte:element
+  this={spins ? "button" : "span"}
+  type={spins ? "button" : undefined}
+  role={spins ? "button" : undefined}
+  data-sound={spins ? "self" : undefined}
+  onclick={spins ? spin : undefined}
   class="rk"
+  class:is-spins={spins}
   class:is-gold={medal === "gold"}
   class:is-silver={medal === "silver"}
   class:is-bronze={medal === "bronze"}
@@ -54,12 +94,14 @@
   bind:this={el}
   aria-label={medal ? `${n}, ${medal}` : String(n)}
 >
-  {#if medal}<span class="rk-ribbon" aria-hidden="true"></span>{/if}
-  <span class="rk-coin">
-    {#key n}<b aria-hidden="true">{n}</b>{/key}
-    {#if medal}<i class="rk-shine" aria-hidden="true"></i>{/if}
+  <span class="rk-spin" bind:this={face}>
+    {#if medal}<span class="rk-ribbon" aria-hidden="true"></span>{/if}
+    <span class="rk-coin">
+      {#key n}<b aria-hidden="true">{n}</b>{/key}
+      {#if medal}<i class="rk-shine" aria-hidden="true" bind:this={glance}></i>{/if}
+    </span>
   </span>
-</span>
+</svelte:element>
 
 <style>
   .rk {
@@ -72,6 +114,10 @@
     transition: transform 0.4s var(--jelly);
   }
   .rk:hover { transform: translateY(-1px) rotate(-6deg) scale(1.08); }
+  .rk.is-spins { cursor: pointer; }
+  .rk.is-spins:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; border-radius: 999px; }
+  /* What a press turns: the coin and its ribbon as one, the size of the whole. */
+  .rk-spin { position: relative; display: grid; width: 100%; height: 100%; place-items: center; }
   .rk-coin {
     position: relative;
     z-index: 1;

@@ -1,46 +1,76 @@
 <script lang="ts">
   /**
-   * The idle scene about the accounts themselves: every one as a card with its
-   * banner, its face lit by how it is doing, what it has done this week, and
-   * who it talks to most. The Accounts page, as something to look at.
+   * Accounts: every one as a card with its banner, its face lit by how it is doing,
+   * what it has done this week. Every platform it talks on along the top, with how
+   * many replies went out there this week: pressing one shows only that platform's.
    *
-   * One thing can be done from here: pausing an account, or letting it answer
-   * again, which is the one switch worth having within reach while watching.
-   * Starting and stopping stay on the Accounts page, where the reasons live.
+   * Pressing a card grows it where it stands, with the page still there around it:
+   * it rises to the top of the page across the whole width and the others make room,
+   * and Esc puts it back. Grown, it has what can be done from here: pause it, put it
+   * in a mood, see who it talks to most, and, for a Minecraft account in a world,
+   * watch what it sees. Starting and stopping stay on the Accounts page, where the
+   * reasons live.
    */
+  import { onDestroy, tick } from "svelte";
+  import { get } from "svelte/store";
   import Avatar from "../components/Avatar.svelte";
   import Icon from "../components/Icon.svelte";
+  import PlatformMark from "../components/PlatformMark.svelte";
   import { presenceName, platformName } from "../accounts/condition";
   import { fmtDate } from "../fmt";
-  import Counter from "./Counter.svelte";
+  import { PLATFORMS, type PlatformId } from "../platforms";
+  import { personasRes } from "../personas/store";
+  import { motionEnabled } from "../stores";
+  import { play as uiPlay } from "../uisound";
+  import BPMinecraft from "./BPMinecraft.svelte";
   import { fitText } from "./fit";
+  import { focusable, follow } from "./focus";
+  import { burstFrom, tilt } from "./fx";
   import { popIn } from "./motion";
-  import { ripple, tilt } from "./fx";
-  import type { BPAccount, BPActivity } from "./types";
+  import Rolling from "./Rolling.svelte";
+  import { ago } from "./scenes";
+  import type { BPAccount, PageActions } from "./types";
+  import type { World } from "./world.svelte";
 
-  let {
-    accounts = [],
-    activity = {},
-    dates = [],
-    now = 0,
-    busy = {},
-    onpause,
-  }: {
-    accounts?: BPAccount[];
-    activity?: Record<string, BPActivity>;
-    /** This computer's calendar day for each entry of a series, oldest first. */
-    dates?: string[];
-    now?: number;
-    /** Accounts with a pause or resume on its way. */
-    busy?: Record<string, boolean>;
-    onpause?: (a: BPAccount) => void;
-  } = $props();
+  let { world, act, now = 0, moodsOf }: { world: World; act: PageActions; now?: number; moodsOf: (id: string) => string[] } = $props();
 
-  /** At most four: past that the cards would be too small to read across a room. */
-  const shown = $derived(accounts.slice(0, 4));
+  let openId = $state<string | null>(null);
+  const accounts = $derived(world.accounts);
+  const platforms = $derived.by(() => {
+    const ids = [...new Set(accounts.map((a) => a.platform))];
+    return ids.filter((p) => PLATFORMS[p as PlatformId])
+      .map((p) => ({ id: p, n: world.weekPlatform[p] ?? 0, on: accounts.some((a) => a.platform === p && a.state === "running") }))
+      .sort((a, b) => b.n - a.n || Number(b.on) - Number(a.on));
+  });
+  const filter = $derived(world.platformFilter);
+  /** The grown one first, and only the platform asked for. */
+  const shown = $derived.by(() => {
+    const list = filter ? accounts.filter((a) => a.platform === filter) : accounts;
+    return openId ? [...list.filter((a) => a.id === openId), ...list.filter((a) => a.id !== openId)] : list;
+  });
   const running = $derived(accounts.filter((a) => a.state === "running").length);
+  /**
+   * How many across: as few as still shows them all on the screen, so a card is as
+   * large as it can be from across the room. auto-fill left six small cards in a
+   * strip along the top and the rest of the page empty.
+   */
+  let gridW = $state(1600);
+  let gridH = $state(800);
+  const cols = $derived.by(() => {
+    const n = Math.max(1, shown.length - (openId ? 1 : 0));
+    const most = Math.max(1, Math.floor(gridW / 320));
+    let best = 1;
+    for (let c = 1; c <= most; c++) {
+      best = c;
+      if (Math.ceil(n / c) * 300 <= gridH && gridW / c <= 640) break;
+    }
+    return Math.min(best, Math.max(1, n));
+  });
 
-  /** What the ring and the words say: the worker's own word when it answered, else the supervisor's. */
+  /** A card a good size across has a face to match. */
+  const faceSize = $derived(gridW / cols > 480 ? 88 : 68);
+
+  /** What the dot and the words say: the worker's own word when it answered, else the supervisor's. */
   function tone(a: BPAccount): "good" | "warn" | "bad" | "accent" | "muted" {
     if (a.state === "running") {
       if (!a.live) return "accent";
@@ -70,364 +100,347 @@
     if (s < 86400) return `up ${Math.round(s / 3600)} h`;
     return `up ${Math.round(s / 86400)} d`;
   }
-  function ago(ts?: number): string {
-    if (!ts) return "";
-    const s = Math.max(0, now - ts);
-    if (s < 60) return "just now";
-    if (s < 3600) return `${Math.round(s / 60)} min ago`;
-    if (s < 86400) return `${Math.round(s / 3600)} h ago`;
-    return `${Math.round(s / 86400)} d ago`;
-  }
   /** Local dates, read as local: new Date("2026-09-26") would be UTC midnight, the day before for anyone west of Greenwich. */
   function dayLetter(iso: string): string {
     const [y, m, d] = (iso || "").split("-").map(Number);
     if (!y) return "";
     return fmtDate(new Date(y, (m || 1) - 1, d || 1), { weekday: "narrow" });
   }
-  const week = (a: BPAccount) => (activity[a.id]?.series ?? []).slice(-7);
+  const week = (a: BPAccount) => (world.activity[a.id]?.series ?? []).slice(-7);
+  const weekDates = $derived(world.dates.slice(-7));
   const slot = (a: BPAccount) => `${platformName(a.platform)}${a.account ? ` #${a.account}` : ""}`;
-  const weekDates = $derived(dates.slice(-7));
+  const reachable = (a: BPAccount) => a.state === "running" && a.live;
+  const persona = (a: BPAccount) => $personasRes.data.accounts[a.id] || "default";
+  const personaName = (a: BPAccount) => {
+    const p = $personasRes.data.personas.find((x) => x.id === persona(a));
+    return p && !(p.is_default && p.name === "Default") ? p.name : "";
+  };
 
-  /**
-   * Rows instead of cards when the cards would not fit: three or more in a
-   * stage made narrow by the queue, two in a very narrow one, or any on a short
-   * screen. A card is a tall thing; a row says the same in a line.
-   */
-  let width = $state(0);
-  let tall = $state(1080);
-  const rows = $derived(shown.length >= 2 && (width < 560 || (shown.length >= 3 && width < 900) || tall < 760));
+  // ── Growing where it stands ──────────────────────────────────────────────
+  // Every card told where it was and left to spring from there to where it is now.
+  // The one growing, or going back, springs from the size it was too, and what is in
+  // it fades up as it lands, so it is not seen stretched. Transform and opacity only,
+  // on the graphics card: uncovering it with a clip-path looked the same and had the
+  // card painted again every frame, which on the laptop's iGPU lost half of them.
+  let gridEl: HTMLElement | null = $state(null);
+  const springy = () => getComputedStyle(document.documentElement).getPropertyValue("--spring").trim() || "cubic-bezier(0.2, 0.9, 0.25, 1)";
+
+  async function rearrange(change: () => void, growing: string | null, shrinking: string | null) {
+    const grid = gridEl;
+    if (!grid || !get(motionEnabled)) {
+      change();
+      return;
+    }
+    const before = new Map<string, DOMRect>();
+    for (const c of grid.querySelectorAll<HTMLElement>("[data-card]")) before.set(c.dataset.card ?? "", c.getBoundingClientRect());
+    change();
+    await tick();
+    const easing = springy();
+    for (const c of grid.querySelectorAll<HTMLElement>("[data-card]")) {
+      const id = c.dataset.card ?? "";
+      const a = before.get(id);
+      if (!a) continue;
+      const b = c.getBoundingClientRect();
+      const dx = a.left - b.left, dy = a.top - b.top;
+      if (id === growing || id === shrinking) {
+        const duration = id === growing ? 600 : 480;
+        c.animate([{ transform: `translate(${dx}px, ${dy}px) scale(${a.width / b.width}, ${a.height / b.height})`, transformOrigin: "0 0" },
+                   { transform: "none", transformOrigin: "0 0" }], { duration, easing });
+        for (const part of Array.from(c.children)) {
+          part.animate([{ opacity: 0 }, { opacity: 0, offset: 0.3 }, { opacity: 1 }], { duration, easing: "ease-out" });
+        }
+      } else if (dx || dy) {
+        c.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: "none" }], { duration: 560, easing });
+      }
+    }
+    follow(800);
+  }
+
+  function close() {
+    const was = openId;
+    if (!was) return;
+    uiPlay("release");
+    rearrange(() => (openId = null), null, was);
+    act.onBack(null);
+  }
+  function toggle(a: BPAccount) {
+    act.hold();
+    if (openId === a.id) return close();
+    const was = openId;
+    uiPlay("open");
+    uiPlay("land", { delay: 460, level: 0.7 });
+    rearrange(() => (openId = a.id), a.id, was);
+    gridEl?.scrollTo({ top: 0, behavior: get(motionEnabled) ? "smooth" : "auto" });
+    act.onBack(close);
+  }
+  onDestroy(() => act.onBack(null));
+
+  function setFilter(p: string | null) {
+    act.hold();
+    uiPlay(p ? "select" : "off");
+    rearrange(() => {
+      world.platformFilter = world.platformFilter === p ? null : p;
+      openId = null;
+    }, null, null);
+    act.onBack(null);
+  }
+
+  async function pause(a: BPAccount, el: HTMLElement) {
+    const paused = await world.togglePause(a);
+    if (paused === undefined) return;
+    uiPlay(paused ? "off" : "on");
+    if (!paused) burstFrom(el, { count: 12, spread: 70 });
+  }
+
+  // The room lit by the one grown, or the first to have a picture.
+  $effect(() => {
+    const a = accounts.find((x) => x.id === openId);
+    if (a) act.light("accounts", { seed: `accounts:${a.id}`, art: a.banner || a.avatar });
+    else act.light("accounts", null);
+  });
+  onDestroy(() => act.light("accounts", null));
 </script>
 
-<svelte:window bind:innerHeight={tall} />
-
-<div class="bpa" class:is-rows={rows} data-n={shown.length} bind:clientWidth={width}>
-  <div class="bp-kicker" in:popIn|global={{ delay: 40, from: 0.96 }}>
-    Accounts · {running} of {accounts.length} running
-  </div>
-  <h2 class="bp-title" in:popIn|global={{ delay: 90, from: 0.96 }}>Accounts</h2>
-
-  <div class="bpa-grid">
-    {#each shown as a, i (a.id)}
-      {@const act = activity[a.id]}
-      {@const t = tone(a)}
-      {@const w = week(a)}
-      {@const peak = Math.max(1, ...w)}
-      <article class="bpa-card" class:is-row={rows} data-tone={t} data-state={a.state} use:tilt
-               in:popIn|global={{ delay: 160 + i * 120, from: 0.9 }}>
-        <div class="bpa-banner" style="--acc: {a.accent || 'var(--color-accent)'}">
-          {#if a.banner}
-            <img src={a.banner} alt="" referrerpolicy="no-referrer" draggable="false" decoding="async" />
-          {/if}
+<div class="bpa">
+  {#if accounts.length}
+    <div class="bpa-top">
+      <div class="bp-label bpa-count">{running} of {accounts.length} running</div>
+      {#if platforms.length > 1}
+        <div class="bpa-filter" data-sound="self">
+          {#each platforms as p, i (p.id)}
+            <button class="bp-chip" class:is-on={filter === p.id} use:focusable={{ id: `platform:${p.id}` }} onclick={() => setFilter(p.id)}
+                    in:popIn|global={{ delay: 40 + i * 40, from: 0.9 }} title="{PLATFORMS[p.id as PlatformId].name}: {p.n} replies this week">
+              <PlatformMark platform={p.id} size={20} />{PLATFORMS[p.id as PlatformId].name}<b><Rolling value={p.n} delay={60 + i * 40} /></b>
+            </button>
+          {/each}
         </div>
-        <span class="bpa-light" aria-hidden="true"></span>
+      {/if}
+    </div>
 
-        <div class="bpa-head">
-          <span class="bpa-face">
-            <Avatar src={a.avatar} name={a.name} size={rows ? 52 : 84} zoom={false} />
-            <i class="bpa-dot" title={status(a)}></i>
-          </span>
-          <!-- Which login it is, unless that is already its name. -->
-          {#if !rows && slot(a) !== a.name}<span class="bpa-tag">{slot(a)}</span>{/if}
-        </div>
+    <div class="bpa-grid bp-scrolls" class:is-fill={!openId && Math.ceil(shown.length / cols) * 300 <= gridH} bind:this={gridEl}
+         bind:clientWidth={gridW} bind:clientHeight={gridH} style="--cols: {cols}">
+      {#each shown as a, i (a.id)}
+        {@const act7 = world.activity[a.id]}
+        {@const t = tone(a)}
+        {@const w = week(a)}
+        {@const peak = Math.max(1, ...w)}
+        {@const grown = openId === a.id}
+        <article class="bp-tile bpa-card" class:is-open={grown} data-tone={t} data-state={a.state} data-card={a.id}
+                 use:tilt={grown ? 0 : 4} in:popIn|global={{ delay: 60 + Math.min(i, 8) * 70, from: 0.92 }}>
+          <button class="bpa-main" use:focusable={{ id: `card:${a.id}` }} onclick={() => toggle(a)} aria-expanded={grown}
+                  title={grown ? "Put it back (Esc)" : `More about ${a.name}`}>
+            <div class="bpa-banner" style="--acc: {a.accent || 'var(--color-accent)'}">
+              {#if a.banner}<img src={a.banner} alt="" referrerpolicy="no-referrer" draggable="false" decoding="async" />{/if}
+            </div>
+            <div class="bpa-head">
+              <span class="bp-face bpa-face">
+                <Avatar src={a.avatar} name={a.name} size={grown ? 96 : faceSize} zoom={false} />
+                <i class="bpa-dot" title={status(a)}></i>
+              </span>
+              <!-- Which login it is, unless that is already its name. -->
+              {#if slot(a) !== a.name}<span class="bpa-tag"><PlatformMark platform={a.platform} size={16} />{slot(a)}</span>
+              {:else}<span class="bpa-tag"><PlatformMark platform={a.platform} size={16} /></span>{/if}
+            </div>
+            <div class="bpa-body">
+              <div class="bpa-name" use:fitText={{ min: 18, text: a.name }}>{a.name}</div>
+              <div class="bpa-line">
+                <b>{status(a)}</b>{#if a.state === "running" && a.ping != null}{" · "}{a.ping} ms{/if}{#if a.state === "running" && a.uptime}{" · "}{uptime(a.uptime)}{/if}{#if a.mood}{" · "}<span class="bpa-mood">{a.mood}</span>{/if}
+              </div>
+              <div class="bpa-nums">
+                <div><b><Rolling value={act7?.today ?? 0} /></b><span>today</span></div>
+                <div><b><Rolling value={act7?.week ?? 0} /></b><span>this week</span></div>
+                <div><b><Rolling value={act7?.people_week ?? 0} /></b><span>people</span></div>
+                {#if w.length}
+                  <div class="bpa-week" role="img" aria-label="Replies per day this week: {w.join(', ')}">
+                    {#each w as v, d}
+                      <span class="bpa-col" class:is-today={d === w.length - 1}>
+                        <i style="--f: {v / peak}; --d: {d}"></i>
+                        <em>{dayLetter(weekDates[d] ?? "")}</em>
+                      </span>
+                    {/each}
+                  </div>
+                {/if}
+              </div>
+            </div>
+          </button>
 
-        <div class="bpa-body">
-          <div class="bpa-name" use:fitText={{ min: 18, text: a.name }}>{a.name}</div>
-          <div class="bpa-line">
-            <b>{status(a)}</b>{#if a.state === "running" && a.ping != null} · {a.ping} ms{/if}{#if a.state === "running" && a.uptime && !rows} · {uptime(a.uptime)}{/if}{#if rows && a.mood} · {a.mood}{/if}
-          </div>
-
-          {#if !rows}
-          <div class="bpa-chips">
-            {#if a.mood}<span class="bpa-chip is-mood"><Icon name="sparkle" size={12} />{a.mood}</span>{/if}
-            {#if a.night}<span class="bpa-chip">Night hours</span>{/if}
-            {#if a.guilds != null && a.live}<span class="bpa-chip">{a.guilds} server{a.guilds === 1 ? "" : "s"}</span>{/if}
-            {#if a.friends != null && a.live}<span class="bpa-chip">{a.friends} friend{a.friends === 1 ? "" : "s"}</span>{/if}
-          </div>
-
-          <div class="bpa-nums">
-            <div><b><Counter value={act?.today ?? 0} /></b><span>today</span></div>
-            <div><b><Counter value={act?.week ?? 0} /></b><span>this week</span></div>
-            <div><b><Counter value={act?.people_week ?? 0} /></b><span>people</span></div>
-          </div>
-
-          {#if w.length}
-            <div class="bpa-week" role="img" aria-label="Replies per day this week: {w.join(', ')}">
-              {#each w as v, d}
-                <span class="bpa-col" class:is-today={d === w.length - 1}>
-                  <i style="--f: {v / peak}; --d: {d}"></i>
-                  <em>{d === w.length - 1 ? "•" : dayLetter(weekDates[d] ?? "")}</em>
-                </span>
-              {/each}
+          {#if grown}
+            <div class="bpa-more">
+              {#if a.platform === "minecraft" && world.minecraft?.id === a.id}
+                <div class="bpa-view"><BPMinecraft account={a} inset /></div>
+              {/if}
+              <div class="bpa-side">
+                {#if reachable(a)}
+                  <div class="bpa-do">
+                    <button class="bp-btn" class:is-go={a.paused} use:focusable={{ id: `pause:${a.id}` }} disabled={!!world.busy[a.id]} onclick={(e) => pause(a, e.currentTarget)}
+                            title={a.paused ? "Let it answer again" : "Stop it replying for now; it stays online"} data-sound="self">
+                      <Icon name={a.paused ? "play" : "pause"} size={14} />{a.paused ? "Resume" : "Pause"}
+                    </button>
+                  </div>
+                  {#if moodsOf(a.id).length}
+                    <div class="bp-label">Mood</div>
+                    <div class="bpa-moods" data-sound="self">
+                      {#each moodsOf(a.id) as m (m)}
+                        <button class="bp-chip bpa-moodchip" class:is-on={a.mood === m} use:focusable={{ id: `mood:${a.id}:${m}` }}
+                                disabled={!!world.busy[a.id] || a.mood === m} onclick={(e) => world.setMood(a, m, e.currentTarget)}
+                                title={a.mood === m ? `${a.name} is ${m}` : `Put ${a.name} in a ${m} mood`}>{m}</button>
+                      {/each}
+                    </div>
+                  {/if}
+                {/if}
+                <div class="bpa-facts">
+                  {#if personaName(a)}<span>Speaks as {personaName(a)}</span>{/if}
+                  {#if a.guilds != null && a.live}<span>{a.guilds} server{a.guilds === 1 ? "" : "s"}</span>{/if}
+                  {#if a.friends != null && a.live}<span>{a.friends} friend{a.friends === 1 ? "" : "s"}</span>{/if}
+                  {#if a.night}<span>Night hours</span>{/if}
+                </div>
+                <button class="bp-btn is-small bpa-page" use:focusable={{ id: `page:${a.id}` }} onclick={() => act.leaveTo("accounts")}>
+                  Open Accounts<Icon name="chevron" size={13} />
+                </button>
+              </div>
+              <div class="bpa-side">
+                {#if act7?.top?.length}
+                  <div class="bp-label">Talks to most</div>
+                  <div class="bpa-people">
+                    {#each act7.top.slice(0, 5) as p (p.id)}
+                      <button class="bp-row bpa-person" use:focusable={{ id: `top:${a.id}:${p.id}` }} onclick={() => act.open(a.id, String(p.id), { name: p.name, avatar: p.avatar })} title="Open {p.name}">
+                        <Avatar src={p.avatar} name={p.name} size={28} zoom={false} /><span>{p.name}</span><b>{p.count}</b>
+                      </button>
+                    {/each}
+                  </div>
+                  {#if act7.last}<div class="bpa-last">Last reply {ago(act7.last.ts, now)}, to {act7.last.name}</div>{/if}
+                {/if}
+              </div>
             </div>
           {/if}
-
-          {#if act?.top?.length}
-            <div class="bpa-top">
-              <span class="bpa-faces">
-                {#each act.top.slice(0, 4) as p (p.id)}
-                  <span class="bpa-mini"><Avatar src={p.avatar} name={p.name} size={26} zoom={false} /></span>
-                {/each}
-              </span>
-              <span class="bpa-top-text">
-                Most with <b>{act.top[0].name}</b>{#if act.last} · last reply {ago(act.last.ts)}{/if}
-              </span>
-            </div>
-          {/if}
-          {/if}
-
-          {#if !rows && onpause && a.state === "running" && a.live}
-            <button class="bpa-btn" class:is-paused={a.paused} use:ripple onclick={() => onpause?.(a)}
-                    disabled={!!busy[a.id]}
-                    title={a.paused ? "Let it answer again" : "Stop it replying for now; it stays online"}>
-              <Icon name={a.paused ? "play" : "pause"} size={14} />{a.paused ? "Resume" : "Pause"}
-            </button>
-          {/if}
-        </div>
-
-        {#if rows}
-          <!-- The row's own numbers and switch, at its end. -->
-          <div class="bpa-rownums">
-            <div><b><Counter value={act?.today ?? 0} /></b><span>today</span></div>
-            <div><b><Counter value={act?.week ?? 0} /></b><span>week</span></div>
-          </div>
-          {#if onpause && a.state === "running" && a.live}
-            <button class="bpa-btn" class:is-paused={a.paused} use:ripple onclick={() => onpause?.(a)}
-                    disabled={!!busy[a.id]} aria-label={a.paused ? "Resume" : "Pause"}
-                    title={a.paused ? "Let it answer again" : "Stop it replying for now; it stays online"}>
-              <Icon name={a.paused ? "play" : "pause"} size={14} />
-            </button>
-          {/if}
-        {/if}
-      </article>
-    {/each}
-  </div>
-  {#if accounts.length > shown.length}
-    <div class="bpa-more">and {accounts.length - shown.length} more on the Accounts page</div>
+        </article>
+      {/each}
+    </div>
+  {:else}
+    <div class="bp-empty">
+      <b>No accounts yet</b>
+      <button class="bp-btn is-go" use:focusable={{ id: "accounts:add", first: true }} onclick={() => act.leaveTo("accounts")}><Icon name="plus" size={15} />Add one</button>
+    </div>
   {/if}
 </div>
 
 <style>
-  .bpa { display: flex; height: 100%; min-width: 0; flex-direction: column; justify-content: safe center; gap: 12px; padding: 10px 6px; }
+  .bpa { display: flex; height: 100%; min-height: 0; flex-direction: column; gap: clamp(8px, 1.4vh, 14px); }
+  .bpa-top { display: flex; flex-shrink: 0; min-width: 0; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+  .bpa-count { font-size: 14px; }
+  .bpa-filter { display: flex; min-width: 0; flex-wrap: wrap; gap: 4px; }
+  .bpa-filter b { font-weight: 700; color: var(--color-ink); }
+  .bpa-filter .bp-chip.is-on b { color: inherit; }
+  .bpa-filter .bp-chip { padding: 0 12px 0 7px; }
+
   .bpa-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(100%, 270px), 1fr));
-    gap: clamp(12px, 1.6vw, 22px);
-    align-items: start;
+    min-height: 0;
+    flex: 1 1 0;
+    grid-template-columns: repeat(var(--cols, 3), minmax(0, 1fr));
+    /* As tall as what is on them, when they do not all fit and the page scrolls. A card clips its corners, so left
+       to itself its row would shrink to share out the height there is, and cut the bottom off every one. */
+    grid-auto-rows: max-content;
+    align-content: start;
+    gap: clamp(10px, 1.2vw, 20px);
+    padding: 3px 3px 12px;
   }
-  /* One account: one card, not a strip stretched across the whole stage. */
-  .bpa[data-n="1"] .bpa-grid { grid-template-columns: minmax(0, 560px); justify-content: center; }
-  .bpa[data-n="2"] .bpa-grid { grid-template-columns: repeat(2, minmax(0, 480px)); justify-content: center; }
-
+  /* They fit: the cards share the height there is, up to a size that still looks like a card. */
+  .bpa-grid.is-fill { grid-auto-rows: minmax(0, 460px); align-content: center; }
   .bpa-card {
     --tx: 0deg;
     --ty: 0deg;
     position: relative;
-    display: flex;
     min-width: 0;
     flex-direction: column;
     overflow: hidden;
-    border-radius: 26px;
-    background: rgb(255 255 255 / 0.05);
-    box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.08), 0 30px 70px -40px rgb(0 0 0 / 0.9);
     transform: perspective(900px) rotateX(var(--tx)) rotateY(var(--ty));
-    transition: transform 0.5s var(--spring), box-shadow 0.3s ease;
+    transition: transform 0.5s var(--spring);
   }
-  .bpa-card[data-tone="good"] { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-good) 28%, transparent), 0 30px 70px -40px rgb(0 0 0 / 0.9); }
-  /* The light the tilt carries across the card. */
-  .bpa-light {
-    position: absolute;
-    inset: 0;
-    z-index: 2;
-    pointer-events: none;
-    background: radial-gradient(420px circle at var(--lx, 50%) var(--ly, 0%), rgb(255 255 255 / 0.09), transparent 45%);
-    opacity: 0;
-    transition: opacity 0.4s ease;
-  }
-  .bpa-card:hover .bpa-light { opacity: 1; }
+  .bpa-card:global(.is-focus) { transform: perspective(900px) rotateX(var(--tx)) rotateY(var(--ty)); }
+  .bpa-card.is-open { grid-column: 1 / -1; flex-direction: row; flex-wrap: wrap; transform: none; }
+  .bpa-card.is-open .bpa-main { flex: 1 1 420px; }
+  /* border-radius: the plate takes its corners from what has the focus, and this is what has it. */
+  .bpa-main { display: flex; min-width: 0; height: 100%; flex: 1 1 auto; flex-direction: column; border-radius: inherit; text-align: left; }
+  .bpa-card:active { transform: scale(0.99); }
 
+  /* The banner melts into the card instead of ending on a line, whatever is behind the card. */
   .bpa-banner {
     position: relative;
-    height: 92px;
+    height: clamp(64px, 13vh, 150px);
+    flex-shrink: 0;
     overflow: hidden;
-    background:
-      radial-gradient(120% 140% at 0% 0%, color-mix(in srgb, var(--acc) 85%, white 10%), transparent 60%),
-      linear-gradient(135deg, color-mix(in srgb, var(--acc) 70%, #000), color-mix(in srgb, var(--acc) 30%, #05060c));
+    background: linear-gradient(135deg, color-mix(in srgb, var(--acc) 60%, #000), color-mix(in srgb, var(--acc) 28%, #05060c));
+    -webkit-mask-image: linear-gradient(to bottom, #000 35%, transparent);
+    mask-image: linear-gradient(to bottom, #000 35%, transparent);
   }
-  .bpa-banner img {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-    animation: bpa-drift 22s ease-in-out infinite alternate;
-    will-change: transform;
-  }
-  /* The banner melts into the card instead of ending on a line. */
-  .bpa-banner::after { content: ""; position: absolute; inset: 0; background: linear-gradient(to bottom, transparent 35%, rgb(8 9 16 / 0.85)); }
-  @keyframes bpa-drift { from { transform: scale(1.04) translate3d(0, 0, 0); } to { transform: scale(1.16) translate3d(-3%, -4%, 0); } }
+  .bpa-banner img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
   .bpa-card[data-state="stopped"] .bpa-banner,
   .bpa-card[data-state="stopped"] .bpa-face { filter: grayscale(0.85) brightness(0.8); }
 
-  .bpa-head { position: relative; z-index: 1; display: flex; align-items: flex-end; justify-content: space-between; margin-top: -48px; padding: 0 18px; }
-  .bpa-face {
-    position: relative;
-    display: grid;
-    border-radius: 999px;
-    box-shadow: 0 0 0 5px rgb(10 11 18), 0 0 0 7px rgb(255 255 255 / 0.1);
-    transition: box-shadow 0.5s ease;
-  }
-  .bpa-card[data-tone="good"] .bpa-face { box-shadow: 0 0 0 5px rgb(10 11 18), 0 0 0 7px color-mix(in srgb, var(--color-good) 70%, transparent), 0 0 38px color-mix(in srgb, var(--color-good) 32%, transparent); animation: bpa-live 3.2s ease-in-out infinite; }
-  .bpa-card[data-tone="warn"] .bpa-face { box-shadow: 0 0 0 5px rgb(10 11 18), 0 0 0 7px color-mix(in srgb, var(--color-warn) 70%, transparent); }
-  .bpa-card[data-tone="bad"] .bpa-face { box-shadow: 0 0 0 5px rgb(10 11 18), 0 0 0 7px color-mix(in srgb, var(--color-bad) 70%, transparent); }
-  .bpa-card[data-tone="accent"] .bpa-face { box-shadow: 0 0 0 5px rgb(10 11 18), 0 0 0 7px color-mix(in srgb, var(--color-accent) 60%, transparent); animation: bpa-wait 1.6s ease-in-out infinite; }
-  @keyframes bpa-live { 50% { box-shadow: 0 0 0 5px rgb(10 11 18), 0 0 0 7px color-mix(in srgb, var(--color-good) 70%, transparent), 0 0 58px color-mix(in srgb, var(--color-good) 40%, transparent); } }
-  @keyframes bpa-wait { 50% { box-shadow: 0 0 0 5px rgb(10 11 18), 0 0 0 9px color-mix(in srgb, var(--color-accent) 30%, transparent); } }
-  .bpa-dot {
-    position: absolute;
-    right: 3px;
-    bottom: 3px;
-    width: 18px;
-    height: 18px;
-    border-radius: 999px;
-    background: var(--bp-faint);
-    box-shadow: 0 0 0 4px rgb(10 11 18);
-  }
+  .bpa-head { position: relative; z-index: 1; display: flex; align-items: flex-end; justify-content: space-between; margin-top: calc(-1 * clamp(36px, 7vh, 72px)); padding: 0 clamp(14px, 1.2vw, 22px); }
+  .bpa-dot { position: absolute; right: 1px; bottom: 1px; width: 16px; height: 16px; border-radius: 999px; background: var(--bp-faint); box-shadow: 0 0 0 3px #0e0f18; }
   .bpa-card[data-tone="good"] .bpa-dot { background: var(--color-good); }
   .bpa-card[data-tone="warn"] .bpa-dot { background: var(--color-warn); }
   .bpa-card[data-tone="bad"] .bpa-dot { background: var(--color-bad); }
-  .bpa-card[data-tone="accent"] .bpa-dot { background: var(--color-accent); }
-  .bpa-tag {
-    margin-bottom: 6px;
-    padding: 3px 10px;
-    border-radius: 999px;
-    font-size: 11px;
-    font-weight: 650;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: var(--bp-muted);
-    background: rgb(0 0 0 / 0.35);
-  }
+  .bpa-card[data-tone="accent"] .bpa-dot { background: var(--color-accent); animation: bpa-wait 1.6s ease-in-out infinite; }
+  @keyframes bpa-wait { 50% { opacity: 0.45; } }
+  .bpa-tag { display: inline-flex; align-items: center; gap: 6px; margin-bottom: 3px; font-size: 12px; font-weight: 600; color: var(--bp-faint); }
 
-  .bpa-body { position: relative; z-index: 1; display: flex; min-width: 0; flex-direction: column; gap: 10px; padding: 10px 18px 18px; }
-  .bpa-name {
-    overflow: hidden;
-    font-size: clamp(22px, 2vw, 30px);
-    font-weight: 800;
-    line-height: 1.16;
-    letter-spacing: -0.03em;
-    color: #fff;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    /* Room above and below for an emoji, which stands taller than the letters:
-       at a line height of 1 the box it is cut to sliced them flat. The margin
-       takes the room back, so the layout is where it was. */
-    padding-block: 0.1em;
-    margin-block: -0.1em;
-  }
-  .bpa-line { margin-top: -6px; font-size: 13px; color: var(--bp-muted); }
-  .bpa-line b { font-weight: 650; color: #fff; }
+  .bpa-body { position: relative; z-index: 1; display: flex; min-width: 0; flex: 1 1 auto; flex-direction: column; gap: 4px; padding: 8px clamp(14px, 1.2vw, 22px) clamp(12px, 1.2vw, 20px); }
+  .bpa-name { overflow: hidden; font-size: clamp(20px, min(2vw, 3.6vh), 38px); font-weight: 750; line-height: 1.16; letter-spacing: -0.025em; text-overflow: ellipsis; white-space: nowrap; padding-block: 0.1em; margin-block: -0.1em; }
+  .bpa-card.is-open .bpa-name { font-size: clamp(26px, 2.6vw, 46px); }
+  .bpa-line { font-size: clamp(13px, 0.86vw, 15.5px); color: var(--bp-muted); }
+  .bpa-line b { font-weight: 650; color: var(--color-ink); }
   .bpa-card[data-tone="good"] .bpa-line b { color: var(--color-good); }
   .bpa-card[data-tone="warn"] .bpa-line b { color: var(--color-warn); }
   .bpa-card[data-tone="bad"] .bpa-line b { color: var(--color-bad); }
-  .bpa-chips { display: flex; min-height: 0; flex-wrap: wrap; gap: 6px; }
-  .bpa-chips:empty { display: none; }
-  .bpa-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    padding: 3px 10px;
-    border-radius: 999px;
-    font-size: 11.5px;
-    color: var(--bp-muted);
-    background: rgb(255 255 255 / 0.06);
-  }
-  .bpa-chip.is-mood { color: #fff; background: color-mix(in srgb, var(--color-accent) 30%, transparent); text-transform: capitalize; }
+  .bpa-mood { text-transform: capitalize; color: var(--bp-lit); }
 
-  .bpa-nums { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
-  .bpa-nums div { display: flex; flex-direction: column; padding: 8px 11px; border-radius: 14px; background: rgb(0 0 0 / 0.22); }
-  .bpa-nums b { font-size: 22px; font-weight: 800; line-height: 1.1; letter-spacing: -0.02em; color: #fff; }
-  .bpa-nums span { font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--bp-faint); }
+  /* At the foot of the card, however tall it has been given. */
+  .bpa-nums { display: flex; align-items: flex-end; gap: clamp(12px, 1.2vw, 24px); margin-top: auto; padding-top: 10px; }
+  .bpa-nums > div:not(.bpa-week) { display: flex; flex-direction: column; }
+  .bpa-nums b { font-size: clamp(20px, min(1.9vw, 3.4vh), 36px); font-weight: 750; line-height: 1.1; letter-spacing: -0.02em; }
+  .bpa-nums > div > span { font-size: 12px; color: var(--bp-faint); }
 
   /* The week, a column a day, today lit. Grows in from the baseline one after another. */
-  .bpa-week { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; height: 58px; }
-  .bpa-col { display: flex; min-height: 0; flex-direction: column; align-items: center; justify-content: flex-end; gap: 4px; }
+  .bpa-week { display: grid; flex: 1 1 0; min-width: 84px; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; height: clamp(44px, 6.4vh, 72px); margin-left: auto; max-width: 240px; }
+  .bpa-col { display: flex; height: 100%; min-height: 0; flex-direction: column; align-items: center; justify-content: flex-end; gap: 3px; }
   .bpa-col i {
     display: block;
     width: 100%;
-    max-width: 22px;
-    height: calc(3px + var(--f) * 38px);
-    border-radius: 6px 6px 3px 3px;
-    background: rgb(255 255 255 / 0.16);
+    height: calc(3px + var(--f) * (100% - 14px));
+    border-radius: 4px;
+    background: var(--bp-line);
     transform-origin: bottom;
-    animation: bpa-grow 0.9s var(--spring) both;
-    animation-delay: calc(300ms + var(--d) * 70ms);
+    animation: bpa-grow 0.8s var(--spring) both;
+    animation-delay: calc(240ms + var(--d) * 50ms);
   }
-  .bpa-col.is-today i { background: var(--color-accent); box-shadow: 0 0 20px color-mix(in srgb, var(--color-accent) 42%, transparent); }
+  .bpa-col.is-today i { background: var(--bp-lit); }
   .bpa-col em { font-style: normal; font-size: 10px; line-height: 1; color: var(--bp-faint); }
-  .bpa-col.is-today em { color: var(--color-accent); }
+  .bpa-col.is-today em { color: var(--bp-lit); }
   @keyframes bpa-grow { from { transform: scaleY(0); } }
 
-  .bpa-top { display: flex; min-width: 0; align-items: center; gap: 10px; }
-  .bpa-faces { display: flex; flex-shrink: 0; }
-  .bpa-mini { display: grid; margin-left: -8px; border-radius: 999px; box-shadow: 0 0 0 2px rgb(10 11 18); }
-  .bpa-mini:first-child { margin-left: 0; }
-  .bpa-top-text { min-width: 0; overflow: hidden; font-size: 12.5px; color: var(--bp-muted); text-overflow: ellipsis; white-space: nowrap; }
-  .bpa-top-text b { font-weight: 650; color: #fff; }
+  /* Grown: what can be done from here, beside it. */
+  .bpa-more { display: flex; min-width: 0; flex: 2 1 480px; flex-wrap: wrap; gap: clamp(14px, 1.6vw, 28px); padding: 16px; }
+  .bpa-view { min-width: 0; flex: 1.5 1 420px; }
+  .bpa-side { display: flex; min-width: 240px; flex: 1 1 280px; flex-direction: column; align-items: flex-start; gap: 8px; }
+  .bpa-do { display: flex; gap: 8px; margin-bottom: 4px; }
+  .bpa-moods { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 6px; }
+  :global(.bpa-moodchip) { text-transform: capitalize; }
+  .bpa-people { display: flex; width: 100%; max-width: 380px; flex-direction: column; gap: 1px; }
+  :global(.bpa-person) { gap: 10px; padding: 5px 8px; font-size: 14px; font-weight: 600; }
+  :global(.bpa-person) span { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  :global(.bpa-person) b { font-weight: 600; color: var(--bp-faint); font-variant-numeric: tabular-nums; }
+  .bpa-last { font-size: 12.5px; color: var(--bp-faint); }
+  .bpa-facts { display: flex; flex-wrap: wrap; gap: 3px 12px; margin-top: 4px; font-size: 12.5px; color: var(--bp-faint); }
+  .bpa-page { margin-top: auto; }
 
-  .bpa-btn {
-    position: relative;
-    display: inline-flex;
-    align-self: flex-start;
-    align-items: center;
-    gap: 7px;
-    height: 38px;
-    padding: 0 16px;
-    overflow: hidden;
-    border-radius: 999px;
-    font-size: 13px;
-    font-weight: 650;
-    color: #fff;
-    background: rgb(255 255 255 / 0.08);
-    box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.1);
-    transition: transform 0.25s var(--spring), background-color 0.2s ease;
-  }
-  .bpa-btn:hover:not(:disabled) { transform: translateY(-1px); background: rgb(255 255 255 / 0.14); }
-  .bpa-btn:active:not(:disabled) { transform: scale(0.95); }
-  .bpa-btn:disabled { opacity: 0.45; }
-  .bpa-btn.is-paused { background: color-mix(in srgb, var(--color-good) 32%, transparent); }
-  .bpa-more { font-size: 13px; color: var(--bp-faint); text-align: center; }
-
-  /* Rows: the same account in a line, its banner washed behind it. */
-  .bpa.is-rows .bpa-grid { grid-template-columns: minmax(0, 1fr); gap: 10px; }
-  .bpa-card.is-row { flex-direction: row; align-items: center; gap: 14px; padding: 12px 16px; border-radius: 22px; transform: none; }
-  .bpa-card.is-row .bpa-banner { position: absolute; inset: 0; height: auto; opacity: 0.32; }
-  .bpa-card.is-row .bpa-banner::after { background: linear-gradient(90deg, rgb(8 9 16 / 0.1), rgb(8 9 16 / 0.88) 55%); }
-  .bpa-card.is-row .bpa-head { margin: 0; padding: 0; }
-  .bpa-card.is-row .bpa-face { box-shadow: 0 0 0 3px rgb(10 11 18), 0 0 0 5px rgb(255 255 255 / 0.1); }
-  .bpa-card.is-row[data-tone="good"] .bpa-face { box-shadow: 0 0 0 3px rgb(10 11 18), 0 0 0 5px color-mix(in srgb, var(--color-good) 70%, transparent); animation: none; }
-  .bpa-card.is-row[data-tone="warn"] .bpa-face { box-shadow: 0 0 0 3px rgb(10 11 18), 0 0 0 5px color-mix(in srgb, var(--color-warn) 70%, transparent); }
-  .bpa-card.is-row .bpa-dot { width: 13px; height: 13px; right: 0; bottom: 0; box-shadow: 0 0 0 3px rgb(10 11 18); }
-  .bpa-card.is-row .bpa-body { flex: 1; gap: 2px; padding: 0; }
-  .bpa-card.is-row .bpa-name { font-size: 20px; }
-  .bpa-card.is-row .bpa-line { margin-top: 0; }
-  .bpa-rownums { position: relative; z-index: 1; display: flex; flex-shrink: 0; gap: 14px; }
-  .bpa-rownums div { display: flex; flex-direction: column; align-items: flex-end; }
-  .bpa-rownums b { font-size: 20px; font-weight: 800; line-height: 1.1; color: #fff; }
-  .bpa-rownums span { font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--bp-faint); }
-  .bpa-card.is-row .bpa-btn { position: relative; z-index: 1; align-self: center; width: 38px; justify-content: center; padding: 0; }
-
-  /* Three or four: smaller cards, and the week and the faces give way first. */
-  .bpa[data-n="3"] .bpa-top, .bpa[data-n="4"] .bpa-top { display: none; }
-  .bpa[data-n="4"] .bpa-week { display: none; }
-  .bpa[data-n="4"] .bpa-banner { height: 70px; }
-  @media (max-height: 820px) {
-    .bpa-week, .bpa-top { display: none; }
-  }
   @media (max-width: 720px) {
-    .bpa[data-n="2"] .bpa-grid { grid-template-columns: minmax(0, 1fr); }
+    .bpa { height: auto; }
+    .bpa-grid { flex: none; overflow: visible; }
   }
-  :global(:root[data-motion="off"]) .bpa-banner img,
-  :global(:root[data-motion="off"]) .bpa-face,
-  :global(:root[data-motion="off"]) .bpa-col i { animation: none; }
+  :global(:root[data-motion="off"]) .bpa-col i,
+  :global(:root[data-motion="off"]) .bpa-dot { animation: none; }
   :global(:root[data-motion="off"]) .bpa-card { transform: none; }
 </style>

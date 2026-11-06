@@ -1,0 +1,200 @@
+/*
+ * Big Picture's one look: what every page's tiles, rows, buttons, labels and
+ * numbers are made of, so a thing means the same wherever it is.
+ *
+ * Flat and quiet, in the colour of the room. Tiles and buttons take the tint every
+ * button in the app has (app.css, "Buttons with depth"): an even fill, with no
+ * outline, no light along an edge and no shadow at rest. Rows have no fill at all:
+ * they sit straight on the room, and the plate (focus.ts) slides under the one in
+ * hand. No frosted glass either: over a room this soft a flat tint looks the same,
+ * and a blur has to be worked out again every frame the room moves.
+ *
+ * --color-accent is the room's in here, set on the view itself (BigPicture.svelte):
+ * whoever is on stage tints everything, melting along with the background behind them.
+ */
+.bp {
+  /* Words on the accent itself: the view works out which reads on the colour the room has gone to. */
+  --bp-on: var(--color-bg);
+  --bp-muted: color-mix(in srgb, var(--color-ink) 70%, transparent);
+  --bp-faint: color-mix(in srgb, var(--color-ink) 48%, transparent);
+  --bp-line: color-mix(in srgb, var(--color-ink) 12%, transparent);
+  /* Words in the accent: lifted, as the room's colours are kept dark enough to glow. */
+  --bp-lit: color-mix(in srgb, var(--color-accent) 72%, white);
+  --bp-fill: color-mix(in srgb, var(--color-accent) 9%, rgb(255 255 255 / 0.035));
+  --bp-fill-hi: color-mix(in srgb, var(--color-accent) 20%, rgb(255 255 255 / 0.05));
+  --bp-r: 24px;
+  --bp-r-s: 16px;
+  --bp-side: clamp(16px, 2.4vw, 44px);
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
+  color: var(--color-ink);
+  color-scheme: dark;
+  background: #04050a;
+  transform-origin: 50% 45%;
+}
+.bp.is-asleep { cursor: none; }
+
+/* ── Words ───────────────────────────────────────────────────────────────── */
+.bp-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--bp-faint);
+}
+.bp-sub { font-size: clamp(13px, 0.9vw, 16px); color: var(--bp-muted); }
+/* By the width and the height both: on a short screen a huge name is a sixth of the stage. */
+.bp-name {
+  overflow: hidden;
+  font-size: clamp(30px, min(3.4vw, 6.2vh), 66px);
+  font-weight: 750;
+  /* Room above and below for an emoji, which stands taller than the letters:
+     at a line height of 1 the box it is cut to sliced them flat. The margin
+     takes the room back, so the layout is where it was. */
+  line-height: 1.16;
+  padding-block: 0.1em;
+  margin-block: -0.1em;
+  letter-spacing: -0.03em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* A figure to be read from across the room. */
+.bp-num {
+  font-size: clamp(40px, min(5vw, 9vh), 96px);
+  font-weight: 750;
+  line-height: 1.05;
+  letter-spacing: -0.04em;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Things to press ─────────────────────────────────────────────────────── */
+/* The tint itself is the depth layer in app.css; this is the shape, and how it answers. */
+.bp-btn {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 44px;
+  padding: 0 18px;
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 650;
+  white-space: nowrap;
+  color: var(--color-ink);
+  transition: transform 0.45s var(--jelly), opacity 0.2s ease, color 0.2s ease;
+}
+.bp-btn:active:not(:disabled) { transform: scale(0.93); transition-duration: 0.09s; transition-timing-function: var(--swift); }
+.bp-btn:disabled { opacity: 0.4; }
+/* What the page is there for: the accent itself, one of them at a time. */
+.bp-btn.is-go { color: var(--bp-on); background: var(--color-accent); }
+.bp-btn.is-round { width: 44px; padding: 0; }
+.bp-btn.is-small { height: 36px; padding: 0 14px; font-size: 13px; }
+.bp-btn.is-small.is-round { width: 36px; padding: 0; }
+.bp-btn.is-on { color: var(--bp-on); background: var(--color-accent); }
+
+/* A choice in a row of them: a mood, a platform. */
+.bp-chip {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 7px;
+  height: 36px;
+  padding: 0 14px;
+  border-radius: 999px;
+  font-size: 13.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--bp-muted);
+  transition: transform 0.45s var(--jelly), color 0.2s ease;
+}
+.bp-chip:hover:not(:disabled) { color: var(--color-ink); }
+.bp-chip:active:not(:disabled) { transform: scale(0.93); transition-duration: 0.09s; transition-timing-function: var(--swift); }
+.bp-chip.is-on { color: var(--bp-on); background: var(--color-accent); }
+.bp-chip:disabled:not(.is-on) { opacity: 0.45; }
+
+/* A tile: a card that can be pressed, or a thing that deserves a fill of its own. */
+.bp-tile {
+  display: flex;
+  min-width: 0;
+  border-radius: var(--bp-r);
+  text-align: left;
+  color: var(--color-ink);
+  transition: transform 0.5s var(--spring);
+}
+/* A plain panel with the tile's fill, for the ones that cannot be pressed. */
+.bp-panel { border-radius: var(--bp-r); background: var(--bp-fill); }
+.bp-tile.is-focus { transform: translateY(-3px) scale(1.012); }
+.bp-tile:active:not(:disabled) { transform: scale(0.98); transition: transform 0.09s var(--swift); }
+
+/* A row of a list: nothing behind it but the plate, when it has the focus. */
+.bp-row {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: 12px;
+  border-radius: var(--bp-r-s);
+  text-align: left;
+  color: var(--color-ink);
+  transition: transform 0.4s var(--jelly);
+}
+.bp-row:active:not(:disabled) { transform: scale(0.98); transition: transform 0.09s var(--swift); }
+
+/* A list that scrolls without a bar. The plate is cut to its edge (focus.ts). */
+.bp-scrolls {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+.bp-scrolls::-webkit-scrollbar { display: none; }
+
+/* A face with a plain tinted ring: never a hard dark one. */
+.bp-face { position: relative; display: inline-grid; flex-shrink: 0; place-items: center; border-radius: 999px; }
+.bp-face .bp-mark { position: absolute; right: -2px; bottom: -2px; z-index: 2; display: block; line-height: 0; }
+
+/* Where the focus is: a soft plate of the room's colour, on a spring, under whatever has it (focus.ts). It springs
+   by transform alone, on the graphics card: easing its width and height as well had the page styled and laid out again
+   every frame of every move, and with the accent's own easing that was nearly all a move cost the iGPU. */
+.bp-plate {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 0;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+  opacity: 0;
+  background: var(--bp-fill-hi);
+  transform-origin: 0 0;
+  transition: opacity 0.22s ease;
+  will-change: transform;
+}
+.bp-plate.is-on { opacity: 1; }
+.bp.is-asleep[data-input="pointer"] .bp-plate { opacity: 0; }
+
+/* H: what is written, and the pictures, blurred. Marked where it is drawn. */
+.bp.is-private [data-private] { filter: blur(9px); }
+.bp.is-private [data-private="soft"] { filter: blur(5px); }
+.bp.is-private [data-private="pic"] img { filter: blur(22px) saturate(1.25); }
+
+/* An empty page says so, quietly, with where to go about it. */
+.bp-empty { display: flex; height: 100%; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 24px; text-align: center; }
+.bp-empty b { font-size: clamp(22px, 2vw, 34px); font-weight: 700; letter-spacing: -0.02em; }
+.bp-empty p { font-size: 15px; color: var(--bp-muted); }
+.bp-tick {
+  display: grid;
+  width: 84px;
+  height: 84px;
+  margin-bottom: 6px;
+  place-items: center;
+  border-radius: 999px;
+  color: var(--color-bg);
+  background: var(--color-good);
+}

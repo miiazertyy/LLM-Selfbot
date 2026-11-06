@@ -1,4 +1,4 @@
-import { writable } from "svelte/store";
+import { get, writable } from "svelte/store";
 
 // "info" is not a problem: an available update, and anything else worth a
 // quiet mark rather than a warning.
@@ -42,16 +42,52 @@ export const settingsScope = writable<string>("");
  */
 export const logsFocus = writable<string>("");
 
-export const toasts = writable<{ id: number; text: string; kind: "ok" | "err" | "info" }[]>([]);
+type ToastKind = "ok" | "err" | "info";
+export const toasts = writable<{ id: number; text: string; kind: ToastKind; n: number }[]>([]);
 
 let toastId = 0;
+const toastClocks = new Map<number, { timer: number; ends: number; left: number }>();
+/** Long enough to read it, and longest for what went wrong: four seconds was not long enough for a sentence. */
+const toastLife = (text: string, kind: ToastKind) => Math.min(16000, (kind === "err" ? 8000 : 4000) + text.length * 35);
 
-export function toast(text: string, kind: "ok" | "err" | "info" = "info") {
+function runToast(id: number, ms: number) {
+  const old = toastClocks.get(id);
+  if (old) clearTimeout(old.timer);
+  toastClocks.set(id, { timer: window.setTimeout(() => dismissToast(id), ms), ends: Date.now() + ms, left: ms });
+}
+
+export function toast(text: string, kind: ToastKind = "info") {
+  // The same thing said again counts up on the one already there, rather than a tower of them.
+  const same = get(toasts).find((t) => t.text === text && t.kind === kind);
+  if (same) {
+    toasts.update((list) => list.map((t) => (t.id === same.id ? { ...t, n: t.n + 1 } : t)));
+    runToast(same.id, toastLife(text, kind));
+    return;
+  }
   const id = ++toastId;
-  toasts.update((t) => [...t, { id, text, kind }]);
-  setTimeout(() => {
-    toasts.update((t) => t.filter((x) => x.id !== id));
-  }, 4000);
+  toasts.update((t) => [...t, { id, text, kind, n: 1 }]);
+  runToast(id, toastLife(text, kind));
+}
+
+export function dismissToast(id: number) {
+  const clock = toastClocks.get(id);
+  if (clock) clearTimeout(clock.timer);
+  toastClocks.delete(id);
+  toasts.update((t) => t.filter((x) => x.id !== id));
+}
+
+/** Pointed at: it stays until the pointer leaves. */
+export function holdToast(id: number) {
+  const clock = toastClocks.get(id);
+  if (!clock) return;
+  clearTimeout(clock.timer);
+  clock.left = Math.max(0, clock.ends - Date.now());
+}
+
+export function letGoToast(id: number) {
+  const clock = toastClocks.get(id);
+  // At least a moment after the pointer leaves, however little it had left when it was pointed at.
+  if (clock) runToast(id, Math.max(1500, clock.left));
 }
 
 /**
@@ -134,7 +170,7 @@ function persisted<T>(key: string, initial: T, remote = false) {
  * Leaving Settings and coming back used to drop you on the first tab, so a
  * session of fiddling with one thing meant re-navigating to it every time.
  */
-export const settingsPath = persisted<string>("settingsPath", "discord/replies");
+export const settingsPath = persisted<string>("settingsPath", "app/services");
 
 /**
  * The mark in the corner opens the page the app is named after.
@@ -150,6 +186,14 @@ export const snowEnabled = persisted<boolean>("snow", true, true);
 
 /** A mouse wheel's notches glide rather than jump (lib/smoothscroll.ts). Settings, Appearance, Interface. */
 export const smoothScroll = persisted<boolean>("smoothScroll", true, true);
+/** The health checks put away with "Don't show again", by id. They stay listed under the rest, to bring back. */
+export const hiddenChecks = persisted<string[]>("hiddenChecks", [], true);
+/**
+ * How Memory's people are put in order and narrowed down: kept, so the list comes back the way it was left. What is
+ * typed in its search box is not: a search is for now. Read through lib/memoryview.ts, which mends anything stored by
+ * a build that knew other choices.
+ */
+export const memoryView = persisted<Record<string, unknown>>("memoryView", {}, true);
 
 /**
  * Order of the Dashboard sections, top to bottom.
@@ -175,6 +219,22 @@ export const dashOrder = persisted<string[]>("dashOrder", [
  * shows the lot until you leave the tab.
  */
 export const picturesBlur = persisted<boolean>("picturesBlur", true, true);
+
+/** What the practice LIVE shows for one persona: picked for you, one of its own pictures or videos, a file of your own
+ *  (kept with the persona, app/web/routes/livedemo_routes.py), its face, or nothing. */
+export type LiveScreenSource = { kind: "auto" | "pick" | "own" | "face" | "none"; id?: string; name?: string };
+export type LiveScreen = {
+  blur: "off" | "light" | "medium" | "strong";
+  fit: "fill" | "whole";
+  zoom: boolean;
+  sources: Record<string, LiveScreenSource>;
+};
+export const LIVE_SCREEN: LiveScreen = { blur: "medium", fit: "fill", zoom: true, sources: {} };
+/**
+ * The practice LIVE's screen (Settings, TikTok, Try a LIVE): blurred unless you say otherwise, as the Pictures tab is,
+ * since it shows the persona's own pictures; how it fits and whether it slowly zooms; and what each persona's shows.
+ */
+export const liveScreen = persisted<LiveScreen>("liveScreen", LIVE_SCREEN, true);
 
 /**
  * The persona the Personas, Pictures and Memory pages show (lib/personas): one
@@ -247,8 +307,8 @@ export function setBigPicture(on: boolean) {
   if (!on) bigPictureCovering.set(false);
   bigPicture.set(on);
 }
-/** Its soft sounds. Off until someone turns them on, then remembered. */
-export const bigPictureSound = persisted<boolean>("bigPictureSound", false, true);
+/** What it says about the bots as they work (bigpicture/sounds.ts): on until someone turns them off, then remembered. */
+export const bigPictureSound = persisted<boolean>("bigPictureSound", true, true);
 /** The app's own sounds (lib/uisound.ts): clicks, ticks and chimes. The speaker at the top right; off silences Big Picture's too. */
 export const uiSound = persisted<boolean>("uiSound", true, true);
 /** How loud the app's sounds are, 0 to 2: 1 is as they were made, the mark in the middle of the speaker's slider. */

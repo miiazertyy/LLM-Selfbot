@@ -7,12 +7,20 @@
    * The Chats tab used to show a 60-character plain snippet, and anything that
    * was not text was "[attachment]". Everything here comes from the message
    * itself; the links are Discord's own, signed, and good for a while.
+   *
+   * A shared TikTok or Instagram post, on any platform, is a card
+   * (TikTokCard, InstagramCard): its cover, caption and author, rather than a
+   * bare link.
    */
   import Icon from "./Icon.svelte";
   import UserChip from "./UserChip.svelte";
   import VoiceNote from "./VoiceNote.svelte";
   import VideoPlayer from "./VideoPlayer.svelte";
   import LottieSticker from "./LottieSticker.svelte";
+  import TikTokCard from "./TikTokCard.svelte";
+  import InstagramCard from "./InstagramCard.svelte";
+  import PostCard from "./PostCard.svelte";
+  import { instagramLinks, redditLinks, tiktokLinks, xLinks } from "../platforms";
   import { mentionNames, resolveMention, segments } from "../mentions";
   import { discordInline } from "../discordmd";
 
@@ -60,23 +68,44 @@
     }
   }
 
+  /** The TikToks in it, from its text and its previews: each a card, and not also a plain preview. */
+  const tiktoks = $derived(tiktokLinks(text, ...embeds.map((e) => e.url)));
+  /** And the Instagram posts, reels and stories, the same way. */
+  const instagrams = $derived(instagramLinks(text, ...embeds.map((e) => e.url)));
+  /** And the Reddit and X posts, which share one card between them. */
+  const reddits = $derived(redditLinks(text, ...embeds.map((e) => e.url)));
+  const xposts = $derived(xLinks(text, ...embeds.map((e) => e.url)));
+  // One with no picture, title or provider has nothing to draw: it came out as an empty grey bar under the
+  // message (a link the page gave no title for, on Snapchat, TikTok, Instagram and iMessage). The link itself is
+  // in the words above it either way.
+  const plainEmbeds = $derived(embeds.filter((e) => !tiktokLinks(e.url).length && !instagramLinks(e.url).length
+                                                    && !redditLinks(e.url).length && !xLinks(e.url).length
+                                                    && (!!e.image || !!e.title || !!e.provider)));
+
   /**
    * What an older row has instead of its message: "[attachment]", "[image]",
    * "[sticker: wave]". Only the text was stored for those, so the picture is
    * gone; saying what it was, as a chip, beats printing the brackets.
    */
   const placeholder = $derived.by(() => {
-    const m = (text || "").trim().match(/^\[(attachment|image|video|voice message|file|link|snap|call|sticker(?::\s*[^\]]+)?|\d+ attachments)\]$/i);
+    const m = (text || "").trim().match(/^\[(attachment|image|photo|video|live|unsupported|voice|voice message|file|link|snap|call|sticker(?::\s*[^\]]+)?|\d+ attachments)\]$/i);
     if (!m) return null;
-    const what = m[1].toLowerCase();
+    // TikTok's "voice" is a voice message too.
+    const what = m[1].toLowerCase() === "voice" ? "voice message" : m[1].toLowerCase();
     // Snapchat's: a Snap, and a call, which are neither pictures nor files.
     const icon = what === "snap" ? "snapchat" : what === "call" ? "volume" : what.startsWith("sticker") ? "sparkle"
       : what === "voice message" ? "mic" : what === "link" ? "external" : what === "video" ? "play" : "pictures";
+    // TikTok's shared video is its card, below: no "Sent a video" over it.
+    // TikTok's: a LIVE shared, and what only its app can show (a sticker, a voice note...), said as that.
+    if (what === "unsupported") return { icon: "tiktok", label: "Only shows in the TikTok app" };
+    if (what === "live") return { icon: "play", label: "Shared a LIVE" };
     const label = what === "snap" ? "Sent a Snap" : what === "call" ? "A call"
       : what.startsWith("sticker:") ? `Sticker: ${m[1].slice(8).trim()}`
       : /^\d/.test(what) ? `Sent ${what}` : `Sent ${/^[aeiou]/.test(what) ? "an" : "a"} ${what}`;
     return { icon, label };
   });
+  /** A shared TikTok with no words of its own ("[video]"): its card says it all. */
+  const cardOnly = $derived(tiktoks.length > 0 && /^\[(video|photo|link)\]$/i.test((text || "").trim()));
   const parts = $derived(placeholder ? [] : segments(text));
   $effect(() => {
     for (const p of parts) if (p.kind === "mention") resolveMention(p.id);
@@ -127,7 +156,9 @@
   });
 </script>
 
-{#if placeholder && onreveal}
+{#if cardOnly}
+  <!-- Nothing above the card: it is the message. -->
+{:else if placeholder && onreveal}
   <button type="button" class="mb-chip is-button" onclick={reveal} disabled={revealing}
           title="Fetch the message from Discord and show it">
     {#if revealing}<span class="mb-spin"></span>{:else}<Icon name={placeholder.icon} size={12} />{/if}
@@ -178,7 +209,23 @@
   </a>
 {/each}
 
-{#each embeds as e (e.url || e.title)}
+{#each tiktoks as u (u)}
+  <TikTokCard url={u} />
+{/each}
+
+{#each instagrams as u (u)}
+  <InstagramCard url={u} />
+{/each}
+
+{#each reddits as u (u)}
+  <PostCard url={u} platform="reddit" />
+{/each}
+
+{#each xposts as u (u)}
+  <PostCard url={u} platform="x" />
+{/each}
+
+{#each plainEmbeds as e (e.url || e.title)}
   <a class="mb-embed" href={e.url || undefined} target="_blank" rel="noopener noreferrer">
     {#if e.image}<img src={e.image} alt="" loading="lazy" referrerpolicy="no-referrer" />{/if}
     <span class="min-w-0">

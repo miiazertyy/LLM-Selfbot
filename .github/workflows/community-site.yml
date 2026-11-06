@@ -1,0 +1,96 @@
+name: "Community: site"
+
+# The catalog the app reads, on this repo's GitHub Pages: every live profile, its files, and the download stats. Every
+# hour, whenever a profile changes (the requests workflow starts it), and when its code changes. Once a day it keeps a
+# stats point on the community-data branch. Each run also keeps the community's workflows from being paused by GitHub,
+# and every six hours starts the requests sweep.
+
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "community/site/**"
+      - "community/scripts/**"
+
+permissions: {}
+
+concurrency:
+  group: community-site
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      actions: write
+      pages: read
+    outputs:
+      pages: ${{ steps.pages.outputs.on }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: community
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install what it needs
+        run: python -m pip install --require-hashes -r community/scripts/requirements.txt
+
+      - name: The data branch
+        run: python community/scripts/setup_repo.py --branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+
+      - uses: actions/checkout@v7
+        with:
+          ref: community-data
+          path: data
+
+      - name: Build the catalog
+        run: python community/scripts/build_site.py --out _site --commit --keepalive
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          COMMUNITY_DATA: data
+
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: _site
+
+      # Pages is turned on once, by hand: a workflow's own token isn't allowed to. Until it is, the catalog is still
+      # built and the stats kept, and the deploy waits with a note saying where, instead of failing every hour.
+      - name: Is Pages on?
+        id: pages
+        run: |
+          if [ "$(gh api "repos/$REPO/pages" --jq .build_type 2>/dev/null)" = "workflow" ]; then
+            echo "on=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "on=false" >> "$GITHUB_OUTPUT"
+            echo "::warning title=The catalog isn't online yet::Turn Pages on once: Settings › Pages › Build and deployment › Source: GitHub Actions."
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+
+  deploy:
+    needs: build
+    if: needs.build.outputs.pages == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

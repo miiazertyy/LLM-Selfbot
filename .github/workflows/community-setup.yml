@@ -1,0 +1,47 @@
+name: "Community: setup"
+
+# What community profiles need in this repo: their labels, and the community-data branch the profiles live on (made
+# from community/data). On its own when this file is first pushed (or changed), and from the Actions tab whenever you
+# like. What's already there is left as it is.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/community-setup.yml"
+
+permissions: {}
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      issues: write
+      pages: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: community
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Labels and the data branch
+        run: python community/scripts/setup_repo.py --labels --branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+
+      # Pages is turned on by the owner, once: a workflow's own token isn't allowed to. Said here, where it's done.
+      - name: Is Pages on?
+        run: |
+          if [ "$(gh api "repos/$REPO/pages" --jq .build_type 2>/dev/null)" != "workflow" ]; then
+            echo "::warning title=Pages is off::The catalog is published there. Settings › Pages › Build and deployment › Source: GitHub Actions."
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}

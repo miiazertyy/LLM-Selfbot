@@ -49,6 +49,10 @@
   import { play } from "../lib/uisound";
   import { domino } from "../lib/domino";
   import LookEditor from "../lib/components/LookEditor.svelte";
+  import PostTikTok from "../lib/components/PostTikTok.svelte";
+  import PostInstagram from "../lib/components/PostInstagram.svelte";
+  import PostTo from "../lib/components/PostTo.svelte";
+  import { socialsOn } from "../lib/socials";
   import Toggle from "../lib/components/Toggle.svelte";
   import { toast } from "../lib/stores";
   import { addPictures, addState, clock, describeState, describeTick, isVideoFile, lookState, VIDEO_EXTS, watchDescribe } from "../lib/pictures";
@@ -224,6 +228,17 @@
   let looksList = $state<Look[]>([]);
   let autoLook = $state<{ mode: string; look: string } | null>(null);
   let lookOpen = $state(false);
+  // A video on its way to TikTok (PostTikTok).
+  let postOpen = $state(false);
+  let postName = $state("");
+  // A picture or a video on its way to Instagram (PostInstagram), as a post, a reel or a story.
+  let igOpen = $state(false);
+  let igName = $state("");
+  let igVideo = $state(false);
+  // And one on its way to X or to Reddit (PostTo), which share a dialog.
+  let toOpen = $state(false);
+  let toName = $state("");
+  let toPlatform = $state<"reddit" | "x" | "whatsapp">("reddit");
   let lookPics = $state<Pic[]>([]);
   const lookName = (id?: string) => looksList.find((l) => l.id === id)?.name ?? "";
   async function loadLooks() {
@@ -482,6 +497,21 @@
         run: () => saveUrlAs(api.pictureUrl(p.name, p.id, who), p.name).then((w) => w && toast("Saved.", "ok")) },
       { label: "Edit description", icon: "edit", run: () => openEdit(p) },
       !p.moving && looksList.length > 0 && { label: "Filter…", icon: "palette", run: () => openLook([p]) },
+      // One of its videos, posted with a TikTok account (Settings, TikTok, Posting).
+      // Neither when that social is switched off in Settings (lib/socials.ts).
+      p.video && $socialsOn.tiktok !== false
+        && { label: "Post to TikTok…", icon: "tiktok", run: () => { postName = p.name; postOpen = true; } },
+      // Or with an Instagram account, as a post, a reel or a story (Settings, Instagram, Posting).
+      $socialsOn.instagram !== false && { label: "Post to Instagram…", icon: "instagram",
+        run: () => { igName = p.name; igVideo = !!p.video; igOpen = true; } },
+      // Or with an X account (Settings, X, Posting), or a Reddit one (Settings, Reddit, Posting).
+      $socialsOn.x !== false && { label: "Post to X…", icon: "x",
+        run: () => { toName = p.name; toPlatform = "x"; toOpen = true; } },
+      $socialsOn.reddit !== false && { label: "Post to Reddit…", icon: "reddit",
+        run: () => { toName = p.name; toPlatform = "reddit"; toOpen = true; } },
+      // Or as a WhatsApp status, which everyone who has its number sees for a day.
+      $socialsOn.whatsapp !== false && { label: "Put up as a WhatsApp status…", icon: "whatsapp",
+        run: () => { toName = p.name; toPlatform = "whatsapp"; toOpen = true; } },
       { label: selected.has(keyOf(p)) ? "Unselect" : "Select", icon: "check", run: () => toggleSelect(keyOf(p)) },
       "sep",
       { label: "Delete", icon: "trash", danger: true, run: () => removeLater([p]) },
@@ -922,6 +952,13 @@
 <!-- ── A look, for one picture or a selection ──────────────────────────── -->
 <LookEditor bind:open={lookOpen} pics={lookPics} looks={looksList} persona={who}
             onapplied={() => { clearSelection(); load(); }} />
+
+<!-- ── One of its videos, to TikTok ─────────────────────────────────────── -->
+<PostTikTok bind:open={postOpen} name={postName} persona={pid} />
+
+<!-- ── One of its pictures, to Instagram: a post, a reel or a story ─────── -->
+<PostInstagram bind:open={igOpen} name={igName} persona={pid} video={igVideo} />
+<PostTo bind:open={toOpen} platform={toPlatform} name={toName} />
 
 <!-- ── Full size ────────────────────────────────────────────────────────── -->
 <!-- Grown out of its card, with what the bot reads under it; the arrows step through the rest. -->

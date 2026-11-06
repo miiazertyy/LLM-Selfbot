@@ -172,6 +172,20 @@ async def _observe(provider: str, key: str, response) -> None:
     emit(record)
 
 
+def note(provider: str, model: str, status: int, ms: int, headers=None) -> None:
+    """A request the counted client does not see, kept the same way: a speech provider's own API (app/voice/speech.py).
+    Never the key: these go round theirs by themselves."""
+    now = time.time()
+    record = {"provider": provider, "model": model or "?", "job": JOB.get() or "other", "ok": 200 <= status < 300,
+              "limited": status == 429, "status": status, "in": 0, "out": 0, "reasoning": 0, "ms": ms, "key": "",
+              "limits": parse_limits(provider, headers or {}), "at": now, "uid": CONV.get() or ""}
+    try:
+        asyncio.get_running_loop().run_in_executor(None, save, record)
+    except RuntimeError:
+        save(record)
+    emit(record)
+
+
 # How many sockets one provider's client may hold open. The SDKs default to
 # httpx's 100, and there is one client per Groq key and per provider: with a few
 # keys set up that is several hundred sockets from this process alone. The
@@ -359,6 +373,69 @@ def summary(days: int = 7) -> dict:
         out.append(m)
     out.sort(key=lambda m: (-m["today"]["requests"], -m["last_at"]))
     return {"models": out, "today": today, "days": span}
+
+
+def keep_limits(provider: str, model: str, key: str, limits: list) -> None:
+    """What an answer said about the limits, kept without counting it as a request (app/utils/whatsleft.py)."""
+    from app.utils.db import connect_raw
+    conn = connect_raw()
+    try:
+        _ensure(conn)
+        conn.execute("INSERT OR REPLACE INTO model_limits (provider, model, key, data, at) VALUES (?, ?, ?, ?, ?)",
+                     (provider, model, key or "", json.dumps(limits), time.time()))
+        conn.commit()
+    except Exception:
+        pass
+    finally:
+        conn.close()
+
+
+def drop_other_keys(provider: str, keys: list) -> None:
+    """Limits kept under keys that are no longer set: added up with the rest, they would count a key that is gone."""
+    from app.utils.db import connect_raw
+    conn = connect_raw()
+    try:
+        _ensure(conn)
+        marks = ",".join("?" for _ in keys) or "''"
+        conn.execute(f"DELETE FROM model_limits WHERE provider = ? AND key NOT IN ({marks})", (provider, *keys))
+        conn.commit()
+    except Exception:
+        pass
+    finally:
+        conn.close()
+
+
+def limits_of(provider: str) -> dict:
+    """{model: its limits, added up across keys}, for one provider, however long ago each was last used."""
+    from app.utils.db import connect_raw
+    conn = connect_raw()
+    try:
+        _ensure(conn)
+        rows = conn.execute("SELECT model, key, data, at FROM model_limits WHERE provider = ?", (provider,)).fetchall()
+    finally:
+        conn.close()
+    held: dict = {}
+    for model, key, data, at in rows:
+        try:
+            held.setdefault(model, []).append({"key": key, "at": at, "items": json.loads(data)})
+        except ValueError:
+            pass
+    now = time.time()
+    return {model: merge_limits(entries, now) for model, entries in held.items()}
+
+
+def recent_models(provider: str, days: int = 7) -> list:
+    """The models this provider has answered with lately, the most used first."""
+    from app.utils.db import connect_raw
+    since = datetime.fromtimestamp(time.time() - days * 86400).strftime("%Y-%m-%d")
+    conn = connect_raw()
+    try:
+        _ensure(conn)
+        rows = conn.execute("SELECT model, SUM(requests) AS n FROM model_usage WHERE provider = ? AND day >= ? "
+                            "GROUP BY model ORDER BY n DESC", (provider, since)).fetchall()
+    finally:
+        conn.close()
+    return [r[0] for r in rows if r[0] and r[0] != "?"]
 
 
 def merge_limits(per_key: list, now: float) -> list:

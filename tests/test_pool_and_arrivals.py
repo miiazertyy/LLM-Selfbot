@@ -157,7 +157,7 @@ check("\"Default\" beside a blank slider is not in italics", "italic" not in bla
 check("a switch's undo comes after the switch, so the switch never moves",
       "settings-undo" in settings and ".settings-row.is-switch .settings-undo {\n  order: 2;" in css)
 check("Quiet hours, while off, lines up with the other switches",
-      'f.key === "snapchat.quiet_hours" && !value(f)' in settings)
+      'QUIET_KEYS.has(f.key) && !value(f)' in settings)
 
 print("\n== the brain ==")
 icon = read("lib/components/Icon.svelte")

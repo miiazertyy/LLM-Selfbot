@@ -191,7 +191,7 @@ export function loadPalette(url: string): Promise<RGB[] | null> {
 }
 
 /** Any CSS colour (hex, rgb(), oklch()...), as the page draws it. */
-function cssColour(value: string): RGB | null {
+export function cssColour(value: string): RGB | null {
   if (!value.trim() || typeof document === "undefined") return null;
   const c = document.createElement("canvas");
   c.width = 1;

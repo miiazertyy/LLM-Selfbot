@@ -1,0 +1,86 @@
+{
+  "_what": "What WhatsApp sends, as it sends it. Played into the runner by WHATSAPP_FAKE=1 so the whole loop runs with nothing reaching WhatsApp. The account is +447711111111; 447700900123 is a number it knows, 447733333333 is not.",
+
+  "messages": [
+    {
+      "_case": "someone it knows, two lines in a row: one thought, answered once",
+      "key": { "remoteJid": "447700900123@s.whatsapp.net", "id": "WA1", "fromMe": false },
+      "pushName": "Theo",
+      "messageTimestamp": 1793550000,
+      "message": { "conversation": "hey" }
+    },
+    {
+      "key": { "remoteJid": "447700900123@s.whatsapp.net", "id": "WA2", "fromMe": false },
+      "pushName": "Theo",
+      "messageTimestamp": 1793550002,
+      "message": { "extendedTextMessage": { "text": "are you around?" } }
+    },
+    {
+      "_case": "and a voice note on the end of it, which has no words of its own",
+      "key": { "remoteJid": "447700900123@s.whatsapp.net", "id": "WA3", "fromMe": false },
+      "pushName": "Theo",
+      "messageTimestamp": 1793550004,
+      "message": { "audioMessage": { "ptt": true, "seconds": 6, "mimetype": "audio/ogg; codecs=opus" } }
+    },
+    {
+      "_case": "a number it does not know, with accept_unknown off: nothing happens",
+      "key": { "remoteJid": "447733333333@s.whatsapp.net", "id": "WA4", "fromMe": false },
+      "pushName": "Unknown Caller",
+      "messageTimestamp": 1793550006,
+      "message": { "conversation": "hello is this the right number" }
+    },
+    {
+      "_case": "a group it is only sitting in: not named, so not its business",
+      "key": { "remoteJid": "120363045@g.us", "id": "WA5", "fromMe": false,
+               "participant": "447700900555@s.whatsapp.net" },
+      "pushName": "Sam",
+      "messageTimestamp": 1793550008,
+      "message": { "conversation": "anyone else getting this" }
+    },
+    {
+      "_case": "the same group, named: answered",
+      "key": { "remoteJid": "120363045@g.us", "id": "WA6", "fromMe": false,
+               "participant": "447700900555@s.whatsapp.net" },
+      "pushName": "Sam",
+      "messageTimestamp": 1793550010,
+      "message": { "extendedTextMessage": { "text": "Alicia what do you think" } }
+    },
+    {
+      "_case": "its own message coming back: never answered",
+      "key": { "remoteJid": "447700900123@s.whatsapp.net", "id": "WA7", "fromMe": true },
+      "messageTimestamp": 1793550012,
+      "message": { "conversation": "one of its own" }
+    },
+    {
+      "_case": "a reaction: worth knowing about, never worth answering",
+      "key": { "remoteJid": "447700900123@s.whatsapp.net", "id": "WA8", "fromMe": false },
+      "pushName": "Theo",
+      "messageTimestamp": 1793550014,
+      "message": { "reactionMessage": { "key": { "remoteJid": "447700900123@s.whatsapp.net", "id": "WA1" },
+                                        "text": "👍" } }
+    },
+    {
+      "_case": "a status somebody put up: looked at, not replied to",
+      "key": { "remoteJid": "status@broadcast", "id": "WA9", "fromMe": false,
+               "participant": "447700900123@s.whatsapp.net" },
+      "pushName": "Theo",
+      "messageTimestamp": 1793550016,
+      "message": { "imageMessage": { "caption": "at the beach", "mimetype": "image/jpeg" } }
+    }
+  ],
+
+  "calls": [
+    {
+      "_case": "a call it cannot take",
+      "id": "CALL1",
+      "from": "447700900123@s.whatsapp.net",
+      "status": "offer",
+      "isVideo": false
+    }
+  ],
+
+  "groups": [
+    { "id": "120363045@g.us", "subject": "Five a side",
+      "participants": [{ "id": "447711111111@s.whatsapp.net" }, { "id": "447700900555@s.whatsapp.net" }] }
+  ]
+}

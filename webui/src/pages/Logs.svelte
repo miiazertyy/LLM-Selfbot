@@ -32,6 +32,7 @@
   import { arriving } from "../lib/growin";
   import { openMenuAt } from "../lib/contextmenu";
   import { KINDS, foldRows, sourceInfo as sourceOf, type LogLine as Line, type LogRow as Row } from "../lib/logrows";
+  import { socialsOn, sourceOn } from "../lib/socials";
 
   let seq = 0;
   const MAX_LINES = 600;
@@ -158,7 +159,8 @@
 
   // ── What a line says ───────────────────────────────────────────────────
   /** Lines into rows (lib/logrows.ts): continuations folded into the line they belong to, rules dropped. */
-  const rows = $derived(foldRows(lines));
+  // Not the lines of a social switched off in Settings: it is shown nowhere (lib/socials.ts).
+  const rows = $derived(foldRows(lines).filter((r) => sourceOn($socialsOn, r.source)));
 
   const sources = $derived.by(() => {
     const counts = new Map<string, number>();
@@ -342,8 +344,8 @@
     <div class="lg-chart-head">
       <span class="text-[12.5px] font-semibold text-ink">The last hour</span>
       <span class="text-[11.5px] text-muted">
-        {chart.total} entr{chart.total === 1 ? "y" : "ies"}{#if chart.bad} · <span class="text-warn">{chart.bad} problem{chart.bad === 1 ? "" : "s"}</span>{/if}
-        {#if chart.busiest?.n} · busiest at {hhmm(chart.busiest.t)}{/if}
+        {chart.total} entr{chart.total === 1 ? "y" : "ies"}{#if chart.bad}{" · "}<span class="text-warn">{chart.bad} problem{chart.bad === 1 ? "" : "s"}</span>{/if}
+        {#if chart.busiest?.n}{" · "}busiest at {hhmm(chart.busiest.t)}{/if}
       </span>
       {#if minute !== null}
         <button class="lg-minute" onclick={() => (minute = null)}>

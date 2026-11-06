@@ -22,11 +22,12 @@ def _need(pid: str) -> str:
     return pid
 
 
-def _known_accounts() -> list:
-    """Every account set up, by web id, in their order: Discord's, then Snapchat's."""
+def _known_accounts(everyone: bool = False) -> list:
+    """Every account set up, by web id, in their order: Discord's, then Snapchat's. Without those of a social switched
+    off in Settings, which the panel shows nowhere, unless `everyone`."""
     try:
         from app.core import ipc
-        return list(ipc.discover_targets().keys())
+        return list((ipc.discover_targets() if everyone else ipc.shown_targets()).keys())
     except Exception:
         return []
 
@@ -51,7 +52,17 @@ def _summary(pid: str, using: dict) -> dict:
         "people": db.persona_people(pid),
         "changed": len(personas.overrides(pid)),
         "accounts": using.get(pid, []),
+        # Where it came from in the community, and what it was shared as (app/utils/community.py).
+        "community": _note(pid, "community"),
+        "shared": _note(pid, "shared"),
     }
+
+
+def _note(pid: str, key: str) -> dict | None:
+    note = personas.extra(pid, key)
+    if not note or not note.get("slug"):
+        return None
+    return {"slug": str(note["slug"]), "version": int(note.get("version") or 0)}
 
 
 def _list() -> dict:
@@ -61,6 +72,7 @@ def _list() -> dict:
         "personas": [_summary(pid, using) for pid in personas.ids()],
         "accounts": {acct: personas.persona_of(acct) for acct in accounts},
         "palette": personas.PALETTE,
+        "themes": personas.THEMES,
     }
 
 
@@ -78,7 +90,7 @@ async def create_persona(request: Request):
         _need(copy_from)
     try:
         made = await asyncio.to_thread(personas.create, str(body.get("name") or ""), str(body.get("color") or ""),
-                                       copy_from, bool(body.get("copy_memory")))
+                                       copy_from, bool(body.get("copy_memory")), str(body.get("color2") or ""))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     using = _who_uses(_known_accounts())
@@ -109,7 +121,8 @@ async def update_persona(request: Request, pid: str):
     _need(pid)
     body = await request.json()
     try:
-        await asyncio.to_thread(personas.update, pid, name=body.get("name"), color=body.get("color"))
+        await asyncio.to_thread(personas.update, pid, name=body.get("name"), color=body.get("color"),
+                                color2=body.get("color2"))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     using = _who_uses(_known_accounts())
@@ -137,7 +150,7 @@ async def delete_persona(request: Request, pid: str):
     _need(pid)
     if pid == personas.DEFAULT:
         raise HTTPException(status_code=400, detail="Default can't be deleted.")
-    accounts = _known_accounts()
+    accounts = _known_accounts(everyone=True)
     # Its accounts, as they stand now: the ones not named in the map were Default's already.
     moved = [a for a in accounts if personas.persona_of(a) == pid]
     try:

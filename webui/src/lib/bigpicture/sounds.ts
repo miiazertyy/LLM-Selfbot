@@ -1,98 +1,68 @@
 /**
- * Big Picture Mode's soft sounds, made on the spot with WebAudio: no files to
- * ship, nothing loud. Off until someone turns them on (bigPictureSound), and
- * every call is a no-op while they are off.
+ * What Big Picture says about the bots as they work, for someone across the
+ * room: a message in, a reply on its way and gone, a friend asking. Made by the
+ * app's own sounds (lib/uisound.ts), so they share one room and one volume with
+ * every button here, and the speaker at the top right silences them all. Its own
+ * switch (M, bigPictureSound) is for these alone: a press still clicks with them off.
  *
- *   arrive  a soft pluck: a message came in
- *   write   a short rising shimmer: the model started writing a reply
- *   sent    a two-note chime: a reply went out
- *   limit   a low, muted tone: a model refused (rate limited) or failed
- *   friend  a warm knock-knock: someone asked to be friends
- *   accept  a bright little arpeggio: a friend accepted, a mood switched
- *   picture a soft shutter: the bot sent one of its pictures
- *   tap     the faintest tick: a chapter picked by hand
+ *   arrive  a message came in
+ *   write   the model started writing a reply
+ *   sent    a reply went out, the swish and then a little chime
+ *   limit   a model refused (rate limited) or failed
+ *   friend  someone asked to be friends
+ *   picture the bot sent one of its pictures
+ *
+ * Never a burst: a busy minute should not sound like a slot machine. Each has a
+ * least gap of its own on top of the one the app's sounds keep.
  */
 import { get } from "svelte/store";
 import { bigPictureSound, uiSound } from "../stores";
+import { play as uiPlay } from "../uisound";
 
-let ctx: AudioContext | null = null;
-let master: GainNode | null = null;
+export type Sound = "arrive" | "write" | "sent" | "limit" | "friend" | "picture";
 
-function audio(): AudioContext | null {
-  if (!get(bigPictureSound) || !get(uiSound)) return null;
-  try {
-    if (!ctx) {
-      ctx = new AudioContext();
-      master = ctx.createGain();
-      master.gain.value = 0.18;               // quiet: a room tone, not a notification
-      master.connect(ctx.destination);
-    }
-    if (ctx.state === "suspended") void ctx.resume();
-    return ctx;
-  } catch {
-    return null;
-  }
-}
-
-/** One soft voice: a sine (or triangle) with a quick attack and a long, gentle tail. */
-function voice(freq: number, at: number, dur: number, peak: number, type: OscillatorType = "sine", glideTo?: number) {
-  const a = audio();
-  if (!a || !master) return;
-  const o = a.createOscillator();
-  const g = a.createGain();
-  o.type = type;
-  o.frequency.setValueAtTime(freq, a.currentTime + at);
-  if (glideTo) o.frequency.exponentialRampToValueAtTime(glideTo, a.currentTime + at + dur * 0.8);
-  g.gain.setValueAtTime(0.0001, a.currentTime + at);
-  g.gain.exponentialRampToValueAtTime(peak, a.currentTime + at + 0.015);
-  g.gain.exponentialRampToValueAtTime(0.0001, a.currentTime + at + dur);
-  o.connect(g).connect(master);
-  o.start(a.currentTime + at);
-  o.stop(a.currentTime + at + dur + 0.05);
-}
-
-// Never a burst: a busy minute should not sound like a slot machine.
-const last: Record<string, number> = {};
-function once(name: string, gap: number): boolean {
-  const now = performance.now();
-  if (now - (last[name] ?? 0) < gap) return false;
-  last[name] = now;
-  return true;
-}
-
-export type Sound = "arrive" | "write" | "sent" | "limit" | "friend" | "accept" | "picture" | "tap";
+const GAP: Record<Sound, number> = { arrive: 900, write: 1500, sent: 700, limit: 2500, friend: 1500, picture: 1200 };
+const last: Partial<Record<Sound, number>> = {};
 
 export function play(name: Sound): void {
   if (!get(bigPictureSound) || !get(uiSound)) return;
+  const now = performance.now();
+  if (now - (last[name] ?? -1e9) < GAP[name]) return;
+  last[name] = now;
   switch (name) {
-    case "friend":
-      if (once(name, 1500)) { voice(659, 0, 0.3, 0.3, "triangle"); voice(988, 0.14, 0.45, 0.28, "triangle"); }
-      break;
-    case "accept":
-      if (once(name, 600)) { voice(1047, 0, 0.4, 0.28); voice(1319, 0.07, 0.45, 0.26); voice(1568, 0.14, 0.7, 0.24); }
-      break;
-    case "picture":
-      if (once(name, 1200)) { voice(1760, 0, 0.06, 0.16, "triangle"); voice(1175, 0.06, 0.18, 0.14, "triangle"); }
-      break;
-    case "tap":
-      if (once(name, 120)) voice(1480, 0, 0.07, 0.1);
-      break;
     case "arrive":
-      if (once(name, 900)) { voice(880, 0, 0.35, 0.5, "triangle"); voice(1320, 0.02, 0.25, 0.18); }
+      uiPlay("receive", { level: 0.75 });
       break;
     case "write":
-      if (once(name, 1500)) voice(520, 0, 0.5, 0.22, "sine", 880);
+      uiPlay("rise", { p: 0.3, level: 0.5 });
       break;
     case "sent":
-      if (once(name, 700)) { voice(784, 0, 0.45, 0.4); voice(1175, 0.11, 0.6, 0.35); }
+      uiPlay("send", { level: 0.8 });
+      uiPlay("ok", { delay: 180, level: 0.55 });
       break;
     case "limit":
-      if (once(name, 2500)) voice(196, 0, 0.6, 0.35, "triangle", 165);
+      uiPlay("err", { level: 0.5 });
+      break;
+    case "friend":
+      uiPlay("info", { level: 0.8 });
+      break;
+    case "picture":
+      uiPlay("glint", { p: 0.7, strong: true, level: 0.7 });
       break;
   }
 }
 
-/** Turning the speaker on is itself a click, which is what a browser needs before it will play anything. */
+/**
+ * A page gone to by hand landing: a soft thup for what comes down in it, booked on
+ * the sound card's clock to go with the tiles' own delays. Not on the tour: a page
+ * turning by itself every ten seconds, for as long as this is left open, would be
+ * a clock ticking in the room.
+ */
+export function arrivals(n: number, first = 90, step = 62): void {
+  for (let i = 0; i < n; i++) uiPlay("settle", { delay: first + i * step, level: 0.55 });
+}
+
+/** Turning the switch on is itself a press, which is what a browser needs before it will play anything. */
 export function primeAudio(): void {
-  audio();
+  uiPlay("on", { level: 0.01 });
 }

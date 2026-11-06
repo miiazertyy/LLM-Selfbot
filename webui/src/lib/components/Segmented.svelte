@@ -25,6 +25,8 @@
   } = $props();
 
   const at = $derived(Math.max(0, options.findIndex((o) => o.id === value)));
+  /** Five or six, each with its icon (the platforms): in a narrow window only the icons fit, each still named. */
+  const many = $derived(options.length >= 5 && options.every((o) => !!o.icon));
   const tone = $derived(options[at]?.tone ?? "var(--color-accent)");
 
   function pick(id: string) {
@@ -45,13 +47,14 @@
   }
 </script>
 
-<div class="sg" data-sound="self" role="radiogroup" aria-label={label} tabindex="-1" onkeydown={key}
-     style="--n: {options.length}; --at: {at}; --tone: {tone}">
+<div class="sg" class:is-many={many} data-sound="self" role="radiogroup" aria-label={label} tabindex="-1"
+     onkeydown={key} style="--n: {options.length}; --at: {at}; --tone: {tone}">
   <span class="sg-pill" aria-hidden="true"></span>
   {#each options as o (o.id)}
     <button type="button" role="radio" aria-checked={value === o.id} tabindex={value === o.id ? 0 : -1}
-            class="sg-btn" class:is-on={value === o.id} onclick={() => pick(o.id)}>
-      {#if o.icon}<Icon name={o.icon} size={15} />{/if}{o.label}
+            class="sg-btn" class:is-on={value === o.id} onclick={() => pick(o.id)}
+            aria-label={many ? o.label : undefined} title={many ? o.label : undefined}>
+      {#if o.icon}<Icon name={o.icon} size={15} />{/if}<span class="sg-label">{o.label}</span>
     </button>
   {/each}
 </div>
@@ -103,6 +106,12 @@
   .sg-btn.is-on { color: var(--color-ink); }
   .sg-btn.is-on :global(svg) { color: var(--tone); transform: scale(1.12); }
   .sg-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--tone) 60%, transparent); }
+  /* Five or six platforms: their names fit no dialog at any width - on a computer "Minecraft" ran under the button
+     beside it, on a phone the row ran off the screen - so each is its mark alone, named aloud, on hover, and in the
+     card above as it is picked. Plain CSS, no query: an older phone web view draws it the same. */
+  .sg.is-many .sg-btn { min-width: 0; gap: 0; }
+  .sg.is-many .sg-label { display: none; }
+  .sg.is-many .sg-btn :global(svg) { width: 18px; height: 18px; }
 
   :global(:root[data-motion="off"]) .sg-pill,
   :global(:root[data-motion="off"]) .sg-btn,

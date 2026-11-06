@@ -18,6 +18,7 @@ import importlib.util
 import os
 import shutil
 
+from app.platforms import registry
 from app.utils import device
 
 # Everything the panel may warn about, in the order the System page lists them.
@@ -26,9 +27,18 @@ FEATURES = {
     "discord_many": "Several Discord accounts",
     "browser_login": "Signing in with a browser",
     "snapchat": "Snapchat",
+    "tiktok": "TikTok",
+    "instagram": "Instagram",
+    "x": "X (Twitter)",
+    "reddit": "Reddit",
+    "whatsapp": "WhatsApp",
+    "minecraft": "Minecraft",
+    "imessage": "iMessage",
+    "telegram": "Telegram accounts",
     "local_start": "Starting AI servers",
     "voice_messages": "Voice messages",
     "voice_calls": "Voice calls",
+    "local_voice": "Voice on this computer",
     "heic": "iPhone photos (HEIC)",
     "files_save": "Saving files",
     "files_pick": "Picking files",
@@ -98,6 +108,34 @@ def check(feature: str, name: str | None = None) -> dict | None:
             return {"why": "Needs a computer. Paste a token instead."}
         return None
 
+    if feature == "minecraft":
+        # Node and mindcraft-ce beside the app, playing in a world of its own: no browser, but a computer.
+        if phone:
+            return {"why": "Minecraft needs a computer."}
+        return None
+    if feature == "telegram":
+        # Telethon is Python, like Discord's library: no browser, no Node, so a phone runs it as well.
+        return None
+    if feature == "whatsapp":
+        # Node beside the app, speaking WhatsApp's own protocol: no browser, but a computer to run it on.
+        if phone:
+            return {"why": "WhatsApp needs a computer to run on."}
+        return None
+    if feature == "imessage":
+        # Node beside the app, reading through BlueBubbles on a Mac: no browser, but a computer to run it on.
+        if phone:
+            return {"why": "iMessage needs a computer to run on, and a Mac running BlueBubbles."}
+        return None
+    if feature in registry.FEEDS:
+        # Driven through Chrome by Node, as Snapchat is.
+        label = registry.name_of(feature)
+        if phone:
+            return {"why": f"{label} needs a computer."}
+        if name in ("linux-arm64", "linux-arm") and (pretend or not _chromium()):
+            return {"why": "Needs Chromium. Chrome has no ARM Linux build.", "tag": "Needs Chromium",
+                    "fix": {"command": "sudo apt install chromium"}}
+        return None
+
     if feature == "snapchat":
         if phone:
             return {"why": "Snapchat needs a computer."}
@@ -129,6 +167,12 @@ def check(feature: str, name: str | None = None) -> dict | None:
                     "fix": {"command": "pip install davey pynacl"}}
         return None
 
+    if feature == "local_voice":
+        # Hearing and speaking with no server (app/voice/onboard.py): its engine has no build for phones.
+        if phone:
+            return {"why": "Needs a computer."}
+        return None
+
     if feature == "heic":
         # An iPhone turns its photos into JPEGs as they are picked, so the
         # missing library only matters where HEIC files arrive as they are.
@@ -144,8 +188,9 @@ def check(feature: str, name: str | None = None) -> dict | None:
         return None
 
     if feature == "files_pick":
-        # iOS's web view brings up its own picker; Android's does nothing.
-        if name == "android":
+        # iOS's web view brings up its own picker. Android's does nothing unless the app gives it one, which it says it
+        # has when it does (mobile/src/llmselfbot/webchrome.py).
+        if name == "android" and not os.environ.get("LLMSELFBOT_FILE_PICKER"):
             return {"why": "Can't pick files in the Android app yet. Use a computer."}
         return None
 

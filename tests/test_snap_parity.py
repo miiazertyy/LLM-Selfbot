@@ -337,7 +337,7 @@ bsrc = src("app/platforms/snapchat_bridge.py")
 check("the chance of leaving a message unanswered, as on Discord", '(load_config().get("bot") or {}).get("ignore_chance")' in bsrc
       and 'reason="left unanswered on purpose (the ignore chance)"' in bsrc)
 check("the typing dots, from Snapchat's chat list", 'msg.get("kind") == "typing"' in bsrc and '_emit_chat({"t": "typing", "uid": str(msg["chat"])})' in bsrc)
-check("nudges run beside the bot's own loop", "_nudge_loop()]" in bsrc)
+check("nudges run beside the bot's own loop", "_nudge_loop(), _runner_watch()]" in bsrc)
 check("accepting friend requests waits as Discord's does", '("accept_delay_min", "SNAP_ACCEPT_DELAY_MIN")' in bsrc)
 
 print("\n== Snapchat's runner ==")
@@ -358,24 +358,125 @@ check("the accepter of its own waits, and presses Accept before any Add",
       and "|| visible.find((b) => {" in bot)
 
 print("\n== the panel ==")
-bp = src("webui/src/lib/bigpicture/BigPicture.svelte")
-check("Big Picture's recent conversations: every account's", "api.chatArchive(12, id)" in bp and "if (seq !== recentSeq) return;" in bp)
+bp = src("webui/src/lib/bigpicture/world.svelte.ts")
+check("Big Picture's recent conversations: every account's", "api.chatArchive(PEOPLE_PER_ACCOUNT, a.id)" in bp and "if (seq !== this.peopleSeq" in bp)
 check("its account details and friend requests: Snapchat's too", 'a.state === "running" ? api.accountDetails(a.id)' in bp
-      and 'const targets = accts.filter((a) => a.state === "running");' in bp)
-check("and its friend requests say whose account they are on", "accounts.length > 1);" in src("webui/src/lib/bigpicture/BPFriends.svelte"))
+      and 'const targets = this.accounts.filter((a) => a.state === "running");' in bp)
+check("and its friend requests say whose account they are on", "accounts.length > 1);" in src("webui/src/lib/bigpicture/BPInbox.svelte"))
 for rel in ("webui/src/lib/components/StatDetail.svelte", "webui/src/lib/accounts/AccountCard.svelte", "webui/src/lib/dashboard/WidgetBody.svelte"):
     s = src(rel)
     check(f"names clickable for Snapchat people too: {rel.rsplit('/', 1)[-1]}", "<UserChip id={t.id} name={t.name} />" in s
           and 'platform === "discord"}<UserChip' not in s and '{#if t.platform === "discord"}' not in s)
 chip = src("webui/src/lib/components/UserChip.svelte")
-check("a Snapchat person's card says Snapchat, not a chat id", 'silhouette={person?.platform === "snapchat"}' in chip
-      and '<Icon name="snapchat" size={10} /> Snapchat' in chip)
+check("a Snapchat person's card says Snapchat, not a chat id (a TikTok one's, TikTok)",
+      'silhouette={platformOf(person?.platform).silhouette}' in chip
+      and '<Icon name={platformOf(person.platform).icon} size={10} /> {platformOf(person.platform).name}' in chip)
 mem = src("webui/src/pages/Memory.svelte")
-check("the Memory page marks Snapchat people", 'silhouette={u.platform === "snapchat"}' in mem and ".mem-snap {" in mem)
+check("the Memory page marks Snapchat people (and TikTok and Instagram ones)",
+      'silhouette={platformOf(u.platform).silhouette}' in mem and ".mem-snap {" in mem
+      and '<span class="mem-snap is-tiktok" title="TikTok">' in mem
+      and '<span class="mem-snap is-insta" title="Instagram">' in mem)
 chats = src("webui/src/pages/Chats.svelte")
-check("a Snapchat friend request on the Chats tab", "silhouette={isSnap} />" in chats and "wants to be friends" in chats
-      and '`${isSnap ? "Snapchat" : "Discord"} refused that`' in chats)
+check("a Snapchat friend request on the Chats tab", "silhouette={plat.silhouette} />" in chats and "wants to be friends" in chats
+      and '`${plat.name} refused that`' in chats)
 check("the account card in the quiet hours", '"Quiet hours, replies wait"' in src("webui/src/lib/accounts/condition.ts"))
+
+# ── And Instagram, the fourth, everywhere the other three are ────────────────
+print("\n== Instagram, everywhere the others are ==")
+from app.utils import snappeople as _sp  # noqa: E402
+from app.core import ipc as _ipc  # noqa: E402
+from app.utils import chatlog as _cl  # noqa: E402
+from app.utils import db as _db2  # noqa: E402
+
+check("its people are named and pictured the same way",
+      _sp.platform_of_user("ig_ana-s") == "instagram" and _sp._TABLES["instagram"] == "instagram"
+      and _sp._dir("instagram").name == "instagram_people")
+check("its pictures are served by the same route as TikTok's",
+      "/api/chats/web-picture/" in open(ROOT / "app" / "utils" / "snappeople.py", encoding="utf-8").read())
+check("its own place in the chat log, its own tables, its own ignore list",
+      _cl.log_account("insta") == 3001 and "instagram" in _db2.WEB_TABLES
+      and _ipc.platform_of("insta") == "instagram")
+_plat = src("webui/src/lib/platforms.ts")
+check("one platform table answers for all of them",
+      all(f'id: "{k}"' in _plat for k in ("discord", "snapchat", "tiktok", "instagram", "x", "reddit")))
+# The same checklist for the two newest, which is how X was found to be missing from half of it.
+for who, bits in (("x", ("webui/src/lib/components/MessageBody.svelte", "webui/src/lib/logrows.ts",
+                         "webui/src/lib/components/StatDetail.svelte", "webui/src/lib/settingsmap.ts",
+                         "webui/src/lib/accounts/condition.ts", "webui/src/pages/Accounts.svelte",
+                         "webui/src/pages/Pictures.svelte", "app/web/routes/x_routes.py")),
+                  ("reddit", ("webui/src/lib/components/MessageBody.svelte", "webui/src/lib/logrows.ts",
+                              "webui/src/lib/components/StatDetail.svelte", "webui/src/lib/settingsmap.ts",
+                              "webui/src/lib/accounts/condition.ts", "webui/src/pages/Accounts.svelte",
+                              "webui/src/pages/Pictures.svelte", "app/web/routes/reddit_routes.py"))):
+    # A place made from the panel's one table of platforms names none of them itself.
+    missing = [b.rsplit("/", 1)[-1] for b in bits if who not in src(b) and "PLATFORM_IDS" not in src(b)]
+    check(f"{who} is named everywhere a platform has to be", not missing, ", ".join(missing))
+for rel, want in (("webui/src/pages/Chats.svelte", "instaPerson"),
+                  ("webui/src/pages/Pictures.svelte", "PostInstagram"),
+                  ("webui/src/lib/components/MessageBody.svelte", "InstagramCard"),
+                  ("webui/src/lib/components/ChatTools.svelte", "TheirPosts"),
+                  ("webui/src/lib/dashboard/WidgetBody.svelte", "instagram"),
+                  ("webui/src/lib/components/StatDetail.svelte", "PLATFORM_IDS.map("),
+                  ("webui/src/lib/settingsmap.ts", 'id: "instagram"'),
+                  ("webui/src/lib/accounts/condition.ts", "instagram"),
+                  ("webui/src/lib/logrows.ts", "instagram"),
+                  ("webui/src/pages/Accounts.svelte", 'openAdd("instagram")')):
+    check(f"it is listed in {rel.rsplit('/', 1)[-1]}", want in src(rel))
+for rel, want in (("app/web/routes/stats_routes.py", "message_log_instagram"),
+                  ("app/web/routes/status_routes.py", 'f"identity_{m.group(1)}"'),
+                  ("app/web/routes/chat_routes.py", "instagram"),
+                  ("app/web/supervisor.py", "_count_instagram_accounts"),
+                  ("app/cli.py", "_run_instagram_role"),
+                  ("app/tray.py", "registry.IDS"),
+                  ("app/telegram_bot/telegram_controller.py", "NUM_INSTA_ACCOUNTS"),
+                  ("app/telegram_bot/commands.py", "Instagram")):
+    check(f"and in {rel.rsplit('/', 1)[-1]}", want in open(ROOT / rel, encoding="utf-8").read())
+
+
+# ── What driving the real page turned up ────────────────────────────────────
+# Snapchat for Web keeps one session per account and had moved on fifteen versions from the one the selectors were
+# written against. Both of these were found by opening the live account, not by reading its code.
+print("\n== the session another tab takes ==")
+_bot = src("app/platforms/snapchat/snapbot.js")
+_runner = src("app/platforms/snapchat/snapchat_runner.js")
+check("it knows the screen that says another tab has Snapchat",
+      "async takeSessionBack()" in _bot and "too many tabs|one tab at a time" in _bot)
+check("  and clicks it with a real mouse event, which is the only kind that screen takes",
+      "this.page.mouse.click(" in _bot.split("async takeSessionBack()")[1][:900])
+check("  in the account's own language too, as the other dialogs are",
+      "trop d.onglets" in _bot and "zu viele tabs" in _bot)
+check("it looks every pass, before anything believes the chat list is empty",
+      "await bot.takeSessionBack()" in _runner
+      and _runner.index("takeSessionBack") < _runner.index("// 0. Decline any incoming call first"))
+check("  and says so on the card, rather than looking ready while answering nobody",
+      'setState("running", "another tab had Snapchat open; taken back")' in _runner)
+# The worse half of it: the screen looked logged out, so the runner signed in again, authenticated fine, came back
+# to the same screen, and called it "Login failed. Check the credentials." - over and over, for a login that was
+# never wrong. isLogged is where every check asks, so that is where it is taken back.
+_logged = _bot.split("async isLogged()")[1].split("\n  async ")[0]
+check("isLogged takes the session back before it decides, so \"Too many tabs\" is never called logged out",
+      "await this.takeSessionBack()" in _logged
+      and _logged.index("takeSessionBack") < _logged.index("Strong positive"))
+
+print("\n== the camera that takes no picture any more ==")
+check("captureSnap says why it could not, instead of looking like a selector to tune",
+      'this.lastSnapRefusal = "no-upload";' in _bot and "capture only" in _bot)
+check("a picture can go into the chat instead, which is the only way one still arrives",
+      "async sendChatPicture(" in _bot)
+check("  but only when it is allowed: a chat picture stays, a Snap is tapped once and gone",
+      "this.allowChatPicture" in _bot
+      and 'bot.allowChatPicture = process.env.SNAP_AS_CHAT_PICTURE === "true";' in _runner)
+check("  and when it is not, it says what to turn on rather than failing bare",
+      "Send pictures as chat pictures" in _bot)
+from app.web import descriptions as _desc  # noqa: E402
+
+check("the switch is off until it is asked for",
+      "as_chat_picture: false" in src("resources/config.yaml"))
+check("  described in one line, and on the Settings page",
+      0 < len(_desc.DESCRIPTIONS.get("snapchat.pictures.as_chat_picture", "")) <= 120
+      and '"snapchat.pictures.as_chat_picture"' in src("webui/src/lib/settingsmap.ts"))
+check("  and the runner is told about it",
+      '"SNAP_AS_CHAT_PICTURE"' in src("app/platforms/snapchat_bridge.py"))
 
 print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
 sys.exit(1 if FAIL else 0)

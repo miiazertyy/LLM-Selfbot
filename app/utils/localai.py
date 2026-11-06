@@ -77,6 +77,48 @@ def server_root(base_url: str) -> str:
     return url[:-3].rstrip("/") if url.endswith("/v1") else url
 
 
+# ── Hugging Face, over IPv4 ───────────────────────────────────────────────────
+# On some home connections IPv6 reaches Hugging Face's servers and is then cut during the TLS handshake (WinError 10054):
+# three tries in four on the computer this was found on, against none in 44 over IPv4 (2026-11-05). Nothing falls back by
+# itself, because the connection did open, and everything prefers IPv6. So an IPv4 address is bound as the source, which
+# makes an IPv6 address fail at once and the next be tried, as web/page.py does for the pages it reads. A new connection
+# that fails turns it the other way for the next, which is all a network with no IPv4 needs.
+_hf_over_v4 = True
+
+
+def hf_source() -> dict:
+    return {"source_address": ("0.0.0.0", 0)} if _hf_over_v4 else {}
+
+
+def hf_failed() -> None:
+    """A new connection to Hugging Face failed: the next one goes the other way."""
+    global _hf_over_v4
+    _hf_over_v4 = not _hf_over_v4
+
+
+def hf_connection(host: str, timeout: float) -> http.client.HTTPSConnection:
+    return http.client.HTTPSConnection(host, timeout=timeout, **hf_source())
+
+
+class _HFHandler(urllib.request.HTTPSHandler):
+    def do_open(self, http_class, req, **args):
+        return super().do_open(http_class, req, **args, **hf_source())
+
+
+_hf_opener = urllib.request.build_opener(_HFHandler())
+
+
+def hf_open(req, timeout: float):
+    """urlopen for a file on Hugging Face. Where it redirects to (its storage) goes the same way."""
+    try:
+        return _hf_opener.open(req, timeout=timeout)
+    except urllib.error.HTTPError:
+        raise                               # an answer: the connection was fine
+    except OSError:
+        hf_failed()
+        raise
+
+
 def _get(url: str, timeout: float = 2.0, api_key: str = ""):
     headers = {"accept": "application/json"}
     if api_key:
@@ -93,7 +135,50 @@ def _models(base_url: str, timeout: float, api_key: str = "") -> tuple:
     if not isinstance(data, dict):
         raise ValueError("That is not a model server")
     items = [m for m in (data.get("data") or []) if isinstance(m, dict)]
-    return sorted(str(m["id"]) for m in items if m.get("id")), [str(m.get("owned_by") or "") for m in items]
+    return _without_removed(base_url, sorted(str(m["id"]) for m in items if m.get("id"))), [str(m.get("owned_by") or "") for m in items]
+
+
+# Models removed a moment ago, by server and name. llama.cpp's router reads its folder as it starts and not again, so
+# until it has been started again it goes on listing a file that is gone: on the list, off it, back on it, off it for
+# good. By server, because the look round all of them reaches ones that never had it.
+_removed: dict = {}
+
+
+def _note_removed(base_url: str, model: str) -> None:
+    _removed[(server_root(normalise_base_url(base_url)), model)] = time.time()
+
+
+def _without_removed(base_url: str, models: list) -> list:
+    if not _removed:
+        return models
+    root, now = server_root(normalise_base_url(base_url)), time.time()
+    gone = set()
+    for (where, name), at in list(_removed.items()):
+        if where != root:
+            continue
+        # The server has let go of it, or it has been long enough: from here on, one by that name is a real one.
+        if name not in models or now - at > 120:
+            _removed.pop((where, name), None)
+        else:
+            gone.add(name)
+    return [m for m in models if m not in gone]
+
+
+# How many restarts of a local server are under way: for that long, not answering is not news.
+_restarts = 0
+_restarts_lock = threading.Lock()
+# One at a time: a second would stop the server the first has just started.
+_restart_one = threading.Lock()
+
+
+def _count_restart(by: int) -> None:
+    global _restarts
+    with _restarts_lock:
+        _restarts += by
+
+
+def restarting() -> bool:
+    return _restarts > 0
 
 
 def list_models(base_url: str, timeout: float = 4.0, api_key: str = "") -> list:
@@ -486,7 +571,13 @@ def _plan_file(model: str, base_url: str) -> dict:
     else:
         picks, why = localfix.choices(files, mach)
         if not picks:
-            return {"ok": False, "reason": f"No size of {repo} fits this computer: {why}."}
+            # Named, so it can be typed in: something that does fit, a smaller copy of it by someone else included.
+            try:
+                alt = next(iter(localfix.alternatives(repo, mach)), None)
+            except Exception:
+                alt = None
+            fits = f" {alt['repo']}:{alt['tag']} fits ({alt['size'] / _GB:.1f} GB)." if alt else ""
+            return {"ok": False, "reason": f"No size of {repo} fits this computer: {why}.{fits}"}
         pick = picks[0]
     return {"ok": True, "model": f"{repo}:{pick['tag']}", "repo": repo, "pick": pick, "vision": vision,
             "total": int(pick["size"]) + extra, "warning": warning}
@@ -598,18 +689,19 @@ def source_of(model: str) -> tuple:
 
 def file_model_path(model: str, base_url: str = "") -> str:
     """The file of a model llama.cpp runs: in the app's folder (loose, or in a folder of its own with its vision part),
-    else wherever its router says it is. "" when not found."""
-    if not model or any(c in model for c in "/\\:") or model.startswith("."):
+    else wherever its router says it is, else whatever in the app's folder has its name. "" when not found."""
+    if not model or model.startswith("."):
         return ""
     folder = app_models_dir()
-    loose = folder / f"{model}.gguf"
-    if loose.is_file():
-        return str(loose)
-    own = folder / model
-    if own.is_dir():
-        main = [f for f in own.glob("*.gguf") if not re.search(r"mmproj|projector", f.name, re.I)]
-        if main:
-            return str(max(main, key=lambda f: f.stat().st_size))
+    if not any(c in model for c in "/\\:"):
+        loose = folder / f"{model}.gguf"
+        if loose.is_file():
+            return str(loose)
+        own = folder / model
+        if own.is_dir():
+            main = [f for f in own.glob("*.gguf") if not re.search(r"mmproj|projector", f.name, re.I)]
+            if main:
+                return str(max(main, key=lambda f: f.stat().st_size))
     if base_url:
         try:
             data = _get(normalise_base_url(base_url) + "/models", timeout=2.0)
@@ -620,7 +712,7 @@ def file_model_path(model: str, base_url: str = "") -> str:
                         return str(args[args.index("--model") + 1])
         except Exception:
             pass
-    return ""
+    return _search_dirs([str(folder)], model)
 
 
 def file_sizes() -> dict:
@@ -665,7 +757,7 @@ def _fetch_resuming(url: str, part, expected: int, label: str, bus, base_done: i
         if done:
             headers["range"] = f"bytes={done}-"
         try:
-            with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=60) as r:
+            with hf_open(urllib.request.Request(url, headers=headers), timeout=60) as r:
                 if done and r.status != 206:
                     # Asked to carry on, it sent the whole file instead: start the file over.
                     done = 0
@@ -750,17 +842,19 @@ def _running_llama() -> list:
 
 def _restart_llama(base_url: str) -> dict:
     """llama.cpp started again the app's way, on the app's models folder."""
-    from app.utils.procs import quiet_kwargs
-    for pid in _running_llama():
+    return restart_server("llamacpp", base_url)
+
+
+def _restart_llama_soon(base_url: str) -> None:
+    """That, behind whatever asked for it. Counted before this returns, so the panel's next look already knows."""
+    def run():
         try:
-            subprocess.run(["taskkill", "/PID", str(pid), "/F", "/T"], capture_output=True, timeout=15,
-                           **quiet_kwargs())
-        except Exception:
-            pass
-    deadline = time.time() + 10
-    while time.time() < deadline and probe(base_url, timeout=0.8)["ok"]:
-        time.sleep(0.4)
-    return start_server("llamacpp", base_url)
+            _restart_llama(base_url)
+        finally:
+            _count_restart(-1)
+
+    _count_restart(1)
+    threading.Thread(target=run, daemon=True, name="llama-restart").start()
 
 
 def delete_file_model(model: str, base_url: str) -> dict:
@@ -777,8 +871,9 @@ def delete_file_model(model: str, base_url: str) -> dict:
         p.unlink(missing_ok=True)
     if own.is_dir():
         shutil.rmtree(own, ignore_errors=True)
+    _note_removed(base_url, model)
     _models_changed()
-    threading.Thread(target=_restart_llama, args=(base_url,), daemon=True, name="llama-restart").start()
+    _restart_llama_soon(base_url)
     try:
         from app.web.logbus import bus
         bus.append("local", f"Removed {model}")
@@ -1077,45 +1172,266 @@ def context_length(config: dict | None = None) -> int:
     return settings(config)["context_length"]
 
 
-def _running_serves(server_id: str) -> list:
-    """PIDs of the server processes to stop for a restart: Ollama's `serve`, not its tray app."""
-    if sys.platform != "win32" or server_id != "ollama":
-        return []
+def _pids(script: str) -> list:
+    """Process ids out of a PowerShell one-liner. Windows only."""
+    from app.utils.procs import quiet_kwargs
     try:
-        from app.utils.procs import quiet_kwargs
-        out = subprocess.run(
-            ["powershell", "-NoProfile", "-Command",
-             "Get-CimInstance Win32_Process -Filter \"Name='ollama.exe'\" | "
-             "Where-Object { $_.CommandLine -match ' serve' } | ForEach-Object { $_.ProcessId }"],
-            capture_output=True, text=True, timeout=20, **quiet_kwargs())
+        out = subprocess.run(["powershell", "-NoProfile", "-Command", script], capture_output=True, text=True,
+                             timeout=20, **quiet_kwargs())
         return [int(x) for x in out.stdout.split() if x.strip().isdigit()]
     except Exception:
         return []
 
 
+def _running_serves(server_id: str) -> list:
+    """PIDs of the server's processes to stop for a restart: Ollama's `serve`, not its tray app; `llama serve`; and for
+    the rest, whatever is running from the program the app would start it with."""
+    if sys.platform != "win32":
+        pattern = {"ollama": "ollama serve", "llamacpp": "llama(-server| serve)", "localai": "local-ai"}.get(server_id)
+        if not pattern:
+            return []
+        from app.utils.procs import quiet_kwargs
+        try:
+            out = subprocess.run(["pgrep", "-f", pattern], capture_output=True, text=True, timeout=10, **quiet_kwargs())
+            return [int(x) for x in out.stdout.split() if x.strip().isdigit()]
+        except Exception:
+            return []
+    if server_id == "llamacpp":
+        return _running_llama()
+    if server_id == "ollama":
+        return _pids("Get-CimInstance Win32_Process -Filter \"Name='ollama.exe'\" | "
+                     "Where-Object { $_.CommandLine -match ' serve' } | ForEach-Object { $_.ProcessId }")
+    exe = installed(server_id)
+    if not exe:
+        return []
+    needle = exe.replace("'", "''")
+    return _pids(f"Get-CimInstance Win32_Process | Where-Object {{ $_.ExecutablePath -eq '{needle}' }} | "
+                 "ForEach-Object { $_.ProcessId }")
+
+
+def _end_process(pid: int, force: bool = True) -> None:
+    from app.utils.procs import quiet_kwargs
+    try:
+        if sys.platform == "win32":
+            subprocess.run(["taskkill", "/PID", str(pid), "/T"] + (["/F"] if force else []), capture_output=True,
+                           timeout=15, **quiet_kwargs())
+        else:
+            os.kill(pid, 9 if force else 15)
+    except Exception:
+        pass
+
+
+def _wait_until_quiet(base_url: str, seconds: float) -> bool:
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        if not probe(base_url, timeout=0.8)["ok"]:
+            return True
+        time.sleep(0.4)
+    return False
+
+
+def _stop_server(server_id: str, base_url: str) -> None:
+    from app.utils.procs import quiet_kwargs
+    entry = known(server_id)
+    if server_id == "lmstudio":
+        # Its window stays open and only its server stops: `lms` is the one way it has of being asked.
+        exe = installed(server_id)
+        if exe:
+            try:
+                subprocess.run([exe, "server", "stop"], capture_output=True, timeout=30, **quiet_kwargs())
+            except Exception:
+                pass
+        _wait_until_quiet(base_url, 10)
+        return
+    pids = _running_serves(server_id)
+    # An app has a window someone may be in the middle of something in: asked to close, and only then told.
+    if entry and entry["start"] == "app":
+        for pid in pids:
+            _end_process(pid, force=False)
+        if _wait_until_quiet(base_url, 6):
+            return
+    for pid in pids:
+        _end_process(pid)
+    _wait_until_quiet(base_url, 10)
+
+
 def restart_server(server_id: str = "", base_url: str = "") -> dict:
-    """Stop Ollama's server and start it again the app's way (hidden, with the
-    context length above). For a server that was started some other way with
-    too small a window. Blocking: call it on a thread."""
+    """Stop a local server and start it again the app's way (hidden, with the context length above): a new context
+    length, a model folder read afresh, or one that has wedged. Blocking: call it on a thread."""
     base_url = normalise_base_url(base_url or DEFAULT_ROOT)
     server_id = server_id or server_for(base_url)
-    if server_id != "ollama":
-        return {"ok": False, "reason": "Only Ollama can be restarted from here."}
-    from app.utils.procs import quiet_kwargs
-    for pid in _running_serves(server_id):
+    entry = known(server_id)
+    name = entry["name"] if entry else "That server"
+    if not entry or not entry["start"]:
+        return {"ok": False, "server": server_id, "name": name, "manual": True,
+                "reason": f"{name} runs with settings only you know, so restart it yourself."}
+    if not installed(server_id):
+        # Answering, and not from anywhere the app knows of: there is nothing here to stop or start it with.
+        return {"ok": False, "server": server_id, "name": name, "manual": True,
+                "reason": f"{name} was started some other way, so restart it yourself."}
+    _count_restart(1)
+    try:
+        with _restart_one:
+            _stop_server(server_id, base_url)
+            result = start_server(server_id, base_url)
+    finally:
+        _count_restart(-1)
+    if result.get("already"):
+        result["came_back"] = True
+        result["reason"] = (("Ollama came straight back on its own, probably from its tray app, so the new context "
+                             "length could not be applied. Quit Ollama from the tray, then start it here.")
+                            if server_id == "ollama" else f"{name} came straight back on its own.")
+    return result
+
+
+def restart_all(base_url: str = "") -> dict:
+    """Every local server that is running, started again, and the one the app is set to use even if it is not. Each
+    is told apart in what comes back, and `said` is all of it in a sentence. Blocking: call it on a thread."""
+    chosen = server_for(normalise_base_url(base_url or DEFAULT_ROOT))
+    found = detect()
+    targets = [s for s in found if s["running"] or s["locked"] or (s["id"] == chosen and s["can_start"])]
+    if not targets:
+        return {"ok": False, "results": [], "said": "No local server is running, and none can be started from here.",
+                "reason": "No local server is running, and none can be started from here."}
+    results = []
+    for s in targets:
+        r = restart_server(s["id"], s["base_url"])
+        results.append({"id": s["id"], "name": s["name"], "ok": bool(r.get("ok")), "manual": bool(r.get("manual")),
+                        "came_back": bool(r.get("came_back")), "reason": str(r.get("reason") or "")})
+    done = [r["name"] for r in results if r["ok"] and not r["came_back"]]
+    left = [r for r in results if not r["ok"] or r["came_back"]]
+    def listed(names: list) -> str:
+        return names[0] if len(names) == 1 else f"{', '.join(names[:-1])} and {names[-1]}"
+    said = f"Restarted {listed(done)}." if done else ""
+    for r in left:
+        said = f"{said} {r['reason'] or (r['name'] + ' could not be restarted.')}".strip()
+    return {"ok": bool(done) and not left, "results": results, "said": said, "reason": said}
+
+
+# ── The folder, and a model file brought in by hand ───────────────────────────
+
+def models_folder(base_url: str = "") -> str:
+    """Where the server in use keeps its model files, whether it has any yet or not. The app's own folder for llama.cpp,
+    for a server whose folder cannot be found, and for one that has none."""
+    server = server_for(normalise_base_url(base_url)) if base_url else ""
+    home = os.path.expanduser("~")
+    places: list = []
+    if server == "ollama":
+        places = [os.environ.get("OLLAMA_MODELS") or "", os.path.join(home, ".ollama", "models")]
+    elif server == "lmstudio":
+        places = _lmstudio_dirs()
+    elif server == "jan":
+        places = _jan_dirs()
+    elif server == "gpt4all":
+        places = [_gpt4all_dir()]
+    elif server not in ("llamacpp", ""):
+        places = _hf_cache_dirs()
+    for place in places:
+        if place and os.path.isdir(place):
+            return place
+    return str(app_models_dir())
+
+
+IMPORT_ROOM = 200 * 1024 * 1024         # left free on the disk, after a file brought in
+
+
+def import_problem(name: str, size: int, base_url: str = "") -> str:
+    """Why a file cannot be brought in, before any of it is copied, which can take minutes. "" when it can."""
+    if not re.fullmatch(r"[^\\/:*?\"<>|]{1,200}\.gguf", name or "", re.I) or name.startswith("."):
+        return f"{name or 'That file'} is not a model file. Models end in .gguf."
+    if server_for(normalise_base_url(base_url)) not in ("ollama", "lmstudio") and (app_models_dir() / name).exists():
+        return f"{name[:-5]} is already in the models folder."
+    try:
+        free = shutil.disk_usage(app_models_dir()).free
+    except OSError:
+        return ""
+    if size and size + IMPORT_ROOM > free:
+        return f"Not enough room: it is {size / 1e9:.1f} GB, and there is {free / 1e9:.1f} GB free."
+    return ""
+
+
+def finish_import(part, name: str, base_url: str = "") -> dict:
+    """A model file now on the disk as `part`, checked and put where the server in use reads from. `part` is gone
+    afterwards, either way. Blocking: call it on a thread."""
+    from pathlib import Path
+
+    from app.utils import localfix
+    part = Path(part)
+    try:
+        info = localfix.gguf_info(part)
+        if info is None:
+            return {"ok": False, "reason": f"{name} is not a model file this can read."}
+        # The same words the Models tab uses for a helper it downloaded by mistake: a file that is not a model alone.
+        kind = localfix.helper_kind(info)
+        if kind:
+            return {"ok": False, "reason": f"{name} is {localfix.what(kind)}, not a model on its own."}
+        stem = name[:-5]
+        server = server_for(normalise_base_url(base_url))
+        if server == "ollama" and installed("ollama"):
+            return _import_to_ollama(part, stem, base_url)
+        note = ""
+        if server == "lmstudio":
+            home = next((d for d in _lmstudio_dirs() if d and os.path.isdir(d)), "")
+            if home:
+                dest = Path(home) / "imported" / stem / f"{stem}.gguf"
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(part), str(dest))
+                _models_changed()
+                return {"ok": True, "model": stem, "path": str(dest), "note": "LM Studio finds it on its My Models page."}
+        # One part of a split model goes in a folder with the rest of them, named for the model: the one way llama.cpp
+        # keeps them together. A file on its own is a file in the folder.
+        whole = re.sub(r"-\d{5}-of-\d{5}$", "", stem) if int(info.get("split.count") or 1) > 1 else ""
+        dest = app_models_dir() / whole / name if whole else app_models_dir() / name
+        if dest.exists():
+            return {"ok": False, "reason": f"{stem} is already in the models folder."}
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(part, dest)
+        _models_changed()
+        if server == "llamacpp" and installed("llamacpp"):
+            # It lists its folder as it starts, so a new one there has it started again.
+            _restart_llama_soon(base_url)
+        elif server != "llamacpp":
+            note = f"It is in the app's models folder. {server_name(server) or 'This server'} keeps its own."
         try:
-            subprocess.run(["taskkill", "/PID", str(pid), "/F", "/T"], capture_output=True,
-                           timeout=15, **quiet_kwargs())
+            from app.web.logbus import bus
+            bus.append("local", f"Added {whole or stem}")
         except Exception:
             pass
-    deadline = time.time() + 10
-    while time.time() < deadline and probe(base_url, timeout=0.8)["ok"]:
-        time.sleep(0.4)
-    result = start_server(server_id, base_url)
-    if result.get("already"):
-        result["reason"] = ("Ollama came straight back on its own, probably from its tray app, so the new "
-                            "context length could not be applied. Quit Ollama from the tray, then start it here.")
-    return result
+        return {"ok": True, "model": whole or stem, "path": str(dest), "note": note}
+    finally:
+        try:
+            part.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def _import_to_ollama(part, stem: str, base_url: str) -> dict:
+    """Ollama keeps its models its own way, so it is asked to make one from the file: `ollama create`, with a Modelfile
+    that says FROM it. It takes its own copy, so the file can go afterwards."""
+    from app.utils.procs import quiet_kwargs
+    model = re.sub(r"[^a-z0-9._-]+", "-", stem.lower()).strip("-.") or "imported"
+    # By a name beside the Modelfile: it tells a GGUF by its extension, and a path with a space in it wants quoting.
+    named = part.with_name(part.stem + ".gguf")
+    modelfile = part.with_suffix(".Modelfile")
+    try:
+        os.replace(part, named)
+        modelfile.write_text(f"FROM ./{named.name}\n", encoding="utf-8")
+        env = dict(os.environ, OLLAMA_HOST=server_root(base_url).split("://", 1)[-1])
+        done = subprocess.run([installed("ollama"), "create", model, "-f", modelfile.name], capture_output=True, text=True,
+                              timeout=3600, env=env, cwd=str(part.parent), **quiet_kwargs())
+        if done.returncode != 0:
+            said = (done.stderr or done.stdout or "").strip().splitlines()
+            return {"ok": False, "reason": f"Ollama would not take it: {said[-1] if said else done.returncode}"}
+    except Exception as e:
+        return {"ok": False, "reason": f"Ollama would not take it: {e}"}
+    finally:
+        for left in (modelfile, named):
+            try:
+                left.unlink(missing_ok=True)
+            except OSError:
+                pass
+    _models_changed()
+    return {"ok": True, "model": model, "path": "", "note": ""}
 
 
 def _set_start_error(reason: str):
@@ -1324,6 +1640,7 @@ def delete_model(model: str, base_url: str) -> dict:
                 else f"Ollama would not remove it ({e.code})."}
     except Exception as e:
         return {"ok": False, "reason": f"Could not reach Ollama: {e}"}
+    _note_removed(base_url, model)
     _models_changed()
     try:
         from app.web.logbus import bus
@@ -1453,6 +1770,10 @@ def model_file(model: str, base_url: str) -> str:
     if _looks_like_path(name):
         path = os.path.expanduser(name)
         return path if os.path.exists(path) else ""
+    if server == "llamacpp":
+        found = file_model_path(name, base_url)
+        if found:
+            return found
     if server == "lmstudio":
         return _search_dirs(_lmstudio_dirs(), name)
     if server == "jan":

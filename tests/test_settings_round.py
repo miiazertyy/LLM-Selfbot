@@ -145,7 +145,7 @@ check("a test message proves they fit", "api.telegramTest()" in panel)
 check("every command, grouped and searchable, copied with a click", "copyText(`/${c.name}`" in panel and "Find a command" in panel)
 check("the controller's state, and a start or restart", 'service(info?.state === "stopped" ? "start" : "restart")' in panel)
 check("its alerts: errors, crashes, and silent ones",
-      all(k in smap.split('id: "telegram"')[1][:900] for k in ("telegram_error_notifications", "telegram_crash_alerts", "telegram_quiet")))
+      all(k in smap.split('panel: "telegram",')[1][:900] for k in ("telegram_error_notifications", "telegram_crash_alerts", "telegram_quiet")))
 check("which have plain names", schema["notifications.telegram_crash_alerts"]["label"] == "Crash alerts"
       and schema["notifications.telegram_quiet"]["label"] == "Silent alerts")
 

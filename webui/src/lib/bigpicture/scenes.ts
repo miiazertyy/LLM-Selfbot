@@ -1,15 +1,32 @@
 /**
- * What Big Picture's scenes about the rest of the app need worked out, as
- * plain functions of plain data so they run under Node in
- * tests/bigpicture_director.mjs.
+ * What Big Picture's pages need worked out, as plain functions of plain data so
+ * they run under Node in tests/bigpicture_director.mjs.
  *
+ *   PAGE           what each tab is called, and its icon
  *   personaLines   who the bot is, from the opening of its instructions
  *   personaName    the name it is told it has, when the persona says one
  *   sentPictures   which of its own pictures a sent message carried
  *   untilText      "in 4 min" for a friend request the account will take by itself
- *   chapterOrder   the chapters for the rail under the stage, each once
+ *   ago, agoShort  how long since something, for a sentence or for a tight row
+ *   lastDay        the last 24 hours in the order they happened, this hour last
+ *   trend          "+20%" against the same stretch before it
+ *   mergePeople    everyone every account talks to, once each
+ *   runsOf         where a run of messages from one side ends
+ *   compact        a big number short: "12k", "1.2M"
  */
-import type { Scene } from "./director";
+import type { Page } from "./director";
+
+/** What each tab is called, and its icon. */
+export const PAGE: Record<Page, { label: string; icon: string }> = {
+  now: { label: "Now", icon: "bigpicture" },
+  people: { label: "People", icon: "memory" },
+  accounts: { label: "Accounts", icon: "accounts" },
+  today: { label: "Today", icon: "stats" },
+  persona: { label: "Persona", icon: "persona" },
+  pictures: { label: "Pictures", icon: "pictures" },
+  minecraft: { label: "Minecraft", icon: "minecraft" },
+  inbox: { label: "Needs you", icon: "alert" },
+};
 
 /** A placeholder left in the persona template: [NAME], [AGE], [CITY, COUNTRY]. */
 const PLACEHOLDER = /\[[A-Z][A-Z0-9 ,/&'()+-]{1,60}\]/;
@@ -22,7 +39,7 @@ const PLACEHOLDER = /\[[A-Z][A-Z0-9 ,/&'()+-]{1,60}\]/;
  * paragraph, before the rules start. Comment lines (#) are skipped, and so is
  * a bracketed note to whoever fills it in. A line still holding a placeholder
  * ([NAME]) has not been written yet and is left out; a persona that is all
- * placeholders has nothing to show, and the scene does not come round.
+ * placeholders has nothing to show, and the page says so.
  */
 export function personaLines(text: string, max = 7, chars = 460): string[] {
   const out: string[] = [];
@@ -97,22 +114,82 @@ export function untilText(at: number | null | undefined, now: number): string {
   return m && h < 10 ? `in ${h} h ${m} min` : `in ${h} h`;
 }
 
-/** The chapters on the rail: every scene in the cycle once, in the order it first comes round. */
-export function chapterOrder(cycle: readonly Scene[]): Scene[] {
-  const out: Scene[] = [];
-  for (const s of cycle) if (!out.includes(s)) out.push(s);
-  return out;
+/** How long since something, for a sentence: "just now", "4 min ago", "2 h ago", "3 d ago". */
+export function ago(ts: number | null | undefined, now: number): string {
+  if (!ts) return "";
+  const s = Math.max(0, now - ts);
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.round(s / 60)} min ago`;
+  if (s < 86400) return `${Math.round(s / 3600)} h ago`;
+  return `${Math.round(s / 86400)} d ago`;
 }
 
-/** What each chapter is called on the rail, and its icon. */
-export const CHAPTER: Record<Scene, { label: string; icon: string }> = {
-  memory: { label: "Memory", icon: "memory" },
-  today: { label: "Today", icon: "stats" },
-  accounts: { label: "Accounts", icon: "accounts" },
-  recent: { label: "Recent", icon: "inbox" },
-  pictures: { label: "Pictures", icon: "pictures" },
-  people: { label: "Talked to most", icon: "sparkle" },
-  persona: { label: "Persona", icon: "persona" },
-  friends: { label: "Friend requests", icon: "userPlus" },
-  health: { label: "Needs attention", icon: "alert" },
-};
+/** The same for a tight row: "now", "12s", "4m", "2h", "3d". */
+export function agoShort(ts: number | null | undefined, now: number): string {
+  if (!ts) return "";
+  const s = Math.max(0, now - ts);
+  if (s < 10) return "now";
+  if (s < 60) return `${Math.floor(s)}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h`;
+  return `${Math.floor(s / 86400)}d`;
+}
+
+/**
+ * The last 24 hours in the order they happened, this hour last. The stats give
+ * them by the hour of the day (0 to 23), as a window of one day only has one of each.
+ */
+export function lastDay(hourly: { hour: number; count: number }[], hourNow: number): { hour: number; count: number }[] {
+  const by = new Map(hourly.map((h) => [h.hour, h.count]));
+  return Array.from({ length: 24 }, (_, i) => {
+    const hour = (hourNow + 1 + i) % 24;
+    return { hour, count: by.get(hour) ?? 0 };
+  });
+}
+
+/** Against the same stretch before it: "+20%", "-5%", or nothing when there is nothing to hold it against. */
+export function trend(value: number, before: number): string {
+  if (!before) return "";
+  const p = Math.round(((value - before) / before) * 100);
+  if (!p) return "";
+  return `${p > 0 ? "+" : ""}${p}%`;
+}
+
+export type PersonLike = { id: string; target: string; name: string; last_ts?: number; messages: number };
+
+/**
+ * Everyone every account talks to, once each. Someone two accounts both talk to
+ * goes with the one that spoke to them last, which is the conversation that
+ * opens. The most recent first.
+ */
+export function mergePeople<T extends PersonLike>(lists: T[][]): T[] {
+  const by = new Map<string, T>();
+  for (const list of lists) {
+    for (const p of list) {
+      const was = by.get(p.id);
+      if (!was || (p.last_ts ?? 0) > (was.last_ts ?? 0)) by.set(p.id, p);
+    }
+  }
+  return [...by.values()].sort((a, b) => (b.last_ts ?? 0) - (a.last_ts ?? 0));
+}
+
+/**
+ * For each message, whether it is the last of a run from one side: the run's
+ * one face and one time go there. A long gap starts a new run, even from the
+ * same side, as anyone reading them would take it.
+ */
+export function runsOf(messages: { mine?: boolean; ts?: number }[], gap = 300): boolean[] {
+  return messages.map((m, i) => {
+    const next = messages[i + 1];
+    if (!next) return true;
+    return !!next.mine !== !!m.mine || (next.ts ?? 0) - (m.ts ?? 0) > gap;
+  });
+}
+
+/** A number that has to fit: "12k", "1.2M". The wheels are for what changes, not for six digits. */
+export function compact(n: number): string {
+  const a = Math.abs(n);
+  if (a >= 1e6) return `${(n / 1e6).toFixed(a >= 1e7 ? 0 : 1).replace(/\.0$/, "")}M`;
+  if (a >= 1e4) return `${Math.round(n / 1e3)}k`;
+  return String(Math.round(n));
+}

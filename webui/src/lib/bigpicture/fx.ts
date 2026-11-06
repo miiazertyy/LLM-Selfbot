@@ -143,7 +143,7 @@ export function tilt(node: HTMLElement, max = 5) {
     node.style.setProperty("--ly", `${((y + 0.5) * 100).toFixed(1)}%`);
   }
   function move(e: PointerEvent) {
-    if (still()) return;
+    if (still() || !max) return;
     ev = e;
     if (!frame) frame = requestAnimationFrame(apply);
   }
@@ -155,6 +155,11 @@ export function tilt(node: HTMLElement, max = 5) {
   node.addEventListener("pointermove", move);
   node.addEventListener("pointerleave", leave);
   return {
+    /** How far it leans now: 0 for not at all (a card grown across the page). */
+    update(next = 5) {
+      max = next;
+      if (!max) leave();
+    },
     destroy() {
       node.removeEventListener("pointermove", move);
       node.removeEventListener("pointerleave", leave);

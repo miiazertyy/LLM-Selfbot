@@ -6,8 +6,10 @@ import sys
 import tempfile
 import time
 
+from app.platforms import registry
+
 CHILD_ENV = "LLMSELFBOT_CHILD"
-ROLES = ("supervisor", "discord", "snapchat", "telegram", "updater")
+ROLES = ("supervisor", *registry.IDS, "updater")
 
 
 def ensure_std_streams():
@@ -33,7 +35,8 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--role", choices=list(ROLES), default=None,
                     help="run a single worker instead of the supervisor")
     ap.add_argument("--account", type=int, default=None,
-                    help="account index for --role discord/snapchat")
+                    help="account index for --role discord/snapchat/tiktok/instagram/x/reddit/"
+                         "whatsapp/minecraft/imessage/telegram")
     ap.add_argument("--no-web", action="store_true",
                     help="supervisor without the webui")
     ap.add_argument("--port", type=int, default=None,
@@ -60,6 +63,83 @@ def _run_discord_role(account: int):
 def _run_snapchat_role(account: int):
     os.environ["SNAP_ACCOUNT_INDEX"] = str(account)
     os.environ["LLMSELFBOT_ACCOUNT"] = f"snapchat_{account}"
+    from app.platforms.snapchat_bridge import run
+    run()
+
+
+def _run_tiktok_role(account: int):
+    # The same bridge as Snapchat's, told which platform it serves before it is imported: its file names, its
+    # runner and its settings all come from that.
+    os.environ["BRIDGE_PLATFORM"] = "tiktok"
+    os.environ["TIKTOK_ACCOUNT_INDEX"] = str(account)
+    os.environ["LLMSELFBOT_ACCOUNT"] = f"tiktok_{account}"
+    from app.platforms.snapchat_bridge import run
+    run()
+
+
+def _run_instagram_role(account: int):
+    # The same bridge again, serving Instagram: instagram_runner.js, the insta_ IPC files, the instagram: settings.
+    os.environ["BRIDGE_PLATFORM"] = "instagram"
+    os.environ["INSTAGRAM_ACCOUNT_INDEX"] = str(account)
+    os.environ["LLMSELFBOT_ACCOUNT"] = f"instagram_{account}"
+    from app.platforms.snapchat_bridge import run
+    run()
+
+
+def _run_x_role(account: int):
+    # The same bridge again, serving X: x_runner.js, the x_ IPC files, the x: settings.
+    os.environ["BRIDGE_PLATFORM"] = "x"
+    os.environ["X_ACCOUNT_INDEX"] = str(account)
+    os.environ["LLMSELFBOT_ACCOUNT"] = f"x_{account}"
+    from app.platforms.snapchat_bridge import run
+    run()
+
+
+def _run_reddit_role(account: int):
+    # And serving Reddit: reddit_runner.js, the reddit_ IPC files, the reddit: settings.
+    os.environ["BRIDGE_PLATFORM"] = "reddit"
+    os.environ["REDDIT_ACCOUNT_INDEX"] = str(account)
+    os.environ["LLMSELFBOT_ACCOUNT"] = f"reddit_{account}"
+    from app.platforms.snapchat_bridge import run
+    run()
+
+
+def _run_whatsapp_role(account: int):
+    # And serving WhatsApp: whatsapp_runner.js, the wa_ IPC files, the whatsapp: settings. No browser at all -
+    # it speaks WhatsApp's own protocol.
+    os.environ["BRIDGE_PLATFORM"] = "whatsapp"
+    os.environ["WHATSAPP_ACCOUNT_INDEX"] = str(account)
+    os.environ["LLMSELFBOT_ACCOUNT"] = f"whatsapp_{account}"
+    from app.platforms.snapchat_bridge import run
+    run()
+
+
+def _run_minecraft_role(account: int):
+    # The same bridge once more, serving Minecraft: mindcraft-ce plays, and minecraft_runner.mjs speaks for it over
+    # the mc_ IPC files, with the minecraft: settings. No browser: the bridge's browser parts stay out of its way.
+    os.environ["BRIDGE_PLATFORM"] = "minecraft"
+    os.environ["MINECRAFT_ACCOUNT_INDEX"] = str(account)
+    os.environ["LLMSELFBOT_ACCOUNT"] = f"minecraft_{account}"
+    from app.platforms.snapchat_bridge import run
+    run()
+
+
+def _run_telegram_account_role(account: int):
+    # Telegram: the persona on a Telegram account of its own, through Telethon, on the tg_ IPC files with the
+    # telegram: settings. No browser and no runner either: the client is Python, so it lives in the bridge itself.
+    os.environ["BRIDGE_PLATFORM"] = "telegram"
+    os.environ["TELEGRAM_ACCOUNT_INDEX"] = str(account)
+    os.environ["LLMSELFBOT_ACCOUNT"] = f"telegram_{account}"
+    from app.platforms.snapchat_bridge import run
+    run()
+
+
+def _run_imessage_role(account: int):
+    # And iMessage: imessage_runner.js reads and sends through a BlueBubbles Server on a Mac, over the imsg_ IPC
+    # files, with the imessage: settings. No browser either.
+    os.environ["BRIDGE_PLATFORM"] = "imessage"
+    os.environ["IMESSAGE_ACCOUNT_INDEX"] = str(account)
+    os.environ["LLMSELFBOT_ACCOUNT"] = f"imessage_{account}"
     from app.platforms.snapchat_bridge import run
     run()
 
@@ -213,8 +293,26 @@ def run(argv=None) -> bool:
             _run_discord_role(args.account or 1)
         elif args.role == "snapchat":
             _run_snapchat_role(args.account or 1)
+        elif args.role == "tiktok":
+            _run_tiktok_role(args.account or 1)
+        elif args.role == "instagram":
+            _run_instagram_role(args.account or 1)
+        elif args.role == "x":
+            _run_x_role(args.account or 1)
+        elif args.role == "reddit":
+            _run_reddit_role(args.account or 1)
+        elif args.role == "whatsapp":
+            _run_whatsapp_role(args.account or 1)
+        elif args.role == "minecraft":
+            _run_minecraft_role(args.account or 1)
+        elif args.role == "imessage":
+            _run_imessage_role(args.account or 1)
         elif args.role == "telegram":
-            _run_telegram_role()
+            # With a number it is the persona's own Telegram account; without, the bot that controls the app.
+            if args.account:
+                _run_telegram_account_role(args.account)
+            else:
+                _run_telegram_role()
         elif args.role == "updater":
             _run_updater_role()
         else:

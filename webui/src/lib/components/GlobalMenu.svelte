@@ -409,21 +409,30 @@
   }
   .gm.is-ready {
     visibility: visible;
-    animation: gm-in 0.24s var(--jelly) both;
+    animation: gm-in 0.26s cubic-bezier(0.22, 1, 0.36, 1) both;
   }
   .gm.is-leaving {
     pointer-events: none;
     animation: gm-out 0.12s var(--swift) both;
   }
+  /* It slides out from under the button it belongs to and settles, rather than popping up at you: no scaling,
+     one direction, and an easing that is quick at the start and comes to rest at the end. */
   @keyframes gm-in {
-    from { opacity: 0; transform: translateY(-5px) scale(0.9); }
+    from { opacity: 0; transform: translateY(-14px); }
+    to { opacity: 1; transform: none; }
   }
   .gm.is-up.is-ready { animation-name: gm-in-up; }
   @keyframes gm-in-up {
-    from { opacity: 0; transform: translateY(5px) scale(0.9); }
+    from { opacity: 0; transform: translateY(14px); }
+    to { opacity: 1; transform: none; }
   }
+  /* And goes back the way it came. */
   @keyframes gm-out {
-    to { opacity: 0; transform: scale(0.96); }
+    to { opacity: 0; transform: translateY(-8px); }
+  }
+  .gm.is-up.is-leaving { animation-name: gm-out-up; }
+  @keyframes gm-out-up {
+    to { opacity: 0; transform: translateY(8px); }
   }
 
   .gm-item {
@@ -441,12 +450,19 @@
     white-space: nowrap;
     transition: background-color 0.12s ease, color 0.12s ease;
   }
+  /* The rows follow it down, each a beat after the one above, so the whole thing reads as one movement. */
   .gm.is-ready .gm-item {
-    animation: gm-item-in 0.26s var(--swift) both;
-    animation-delay: calc(var(--i) * 16ms + 30ms);
+    animation: gm-item-in 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
+    animation-delay: calc(var(--i) * 14ms + 40ms);
   }
   @keyframes gm-item-in {
-    from { opacity: 0; transform: translateX(-4px); }
+    from { opacity: 0; transform: translateY(-6px); }
+    to { opacity: 1; transform: none; }
+  }
+  .gm.is-up.is-ready .gm-item { animation-name: gm-item-in-up; }
+  @keyframes gm-item-in-up {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: none; }
   }
   .gm-icon {
     display: grid;

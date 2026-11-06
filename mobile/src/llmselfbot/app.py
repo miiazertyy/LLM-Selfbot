@@ -9,10 +9,21 @@ at it. Its data lives in the app's private storage, where an update keeps it.
 Links to anywhere but the panel open in the phone's browser instead of in
 here, where there would be no way back to the panel (the panel sends the ones
 it opens itself through /api/system/open-url, which calls open_outside).
+
+The panel takes the whole screen. A plain window rather than Toga's
+MainWindow, which put a title bar over it on both phones; on an iPhone the
+panel also runs under the status bar and the home indicator (it pads itself
+by the safe areas, webui/src/app.css), where Toga kept it out and left black
+bands; and the bars that stay round it are the panel's own colour, followed
+as the theme changes.
+
+On Android the web view is also given a file picker and the microphone, which
+it does not do by itself (webchrome.py).
 """
 
 import asyncio
 import os
+import re
 import socket
 import threading
 import urllib.request
@@ -21,6 +32,8 @@ import toga
 from toga.style import Pack
 
 PORT = 8787
+# The panel's own colour before it has loaded, as the starting page's: what the bars round it are painted.
+BACKGROUND = (13, 11, 20)
 
 STARTING = """<!doctype html>
 <html><head><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -68,12 +81,87 @@ class LLMSelfbot(toga.App):
 
         self.web = toga.WebView(style=Pack(flex=1), on_navigation_starting=self.on_navigate)
         self.web.set_content(self.panel, STARTING.replace("{text}", "Starting LLMSelfbot"))
-        self.main_window = toga.MainWindow(title=self.formal_name)
+        # A plain window: a MainWindow has a title bar, which here was only a band with the app's name in it.
+        self.main_window = toga.Window(title=self.formal_name)
         self.main_window.content = self.web
         self.main_window.show()
+        self.edge_to_edge()
+        self.paint_bars(BACKGROUND)
+        self.android_chrome()
 
         threading.Thread(target=self.serve, name="panel", daemon=True).start()
         self.loop.create_task(self.wait_for_panel())
+
+    # ── The whole screen ─────────────────────────────────────────────────────
+    def edge_to_edge(self):
+        """iPhone: the panel under the status bar and the home indicator too. Toga keeps a window's content below
+        the status bar, and the web view keeps the page out of the safe areas, which showed as black bands; the page
+        pads itself by them instead (viewport-fit=cover, env(safe-area-inset-*))."""
+        if self.shell != "ios":
+            return
+        try:
+            impl = self.main_window._impl
+            container = impl.container
+
+            def layout(c):
+                c.top_inset = 0
+                impl.notify_resize(c)
+
+            container.on_native_layout = layout
+            # UIScrollViewContentInsetAdjustmentNever: the page is given the safe areas, not kept out of them.
+            self.web._impl.native.scrollView.contentInsetAdjustmentBehavior = 2
+        except Exception as exc:  # an older or newer Toga: the panel still shows, with its bands
+            print(f"[phone] Could not take the whole screen: {exc}")
+
+    def android_chrome(self):
+        """Android: a file picker and the microphone for the panel. Failing that it still runs, without them, and the
+        panel says files can't be picked (app/utils/compat.py), which is why it is told here."""
+        if self.shell != "android":
+            return
+        try:
+            from .webchrome import PanelChrome
+            self.web._impl.native.setWebChromeClient(PanelChrome(self))
+            os.environ["LLMSELFBOT_FILE_PICKER"] = "1"
+        except Exception as exc:
+            print(f"[phone] No file picker or microphone: {exc}")
+
+    def paint_bars(self, rgb):
+        """What shows round the panel (the status bar's strip, the navigation bar, the page before it loads) in the
+        panel's own colour, rather than black or a theme's purple."""
+        r, g, b = rgb
+        try:
+            if self.shell == "android":
+                from java import jclass
+                color = jclass("android.graphics.Color").rgb(r, g, b)
+                window = self._impl.native.getWindow()
+                window.setStatusBarColor(color)
+                window.setNavigationBarColor(color)
+            else:
+                from rubicon.objc import ObjCClass
+                color = ObjCClass("UIColor").colorWithRed_green_blue_alpha_(r / 255, g / 255, b / 255, 1.0)
+                self.main_window._impl.native.backgroundColor = color
+                web = self.web._impl.native
+                web.backgroundColor = color
+                web.scrollView.backgroundColor = color
+        except Exception as exc:
+            print(f"[phone] Could not colour the bars: {exc}")
+
+    async def follow_theme(self):
+        """The panel's colour, read off the page every few seconds: a theme changed in the panel recolours the bars."""
+        last = None
+        while True:
+            try:
+                value = await self.web.evaluate_javascript(
+                    "getComputedStyle(document.documentElement).backgroundColor")
+                m = re.match(r"rgba?\((\d+),\s*(\d+),\s*(\d+)", str(value or ""))
+                if m:
+                    rgb = tuple(int(x) for x in m.groups())
+                    if rgb != last:
+                        last = rgb
+                        self.paint_bars(rgb)
+            except Exception:
+                pass
+            await asyncio.sleep(3)
 
     # ── The server ───────────────────────────────────────────────────────────
     def serve(self):
@@ -102,6 +190,7 @@ class LLMSelfbot(toga.App):
                 return
             if await loop.run_in_executor(None, self.answers):
                 self.web.url = self.panel
+                self.loop.create_task(self.follow_theme())
                 return
             await asyncio.sleep(0.2)
         self.web.set_content(self.panel, STARTING.replace("{text}", "LLMSelfbot is taking too long to start."))

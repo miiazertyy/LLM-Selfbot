@@ -6,7 +6,7 @@
  * wobbling like the app's jelly as they go (sky.ts). A look is how they move:
  * how big they are, how fast they drift, how much they wobble, whether they
  * turn round the stage. Every person is given one by their id, so the same
- * person always brings the same room, and every scene has its own. Changing
+ * person always brings the same room, and every page has its own. Changing
  * look turns the dials rather than switching: one room melts into the next.
  *
  * All of them are quiet on purpose. It is a background: it sits behind glass
@@ -17,7 +17,7 @@
  *
  * Plain data and plain functions, so it runs under Node in tests/bigpicture_director.mjs.
  */
-import type { Scene } from "./director";
+import type { Page } from "./director";
 // With its extension: the tests load this file straight into Node, which does not guess one.
 import { hash } from "./palette.ts";
 
@@ -51,17 +51,16 @@ export function lookFor(seed: string): LookName {
   return LOOK_NAMES[Math.floor(hash(`${seed}#look`) * LOOK_NAMES.length) % LOOK_NAMES.length];
 }
 
-/** Each scene's own look, for the ones about no one in particular (a person's scene uses theirs). */
-export const SCENE_LOOK: Record<Scene, LookName> = {
-  memory: "silk",
+/** Each page's own look, for when it is about no one in particular (a person's page uses theirs). */
+export const PAGE_LOOK: Record<Page, LookName> = {
+  now: "silk",
+  people: "vortex",
   today: "aurora",
   accounts: "tide",
-  recent: "silk",
   pictures: "silk",
-  people: "vortex",
   persona: "nebula",
-  friends: "ember",
-  health: "ember",
+  inbox: "ember",
+  minecraft: "tide",
 };
 
 /**

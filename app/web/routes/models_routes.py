@@ -14,7 +14,8 @@ from fastapi import APIRouter, HTTPException, Request
 
 from app.utils import providers
 from app.utils.helpers import invalidate_config_cache, load_config
-from app.web.envfile import read_env, write_env
+from app.web.envfile import read_env, reload_into_process, write_env
+from app.web.routes.env_routes import _family_values, _write_family
 
 router = APIRouter(tags=["models"])
 
@@ -29,7 +30,7 @@ def _provider_rows(config: dict) -> list:
             "id": pid, "name": p["name"], "site": p["site"], "blurb": p["blurb"],
             "cost": providers.COST.get(pid, ("paid", ""))[0],
             "cost_note": providers.COST.get(pid, ("paid", ""))[1],
-            "jobs": p["jobs"], "env": p["env"], "multi": bool(p.get("multi")),
+            "jobs": p["jobs"], "env": p["env"],
             "keys": len(keys),
             "ready": providers.usable(pid, config),
             "base_url": providers.base_url(pid, config),
@@ -79,35 +80,60 @@ async def set_key(pid: str, request: Request):
     if any(c.isspace() for c in key):
         raise HTTPException(status_code=400, detail="a key has no spaces in it")
     values = read_env()
-    if p.get("multi"):
-        # Groq takes several. A new one goes in the next free numbered slot.
-        if not key:
-            raise HTTPException(status_code=400, detail="remove Groq keys under Providers, one at a time")
-        n = 1
-        while f"{p['env']}_{n}" in values and values[f"{p['env']}_{n}"]:
-            if values[f"{p['env']}_{n}"] == key:
-                return {"ok": True, "keys": len(providers.keys_for(pid))}
-            n += 1
-        values[f"{p['env']}_{n}"] = key
-    elif key:
+    keys = _family_values(values, p["env"])
+    if key in keys:
+        return {"ok": True, "keys": len(providers.keys_for(pid))}
+    if key and not keys:
         values[p["env"]] = key
     else:
-        values.pop(p["env"], None)
+        # Added behind the ones it has, or with no key at all, every one of them gone: Disconnect.
+        _write_family(values, p["env"], [*keys, key] if key else [])
     await asyncio.to_thread(write_env, values)
+    reload_into_process(values)
     providers._cache.pop(pid, None)
     return {"ok": True, "keys": len(providers.keys_for(pid))}
 
 
+def _wont_load(model: str, config: dict, detail: str) -> str:
+    """Why a model on this computer would not load, when the file says: llama.cpp's router answers only "failed to
+    load", which Try showed as "This computer answered 500." for a LoRA downloaded as the model. "" otherwise."""
+    from app.utils import localfix
+    if not localfix.load_failure(detail):
+        return ""
+    base = providers.local_settings(config)["base_url"]
+    try:
+        info = localfix.inspect(model, base)
+        if info and info["helper"]:
+            return f"The file is {localfix.what(info['kind'])}, not the model itself."
+        big = localfix.too_big(model, base)
+    except Exception:
+        return ""
+    if big:
+        return (f"It would not load: it needs about {big['need'] / localfix.GB:.1f} GB of memory, and this computer "
+                f"can give a model about {big['budget'] / localfix.GB:.1f} GB.")
+    return ""
+
+
 def _try(pid: str, model: str, config: dict) -> dict:
-    """One tiny request, to see that a model answers and how fast."""
-    url = providers.base_url(pid, config).rstrip("/") + "/chat/completions"
+    """One tiny request, to see that a model answers and how fast: with the key a reply would use, and so on to the
+    next the way a reply would."""
     if pid == "local":
-        key = providers.local_settings(config)["api_key"]
-    else:
-        keys = providers.keys_for(pid)
-        if not keys:
-            return {"ok": False, "error": "No key set."}
-        key = keys[0]
+        return _try_with(pid, model, config, providers.local_settings(config)["api_key"])
+    keys = providers.key_order(pid)
+    if not keys:
+        return {"ok": False, "error": "No key set."}
+    out = {}
+    for key in keys:
+        out = _try_with(pid, model, config, key)
+        rest = providers.key_at_fault(out.pop("status", 0))
+        if out["ok"] or not rest:
+            break
+        providers.rest_key(pid, key, rest)
+    return out
+
+
+def _try_with(pid: str, model: str, config: dict, key: str) -> dict:
+    url = providers.base_url(pid, config).rstrip("/") + "/chat/completions"
     # The same cap a reply is sent with, so a model that passes here passes there too. It was 16, which a
     # model that thinks first (gpt-oss, qwen3, deepseek-r1) spends entirely on thinking: an empty answer.
     try:
@@ -131,7 +157,9 @@ def _try(pid: str, model: str, config: dict) -> dict:
         except Exception:
             raw = ""
         error, detail = providers.http_error(pid, e.code, raw)
-        return {"ok": False, "error": error, "detail": detail}
+        if pid == "local":
+            error = _wont_load(model, config, detail) or error
+        return {"ok": False, "error": error, "detail": detail, "status": e.code}
     except Exception as e:
         slow = isinstance(e, TimeoutError) or "timed out" in str(e).lower()
         if slow and pid == "local":
@@ -292,51 +320,17 @@ def models_usage(days: int = 7):
     return usage.summary(days)
 
 
-_balances: dict = {"at": 0.0, "data": {}}
-_BALANCE_TTL = 300.0
+_left: dict = {"at": 0.0, "providers": []}
+_left_lock = asyncio.Lock()
 
 
-def _read_balances() -> dict:
-    """Account balances, where an ordinary key may ask: OpenRouter's credits (GET /key) and DeepSeek's balance
-    (GET /user/balance). Every other provider keeps usage behind the website or an admin key."""
-    out = {}
-    key = (providers.keys_for("openrouter") or [""])[0]
-    if key:
-        try:
-            d = providers._get_json("https://openrouter.ai/api/v1/key",
-                                    {"Authorization": f"Bearer {key}"}, 8.0).get("data") or {}
-            free = d.get("free_model_daily_requests") or {}
-            out["openrouter"] = {
-                "kind": "credits",
-                "used_today": d.get("usage_daily"), "used_month": d.get("usage_monthly"), "used": d.get("usage"),
-                "limit": d.get("limit"), "remaining": d.get("limit_remaining"),
-                "free_tier": bool(d.get("is_free_tier")),
-                "free_requests": {"used": free.get("used"), "limit": free.get("limit"),
-                                  "remaining": free.get("remaining")} if free else None,
-            }
-        except Exception as e:
-            out["openrouter"] = {"kind": "error", "error": f"Could not ask OpenRouter ({type(e).__name__})"}
-    key = (providers.keys_for("deepseek") or [""])[0]
-    if key:
-        try:
-            d = providers._get_json("https://api.deepseek.com/user/balance",
-                                    {"Authorization": f"Bearer {key}"}, 8.0)
-            out["deepseek"] = {
-                "kind": "balance", "available": bool(d.get("is_available")),
-                "balances": [{"currency": b.get("currency"), "total": b.get("total_balance"),
-                              "granted": b.get("granted_balance"), "topped_up": b.get("topped_up_balance")}
-                             for b in (d.get("balance_infos") or [])],
-            }
-        except Exception as e:
-            out["deepseek"] = {"kind": "error", "error": f"Could not ask DeepSeek ({type(e).__name__})"}
-    return out
-
-
-@router.get("/api/models/balances")
-async def models_balances(refresh: bool = False):
-    """Balances, asked for at most every five minutes: they change slowly and each is a request to the provider."""
-    now = time.time()
-    if refresh or now - _balances["at"] > _BALANCE_TTL:
-        _balances["data"] = await asyncio.to_thread(_read_balances)
-        _balances["at"] = now
-    return {"balances": _balances["data"], "at": _balances["at"]}
+@router.get("/api/models/left")
+async def models_left(refresh: bool = False):
+    """What is left with each provider, asked of it (app/utils/whatsleft.py): at most every five minutes unless asked
+    again by hand, and only one asking at a time, however many pages want it."""
+    from app.utils import whatsleft
+    async with _left_lock:
+        if refresh or time.time() - _left["at"] > whatsleft.ASK_EVERY:
+            _left["providers"] = await asyncio.to_thread(whatsleft.ask_all, load_config())
+            _left["at"] = time.time()
+    return {"providers": _left["providers"], "at": _left["at"]}

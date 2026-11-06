@@ -47,22 +47,36 @@ for tb in re.finditer(r'^\s{4}id: "([a-z-]+)",(.*?)(?=^\s{4}id: "[a-z-]+",|\Z)',
                           tb.group(2), re.M | re.S):
         body = sb.group(3)
         subs.append({"id": sb.group(1), "name": sb.group(2),
-                     "keys": re.findall(r'"((?:bot|snapchat|services|notifications|discord)\.[a-z0-9_.]+)"', body),
+                     "keys": re.findall(
+                         r'"((?:bot|snapchat|tiktok|instagram|x|reddit|whatsapp|minecraft|imessage|telegram'
+                         r'|services|notifications|discord)\.[a-z0-9_.]+)"', body),
                      "panel": 'panel: "' in body, "rest": "rest: true" in body})
     tabs[tb.group(1)] = subs
-owns = {"discord": ["discord"], "snapchat": ["snapchat"], "ai": ["bot"], "app": ["services", "notifications"]}
+owns = {"discord": ["discord"], "snapchat": ["snapchat"], "tiktok": ["tiktok"], "instagram": ["instagram"],
+        "x": ["x"], "reddit": ["reddit"], "whatsapp": ["whatsapp"], "minecraft": ["minecraft"],
+        "imessage": ["imessage"], "telegram": ["telegram"],
+        "ai": ["bot"], "app": ["services", "notifications"]}
 listed = {k for subs in tabs.values() for s in subs for k in s["keys"]}
 
 print("== no pointless pages ==")
 leftover = {t: [k for k in fields if k not in listed and any(k == p or k.startswith(p + ".") for p in ps)]
             for t, ps in owns.items()}
 check("a fresh install leaves nothing for any 'Everything else'", not any(leftover.values()), str(leftover))
-partners = {"discord.enabled", "snapchat.enabled"}
+partners = {"discord.enabled", "snapchat.enabled", "tiktok.enabled", "instagram.enabled", "x.enabled",
+            "reddit.enabled", "whatsapp.enabled", "minecraft.enabled", "imessage.enabled", "telegram.enabled"}
 thin = [f"{t}/{s['name']}" for t, subs in tabs.items() for s in subs
         if not s["panel"] and not s["rest"] and len([k for k in s["keys"] if k in fields and k not in partners]) < 2]
 check("no page of settings holds just one", not thin, ", ".join(thin))
-check("AI behaviour is eight pages, not ten", len([s for s in tabs["ai"] if not s["rest"]]) == 8,
+check("AI behaviour is eleven pages: one of them the videos people send, one the web, one careful mode",
+      len([s for s in tabs["ai"] if not s["rest"]]) == 11
+      and {"Videos they send", "The web", "Careful mode"} <= {s["name"] for s in tabs["ai"]},
       str([s["name"] for s in tabs["ai"]]))
+# Calls were the eleventh. They have their own models, their own voice and Try a call, so they are a tab of their
+# own now (tests/test_settings_order.py), with picking up as a page beside how it sounds.
+check("calls are a tab of their own, in two pages",
+      "Calls" not in {s["name"] for s in tabs["ai"]}
+      and [s["name"] for s in tabs["calls"] if not s["rest"]] == ["How it sounds", "Picking up"],
+      str([s["name"] for s in tabs.get("calls", [])]))
 check("Reply style and Human touches are one page", '"Reply style"' not in MAP and '"Human touches"' not in MAP
       and 'name: "How it talks"' in MAP)
 check("Snapchat's single-switch Friends page is gone", 'name: "Friends"' not in MAP)
@@ -124,6 +138,30 @@ for rel, needle in (("lib/components/ModelsPanel.svelte", "use:autowidth={{ valu
                     ("lib/components/EnvEditor.svelte", "use:autowidth={{ value: newKey }}"),
                     ("pages/Memory.svelte", "use:autowidth={{ value: newKey }}")):
     check(f"the value box in {rel.split('/')[-1]} fits its words too", needle in (W / rel).read_text(encoding="utf-8"))
+
+print("\n== nothing that should not be typed is a box to type in ==")
+# Settings draws a list of words as items, and anything else it has no control for as a box of raw JSON: "[2,7]" for how
+# long a call rings, typed by hand, until someone saw it (2026-11-05). So anything that is not words needs its own control.
+values = dict(desc.walk(cfg))
+defaults = {f["key"]: f.get("default") for f in CONFIG_SCHEMA}
+
+
+def not_words(key):
+    v = values.get(key, defaults.get(key))
+    return isinstance(v, dict) or (isinstance(v, list) and not all(isinstance(x, str) for x in v))
+
+
+bare = [k for k in fields if not_words(k) and f'"{k}"' not in PAGE]
+check("a list of numbers or a table always has a control of its own", not bare, str(bare))
+check("how long a call rings is a dial with a hand for each end", 'f.key === "bot.calls.ring_seconds"' in PAGE
+      and 'timeScale("s", { min: 0, max: 30, integer: true })' in PAGE and 'names={["At least", "At most"]}' in PAGE)
+quiet_keys = PAGE[PAGE.index("const QUIET_KEYS = new Set("):]
+quiet_keys = quiet_keys[:quiet_keys.index(");")]
+typed = [k for k in fields if k.endswith(".quiet_hours") and f'"{k}"' not in quiet_keys]
+check("quiet hours are on the clock wherever there are any", not typed, str(typed))
+check("the words for it say what it does on a call", 'off: "Picking up", goesOff: "picks up"' in PAGE)
+said = [k for k in fields if k.endswith(".quiet_hours") and re.search(r"\d-\d", desc.DESCRIPTIONS.get(k, ""))]
+check("and nothing still says to write them like 23-7", not said, str(said))
 
 print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
 sys.exit(1 if FAIL else 0)

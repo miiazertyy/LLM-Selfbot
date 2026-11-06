@@ -118,9 +118,36 @@ check("a fresh database has the column from the start", "learned_at REAL NOT NUL
 
 print("\n== the brain on the page ==")
 page = read("webui/src/pages/Memory.svelte")
-check("the brain is a button that opens what it learned last",
-      '<button type="button" class="mm-orb" class:is-learning={learning} use:chime={"land"} onclick={openBrain}' in page
-      and "const uid = latest?.user_id ?? best?.user_id;" in page)
+check("the brain is a button that spins and lands on someone at random",
+      '<button type="button" class="mm-orb" class:is-learning={learning} use:chime={"land"} onclick={spinBrain}' in page
+      and 'title={known.length ? "Open someone at random" : "Nothing remembered yet"}' in page)
+spun = page[page.index("async function spinBrain()"):page.index("// ── One person, several accounts")]
+check("  anyone in the list with something remembered, never the one already open",
+      "const known = $derived(shown.filter((u) => (u.fact_count ?? 0) > 0));" in page
+      and "anyOf(known.filter((u) => u.user_id !== selected)) ?? known[0]" in spun)
+check("  one of their facts is lit, at random", 'await bringUp(anyOf(Object.keys(detail?.facts ?? {})) ?? "");' in spun)
+check("  it spins, its ring the other way, only transform-like and it ends",
+      '{ rotate: "720deg", scale: "1" }' in spun and '{ rotate: ["0deg", "-1080deg"] }' in spun and "iterations" not in spun)
+check("  heard as it goes and as it lands", 'play("zip", { level: 0.7 });' in spun
+      and 'play("glint", { delay: moving ? SETTLED_MS : 0, strong: true });' in spun)
+check("  the page sets off once the orb has been seen to spin, and not for a press that was overtaken",
+      "moving ? new Promise((done) => setTimeout(done, SETTLED_MS)) : null" in spun
+      and "if (mine !== press || selected !== pick.user_id) return;" in spun)
+check("  with animations off it does not spin, and goes straight there", "if (moving) {" in spun)
+check("no jump: the browser's smooth scroll is one frame with Windows' animation effects off, so the page glides itself",
+      "scrollIntoView" not in page and 'import { glideInto, glideTo } from "../lib/smoothscroll";' in page)
+check("the line beside it still opens what it learned last, that fact brought into view",
+      "const uid = latest?.user_id ?? best?.user_id;" in page
+      and 'await bringUp(latest && latest.user_id === uid ? latest.key : "", true);' in page)
+check("the brain's own pick leaves the page where it is: only the list moves to them (2026-11-06)",
+      "if (!toFact) return;" in page)
+glide = read("webui/src/lib/smoothscroll.ts")
+check("the glide: asked again each frame, handing back to a wheel, a scrollbar or a key",
+      "export function glideInto(" in glide and "aimAt(m.box, el, block) - m.from) * eased" in glide
+      and "Math.abs(m.box.scrollTop - m.held) > 1.5" in glide and "into.delete(el);" in glide)
+check("  and straight there with animations off", "if (!get(motionEnabled)) {\n    for (const box of boxes) box.scrollTop = aimAt(box, el, block);" in glide)
+check("  a row in its own list leaves the page alone", "within === undefined ? boxesAround(el)" in glide
+      and 'glideInto(row, { within: row?.closest(".mm-list") ?? null });' in page)
 check("beside it, who and what, said plainly, the same click",
       "Learned {ago(latest.at)}: <b>{latest.name || \"someone\"}</b>'s {words(latest.key)}" in page
       and 'class="mm-last" onclick={openBrain}' in page)

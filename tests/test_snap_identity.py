@@ -180,9 +180,9 @@ check("with no picture, Snapchat's own empty silhouette rather than a generic gl
       "silhouette = false," in avatar and "{:else if silhouette}" in avatar and 'class="avatar-silhouette' in avatar)
 card = read("webui/src/lib/accounts/AccountCard.svelte")
 check("on its card", "{#if rt?.avatar || silhouette}" in card and "{silhouette} />" in card
-      and 'slot.platform === "snapchat" && !rt?.avatar && !!rt?.username' in card)
+      and 'platformOf(slot.platform).silhouette && !rt?.avatar && !!rt?.username' in card)
 widget = read("webui/src/lib/dashboard/AccountsWidget.svelte")
-check("and on the Dashboard", widget.count('silhouette={r.slot.platform === "snapchat" && !!r.rt?.username}') == 2)
+check("and on the Dashboard", widget.count('silhouette={platformOf(r.slot.platform).silhouette && !!r.rt?.username}') == 2)
 check("the name it shows, with its @username under it", "rt?.display_name || rt?.username" in card
       and 'rt?.username && rt.username !== name ? rt.username : ""' in card)
 

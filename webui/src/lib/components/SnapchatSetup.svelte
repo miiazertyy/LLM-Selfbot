@@ -13,6 +13,10 @@
    * sentence says where things stand, and what each running account is doing
    * right now: an account stuck on a verification screen and one answering
    * messages both used to read as simply "running".
+   *
+   * TikTok runs on the same install (the same Node packages and browser), so
+   * its Install page is this one too, in its own name and colours, with its
+   * own accounts' states (platform="tiktok").
    */
   import { onMount, untrack } from "svelte";
   import { get } from "svelte/store";
@@ -24,7 +28,7 @@
   import Button from "./Button.svelte";
   import Icon from "./Icon.svelte";
   import FootNote from "./FootNote.svelte";
-  import { SNAPCHAT_GHOST } from "../brands";
+  import { SNAPCHAT_GHOST, TIKTOK_MARK, INSTAGRAM_MARK, X_MARK, REDDIT_SNOO, WHATSAPP_MARK } from "../brands";
   import { play } from "../uisound";
   import { afterLanding, onScreen, whenShown } from "../cascade";
 
@@ -39,7 +43,25 @@
     installing: boolean;
     dir: string;
     runners?: Runner[];
+    tiktok_runners?: Runner[];
+    instagram_runners?: Runner[];
+    x_runners?: Runner[];
+    reddit_runners?: Runner[];
+    whatsapp_runners?: Runner[];
   };
+
+  let { platform = "snapchat" }:
+    { platform?: "snapchat" | "tiktok" | "instagram" | "x" | "reddit" | "whatsapp" } = $props();
+  const tt = $derived(platform === "tiktok");
+  const ig = $derived(platform === "instagram");
+  const xx = $derived(platform === "x");
+  const rd = $derived(platform === "reddit");
+  /** WhatsApp runs on these packages too, but on no browser at all: its fourth step is a linked phone. */
+  const wa = $derived(platform === "whatsapp");
+  const brand = $derived(wa ? "WhatsApp" : rd ? "Reddit" : xx ? "X" : ig ? "Instagram" : tt ? "TikTok"
+                         : "Snapchat");
+  const mark = $derived(wa ? WHATSAPP_MARK : rd ? REDDIT_SNOO : xx ? X_MARK : ig ? INSTAGRAM_MARK
+                        : tt ? TIKTOK_MARK : SNAPCHAT_GHOST);
   /** What a running account is actually doing, straight from the runner. */
   type Runner = {
     account: number | null;
@@ -54,13 +76,23 @@
     starting: "muted",
     "awaiting-verification": "warn",
     "needs-login": "warn",
+    "needs-you": "warn",
+    "logging-in": "muted",
     "logged-out": "bad",
   };
+  /** What a runner's state is, in words. A code and a check are both "needs-you", so the detail says which. */
+  function says(r: Runner): string {
+    if (r.state === "needs-you" && /code/i.test(r.detail || "")) return "Waiting for you to type a code";
+    return SAYS[r.state] ?? r.state;
+  }
+
   const SAYS: Record<string, string> = {
     ready: "Answering messages",
     starting: "Starting up",
     "awaiting-verification": "Waiting for you to verify",
     "needs-login": "Waiting for you to log in",
+    "needs-you": "Waiting for you to solve a check",
+    "logging-in": "Signing itself in",
     "logged-out": "Logged out",
   };
 
@@ -70,39 +102,54 @@
   // Every runner that has said anything. A stopped one is shown too, as what
   // it last said: "logged out" matters most right after the runner gives up,
   // which is exactly when it stops writing. Hiding stale entries hid that.
-  const live = $derived(status?.runners ?? []);
+  const live = $derived((wa ? status?.whatsapp_runners : rd ? status?.reddit_runners : xx ? status?.x_runners
+    : ig ? status?.instagram_runners : tt ? status?.tiktok_runners : status?.runners) ?? []);
 
   type Step = { name: string; what: string; done: boolean; working: boolean; shows: string };
   const steps = $derived.by((): Step[] => {
     const s = status;
     if (!s) return [];
     return [
-      { name: "Node.js", what: "Runs the browser automation.", done: !!s.node, working: false, shows: s.node ? tail(s.node) : "Not found" },
+      { name: "Node.js", what: wa ? "Runs the WhatsApp connection." : "Runs the browser automation.",
+        done: !!s.node, working: false, shows: s.node ? tail(s.node) : "Not found" },
       { name: "npm", what: "Installs the packages below.", done: !!s.npm, working: false, shows: s.npm ? tail(s.npm) : "Not found" },
       {
-        name: "Node packages", what: "Puppeteer and its stealth plugins.", done: !!s.modules_installed,
+        name: "Node packages", what: wa ? "Baileys, which speaks WhatsApp's protocol."
+          : "Puppeteer and its stealth plugins.", done: !!s.modules_installed,
         working: s.installing && !s.modules_installed,
         shows: s.modules_installed ? "Installed" : s.installing ? "Installing" : "Missing",
       },
-      {
-        name: "Browser", what: "Uses the Chrome or Edge you have, or downloads one.",
-        done: !!s.browser, working: s.installing && !s.browser,
-        shows: s.browser ? browserLabel(s) : s.installing ? "Downloading" : "Missing",
-      },
+      wa
+        ? {
+          // WhatsApp opens no browser at all, so the fourth thing it needs is the one part a person does.
+          name: "A linked phone", what: "WhatsApp links it the way it links a second device.",
+          done: live.length > 0, working: false,
+          shows: live.length ? `${live.length} linked` : "None yet",
+        }
+        : {
+          name: "Browser", what: "Uses the Chrome or Edge you have, or downloads one.",
+          done: !!s.browser, working: s.installing && !s.browser,
+          shows: s.browser ? browserLabel(s) : s.installing ? "Downloading" : "Missing",
+        },
     ];
   });
   const doneCount = $derived(steps.filter((s) => s.done).length);
-  const ready = $derived(!!status?.deps_installed && !status?.installing);
+  // WhatsApp is ready once the packages are there: the browser half of deps_installed is nothing to it.
+  const ready = $derived(wa ? (!!status?.node && !!status?.modules_installed && !status?.installing)
+                            : (!!status?.deps_installed && !status?.installing));
 
   /** The headline: where things stand, in one sentence. */
   const headline = $derived.by(() => {
     const s = status;
     if (!s) return { title: "", sub: "", tone: "muted" };
-    if (s.installing) return { title: "Installing Snapchat support", sub: "Downloading the packages. It carries on if you leave this page.", tone: "working" };
-    if (ready) return { title: "Snapchat is ready to run", sub: "Everything it needs is installed.", tone: "good" };
+    if (s.installing) return { title: `Installing ${brand} support`, sub: "Downloading the packages. It carries on if you leave this page.", tone: "working" };
+    if (ready) return { title: `${brand} is ready to run`, sub: wa ? "Everything it needs is installed. It shares the packages with the browser platforms."
+        : tt || ig || xx || rd ? "Everything it needs is installed. The other browser platforms share it." : "Everything it needs is installed.", tone: "good" };
     if (!s.node) return { title: "Node.js is missing", sub: "Install it from nodejs.org, then come back here.", tone: "bad" };
-    if (s.modules_installed && !s.browser) return { title: "The browser did not finish downloading", sub: "Repairing clears the partial download and fetches it again.", tone: "warn" };
-    return { title: "Snapchat needs installing", sub: "One click, into a folder of its own. It uses your browser if you have one.", tone: "warn" };
+    if (!wa && s.modules_installed && !s.browser) return { title: "The browser did not finish downloading", sub: "Repairing clears the partial download and fetches it again.", tone: "warn" };
+    return { title: `${brand} needs installing`,
+      sub: wa ? "One click, into a folder of its own. No browser: it speaks WhatsApp's own protocol."
+        : "One click, into a folder of its own. It uses your browser if you have one.", tone: "warn" };
   });
 
   /** The end of a long path, which is the part that says anything. */
@@ -142,7 +189,7 @@
       await api.snapInstall();
       toast("Install started. Watch the log below.", "info");
       // Downloads a browser: minutes, and nobody watches the log the whole time.
-      trackUntil("settings", "Installing Snapchat support",
+      trackUntil("settings", `Installing ${brand} support`,
                  async () => !(await api.snapStatus())?.installing, 4000);
       load();
     } catch (e: any) {
@@ -228,12 +275,24 @@
 {:else}
   <div class="sn">
     <!-- Where things stand, in one sentence, and each account's own state. -->
-    <section class="sn-hero is-{headline.tone}" class:is-complete={complete && doneCount === 4} bind:this={hero}>
-      <!-- Snapchat's logo as Snapchat draws it: a white ghost outlined in black, on its yellow. -->
+    <section class="sn-hero is-{headline.tone}" class:is-tiktok={tt} class:is-instagram={ig} class:is-x={xx} class:is-reddit={rd} class:is-whatsapp={wa} class:is-complete={complete && doneCount === 4} bind:this={hero}>
+      <!-- Snapchat's logo as Snapchat draws it: a white ghost outlined in black, on its yellow. TikTok's: its white
+           note with its cyan and pink edges, on black. Instagram's: its camera, in its own gradient. -->
       <div class="sn-ghost" aria-hidden="true">
         <span class="sn-ghost-ring"></span>
         <svg class="sn-logo" viewBox="-1 -1 26 26" width="34" height="34">
-          <path d={SNAPCHAT_GHOST} />
+          {#if ig}
+            <defs>
+              <linearGradient id="sn-ig-grad" x1="0" y1="1" x2="1" y2="0">
+                <stop offset="0%" stop-color="#feda75" />
+                <stop offset="25%" stop-color="#fa7e1e" />
+                <stop offset="55%" stop-color="#d62976" />
+                <stop offset="80%" stop-color="#962fbf" />
+                <stop offset="100%" stop-color="#4f5bd5" />
+              </linearGradient>
+            </defs>
+          {/if}
+          <path d={mark} fill-rule={ig ? "evenodd" : undefined} fill={ig ? "url(#sn-ig-grad)" : undefined} />
         </svg>
       </div>
       <div class="min-w-0 flex-1">
@@ -254,7 +313,7 @@
           <Button loading disabled>Installing</Button>
         {:else if !status.deps_installed}
           <Button onclick={install} disabled={!status.npm}>
-            {status.modules_installed ? "Repair install" : "Install Snapchat support"}
+            {status.modules_installed ? "Repair install" : `Install ${brand} support`}
           </Button>
         {:else}
           <span class="sn-ready"><Icon name="check" size={13} />Ready</span>
@@ -270,11 +329,11 @@
             <span class="sn-dot"></span>
             <div class="min-w-0 flex-1">
               <div class="sn-runner-head">
-                <b>{r.account ? `Account #${r.account}` : "Snapchat"}</b>
+                <b>{r.account ? `Account #${r.account}` : brand}</b>
                 {#if r.stale}
                   <span class="sn-chip">Not running</span><span class="sn-faint">last said</span>
                 {/if}
-                <span class="sn-state">{SAYS[r.state] ?? r.state}</span>
+                <span class="sn-state">{says(r)}</span>
                 {#if r.at}<span class="sn-faint">· {ago(r.at)}</span>{/if}
               </div>
               {#if r.detail}<p class="sn-detail">{r.detail}</p>{/if}
@@ -317,6 +376,68 @@
     {/if}
 
     <div class="sn-tips">
+      {#if ig}
+        <a class="sn-tip" href="#/accounts">
+          <Icon name="accounts" size={15} />
+          <span><b>Add it on the Accounts page.</b> Instagram keeps its login here and signs itself back in.</span>
+          <Icon name="chevron" size={12} class="sn-tip-go" />
+        </a>
+        <button type="button" class="sn-tip" onclick={() => settingsSection.set("instagram/pace")}>
+          <Icon name="clock" size={15} />
+          <span><b>Start slow.</b> Instagram is the strictest of the four about automation.</span>
+          <Icon name="chevron" size={12} class="sn-tip-go" />
+        </button>
+      {:else if tt}
+        <a class="sn-tip" href="#/accounts">
+          <Icon name="accounts" size={15} />
+          <span><b>Sign in on the Accounts page.</b> Each TikTok account signs in once, in a window of its own.</span>
+          <Icon name="chevron" size={12} class="sn-tip-go" />
+        </a>
+        <button type="button" class="sn-tip" onclick={() => settingsSection.set("tiktok/live")}>
+          <Icon name="speaker" size={15} />
+          <span><b>Co-host your LIVE.</b> It can answer viewers in the chat and out loud.</span>
+          <Icon name="chevron" size={12} class="sn-tip-go" />
+        </button>
+      {:else if wa}
+        <a class="sn-tip" href="#/accounts">
+          <Icon name="accounts" size={15} />
+          <span><b>A number is linked on the Accounts page.</b> WhatsApp gives a code you type into the phone, or
+            a QR code you scan with it. Nothing opens on this computer.</span>
+          <Icon name="chevron" size={12} class="sn-tip-go" />
+        </a>
+        <button type="button" class="sn-tip" onclick={() => settingsSection.set("whatsapp/groups")}>
+          <Icon name="chats" size={15} />
+          <span><b>In groups it waits to be named.</b> It answers its own messages out of the box; in a group it
+            says nothing until somebody uses its name.</span>
+          <Icon name="chevron" size={12} class="sn-tip-go" />
+        </button>
+      {:else if rd}
+        <a class="sn-tip" href="#/accounts">
+          <Icon name="accounts" size={15} />
+          <span><b>Sign in on the Accounts page.</b> A window opens and you sign in there, the way TikTok's does.
+            The app never sees a password.</span>
+          <Icon name="chevron" size={12} class="sn-tip-go" />
+        </a>
+        <button type="button" class="sn-tip" onclick={() => settingsSection.set("reddit/comments")}>
+          <Icon name="chats" size={15} />
+          <span><b>It only takes part where you say.</b> It answers its own inbox out of the box; commenting and
+            posting wait for a list of subreddits and a switch.</span>
+          <Icon name="chevron" size={12} class="sn-tip-go" />
+        </button>
+      {:else if xx}
+        <a class="sn-tip" href="#/accounts">
+          <Icon name="accounts" size={15} />
+          <span><b>Logins are on the Accounts page.</b> X asks for the email on the account when it does not like
+            the look of a login, so there is a place for that too.</span>
+          <Icon name="chevron" size={12} class="sn-tip-go" />
+        </a>
+        <button type="button" class="sn-tip" onclick={() => settingsSection.set("x/mentions")}>
+          <Icon name="chats" size={15} />
+          <span><b>Answering in public is off.</b> It replies to messages out of the box; the @s under its posts
+            wait until you switch them on.</span>
+          <Icon name="chevron" size={12} class="sn-tip-go" />
+        </button>
+      {:else}
       <button type="button" class="sn-tip" onclick={() => settingsSection.set("snapchat/browser")}>
         <Icon name="monitor" size={15} />
         <span><b>The first login needs the browser window.</b> Keep "Hide the browser window" off for it; once
@@ -328,6 +449,7 @@
         <span><b>Logins are on the Accounts page.</b> Each Snapchat account has its own username and password there.</span>
         <Icon name="chevron" size={12} class="sn-tip-go" />
       </a>
+      {/if}
     </div>
   </div>
 {/if}
@@ -354,6 +476,35 @@
       linear-gradient(180deg, rgb(255 255 255 / 0.035), rgb(0 0 0 / 0.12));
   }
   .sn-hero.is-good { --tone: #fffc00; }
+  .sn-hero.is-tiktok.is-good { --tone: #fe2c55; }
+  .sn-hero.is-tiktok .sn-ghost { background: linear-gradient(145deg, #1a1a1f, #010101);
+                                 box-shadow: 0 10px 26px -10px rgb(254 44 85 / 0.55), inset 0 0 0 1px rgb(255 255 255 / 0.12); }
+  .sn-hero.is-tiktok .sn-logo { filter: drop-shadow(-1.2px -1px 0 #25f4ee) drop-shadow(1.2px 1px 0 #fe2c55); }
+  .sn-hero.is-tiktok .sn-logo path { stroke: none; }
+  .sn-hero.is-tiktok .sn-ghost-ring { border-color: rgb(254 44 85 / 0.5); }
+  .sn-hero.is-instagram.is-good { --tone: #e1306c; }
+  .sn-hero.is-instagram .sn-ghost { background: linear-gradient(145deg, #2a1424, #140a12);
+                                    box-shadow: 0 10px 26px -10px rgb(225 48 108 / 0.55), inset 0 0 0 1px rgb(255 255 255 / 0.12); }
+  .sn-hero.is-instagram .sn-logo path { fill: url(#sn-ig-grad); stroke: none; }
+  .sn-hero.is-instagram .sn-ghost-ring { border-color: rgb(225 48 108 / 0.5); }
+  /* X is black and white, so its tile is the black and its mark the white, rather than a colour. */
+  .sn-hero.is-x.is-good { --tone: #e7e9ea; }
+  .sn-hero.is-x .sn-ghost { background: linear-gradient(145deg, #1c1f24, #000);
+                            box-shadow: 0 10px 26px -10px rgb(0 0 0 / 0.75), inset 0 0 0 1px rgb(255 255 255 / 0.14); }
+  .sn-hero.is-x .sn-logo path { fill: #fff; stroke: none; }
+  .sn-hero.is-x .sn-ghost-ring { border-color: rgb(231 233 234 / 0.45); }
+  .sn-hero.is-reddit.is-good { --tone: #ff4500; }
+  .sn-hero.is-reddit .sn-ghost { background: linear-gradient(145deg, #2a1206, #120802);
+                                 box-shadow: 0 10px 26px -10px rgb(255 69 0 / 0.55),
+                                             inset 0 0 0 1px rgb(255 255 255 / 0.12); }
+  .sn-hero.is-reddit .sn-logo path { fill: #ff4500; stroke: none; }
+  .sn-hero.is-reddit .sn-ghost-ring { border-color: rgb(255 69 0 / 0.5); }
+  .sn-hero.is-whatsapp.is-good { --tone: #25d366; }
+  .sn-hero.is-whatsapp .sn-ghost { background: linear-gradient(145deg, #0b2a1b, #05170e);
+                                   box-shadow: 0 10px 26px -10px rgb(37 211 102 / 0.55),
+                                               inset 0 0 0 1px rgb(255 255 255 / 0.12); }
+  .sn-hero.is-whatsapp .sn-logo path { fill: #25d366; stroke: none; }
+  .sn-hero.is-whatsapp .sn-ghost-ring { border-color: rgb(37 211 102 / 0.5); }
   .sn-hero.is-warn { --tone: var(--color-warn); }
   .sn-hero.is-bad { --tone: var(--color-bad); }
   .sn-hero.is-working { --tone: var(--color-accent); }

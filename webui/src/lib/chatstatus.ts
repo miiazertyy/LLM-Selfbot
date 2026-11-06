@@ -72,6 +72,10 @@ export function statusOf(u: ChatUser, ctx: StatusContext): Status {
       case "writing":
         return { phase: "live", tone: "accent", step: 2, short: "Writing a reply", title: "Writing a reply",
                  detail: "The model is writing it now." };
+      case "looking":
+        // A look online before it answers (app/utils/web/lookup.py): what it is finding out, in its own words.
+        return { phase: "live", tone: "accent", step: 2, short: "Looking it up", title: "Looking it up online",
+                 detail: s.reason ? `Finding out: ${s.reason}` : "Checking online before it answers." };
       case "cooldown":
         return { phase: "live", tone: "accent", step: 3, short: c ? `Sends in ${c}` : "Sending soon",
                  title: c ? `Pacing, sends in ${c}` : "Sending any moment",

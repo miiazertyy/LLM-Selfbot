@@ -4,6 +4,8 @@ import re
 
 from fastapi import APIRouter, HTTPException, Request
 
+from app.utils import providers
+from app.utils.credentials import is_placeholder
 from app.utils.paths import APP_DIR
 from app.web.envfile import SECRET_KEYS, mask, read_env, reload_into_process, write_env
 
@@ -13,7 +15,7 @@ TEMPLATE = APP_DIR / "resources" / "example.env"
 
 # Keys the account editor owns. Still listed (masked) so the file is fully visible, but flagged so the UI can point at the better tool for them.
 _ACCOUNT_KEY = re.compile(
-    r"^(DISCORD_TOKEN|DISCORD_PROXY|SNAP_USERNAME|SNAP_PASSWORD)(_\d+)?$")
+    r"^(DISCORD_TOKEN|(?:DISCORD|SNAP|TIKTOK|INSTAGRAM|X|REDDIT|WHATSAPP|TELEGRAM|MINECRAFT)_PROXY|SNAP_USERNAME|SNAP_PASSWORD)(_\d+)?$")
 
 _VALID_KEY = re.compile(r"^[A-Z_][A-Z0-9_]*$", re.IGNORECASE)
 
@@ -113,7 +115,84 @@ KEY_FAMILIES = {
         "extras": [{"prefix": "SNAP_PASSWORD", "label": "Password", "secret": True,
                     "placeholder": "password"}],
     },
+    # Signed in from the Accounts page; the session is in its browser profile, so only the @handle is kept here.
+    "tiktok": {
+        "prefix": "TIKTOK_USERNAME",
+        "label": "TikTok account",
+        "secret": False,
+        "extras": [],
+    },
+    # Instagram signs itself in, so it keeps the whole login: the password and the 2FA key are write-only.
+    "instagram": {
+        "prefix": "INSTAGRAM_USERNAME",
+        "label": "Instagram account",
+        "secret": False,
+        "extras": [{"prefix": "INSTAGRAM_PASSWORD", "label": "Password", "secret": True,
+                    "placeholder": "password"},
+                   {"prefix": "INSTAGRAM_TOTP", "label": "2FA key", "secret": True,
+                    "placeholder": "the letters beside the QR code, optional"}],
+    },
+    "x": {
+        "prefix": "X_USERNAME",
+        "label": "X account",
+        "secret": False,
+        "extras": [{"prefix": "X_PASSWORD", "label": "Password", "secret": True, "placeholder": "password"},
+                   {"prefix": "X_EMAIL", "label": "Email or phone", "secret": False,
+                    "placeholder": "what X asks for when it questions a login"},
+                   {"prefix": "X_TOTP", "label": "2FA key", "secret": True,
+                    "placeholder": "the letters beside the QR code, optional"}],
+    },
+    # Reddit signs in from the Accounts page, so the session is in its browser profile and only the username has
+    # to be here. The other two are optional, and only let it sign itself back in later.
+    "reddit": {
+        "prefix": "REDDIT_USERNAME",
+        "label": "Reddit account",
+        "secret": False,
+        "extras": [{"prefix": "REDDIT_PASSWORD", "label": "Password", "secret": True,
+                    "placeholder": "optional, to sign itself back in later"},
+                   {"prefix": "REDDIT_TOTP", "label": "2FA key", "secret": True,
+                    "placeholder": "the letters beside the QR code, optional"}],
+    },
+    # Minecraft: the name it plays as, and the world it joins. Nothing secret in any of it.
+    "minecraft": {
+        "prefix": "MINECRAFT_USERNAME",
+        "label": "Minecraft account",
+        "secret": False,
+        "extras": [{"prefix": "MINECRAFT_HOST", "label": "Server", "secret": False,
+                    "placeholder": "localhost, or play.example.net"},
+                   {"prefix": "MINECRAFT_PORT", "label": "Port", "secret": False, "placeholder": "25565"},
+                   {"prefix": "MINECRAFT_AUTH", "label": "Sign-in", "secret": False,
+                    "placeholder": "offline or microsoft"}],
+    },
+    # Telegram: what its sign-in left behind. The session string is the whole login, so it is write-only, and so
+    # is the api_hash it belongs to.
+    "telegram": {
+        "prefix": "TELEGRAM_PHONE",
+        "label": "Telegram account",
+        "secret": False,
+        "extras": [{"prefix": "TELEGRAM_API_ID", "label": "api_id", "secret": False,
+                    "placeholder": "from my.telegram.org"},
+                   {"prefix": "TELEGRAM_API_HASH", "label": "api_hash", "secret": True,
+                    "placeholder": "from my.telegram.org"},
+                   {"prefix": "TELEGRAM_SESSION", "label": "Signed in", "secret": True,
+                    "placeholder": "what signing in left behind"}],
+    },
+    # iMessage: the BlueBubbles Server on a Mac it reads through, and that server's password, write-only.
+    "imessage": {
+        "prefix": "IMESSAGE_SERVER",
+        "label": "iMessage account",
+        "secret": False,
+        "extras": [{"prefix": "IMESSAGE_PASSWORD", "label": "BlueBubbles password", "secret": True,
+                    "placeholder": "password"}],
+    },
 }
+
+
+# Every provider on the Models tab takes several keys, each family named by the provider's id.
+for _p in providers.PROVIDERS:
+    if _p["env"] and _p["id"] not in KEY_FAMILIES:
+        KEY_FAMILIES[_p["id"]] = {"prefix": _p["env"], "label": f"{_p['name']} API key", "secret": True, "extras": []}
+_PROVIDER_PREFIXES = {_p["env"] for _p in providers.PROVIDERS if _p["env"]}
 
 
 def _family(name: str) -> dict:
@@ -126,6 +205,14 @@ def _family(name: str) -> dict:
 def _family_values(values: dict, prefix: str) -> list:
     """The numbered keys, in order. A legacy unsuffixed key counts as #1."""
     out = []
+    if prefix in _PROVIDER_PREFIXES:
+        # Read just as providers.keys_for reads them, so nothing it uses is hidden here, or lost when this rewrites them:
+        # the unnumbered one alongside the numbered, and past a gap in the numbers.
+        for name in [prefix] + [f"{prefix}_{i}" for i in range(1, 51)]:
+            value = values.get(name, "").strip()
+            if value and not is_placeholder(value) and value not in out:
+                out.append(value)
+        return out
     if values.get(prefix, "").strip() and not values.get(f"{prefix}_1", "").strip():
         out.append(values[prefix].strip())
     i = 1
@@ -141,13 +228,23 @@ def _clear_numbered(values: dict, prefix: str) -> None:
         values.pop(f"{prefix}_{old}")
         old += 1
     values.pop(prefix, None)
+    if prefix in _PROVIDER_PREFIXES:
+        for name in [k for k in values if re.fullmatch(re.escape(prefix) + r"_\d+", k)]:
+            values.pop(name)
 
 
 def _write_family(values: dict, prefix: str, keys: list) -> dict:
     """Rewrite the family as a contiguous NAME_1..N, dropping the legacy key."""
+    before = set(values)
     _clear_numbered(values, prefix)
     for i, key in enumerate(keys, start=1):
         values[f"{prefix}_{i}"] = key
+    if prefix in _PROVIDER_PREFIXES:
+        # Left blank rather than gone: an account already running loaded the old values into its environment and looks
+        # there for a name the file does not have, so a removed key would go on being spent until it restarted.
+        for name in before - set(values):
+            if re.fullmatch(re.escape(prefix) + r"(_\d+)?", name):
+                values[name] = ""
     return values
 
 
@@ -225,6 +322,7 @@ async def add_key(request: Request, name: str):
     values = _write_slots(values, fam, slots)
     write_env(values)
     reload_into_process(values)
+    providers.forget(name)
     return {"ok": True, "keys": _family_rows(values, fam["prefix"], fam)}
 
 
@@ -250,6 +348,7 @@ async def replace_key(request: Request, name: str, index: int):
     values = _write_slots(values, fam, slots)
     write_env(values)
     reload_into_process(values)
+    providers.forget(name)
     return {"ok": True, "keys": _family_rows(values, fam["prefix"], fam)}
 
 
@@ -265,6 +364,7 @@ def delete_key(request: Request, name: str, index: int):
     values = _write_slots(values, fam, slots)
     write_env(values)
     reload_into_process(values)
+    providers.forget(name)
     return {"ok": True, "keys": _family_rows(values, fam["prefix"], fam)}
 
 

@@ -16,6 +16,8 @@
 /webview/
 # Model files the app downloads for llama.cpp (app/utils/localai.py app_models_dir): gigabytes each.
 /models/
+# Downloads kept to be fetched again: the community catalog, watched videos, thumbnails.
+/cache/
 *.flag
 **/*-cookies.json
 

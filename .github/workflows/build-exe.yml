@@ -103,7 +103,7 @@ jobs:
             ForEach-Object { "$($_.Hash.ToLower())  $(Split-Path $_.Path -Leaf)" }
 
       - name: Upload
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: LLMSelfbot-windows-x64
           path: |
@@ -112,7 +112,7 @@ jobs:
 
       - name: Attach to release
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             dist/LLMSelfbotSetup.exe
@@ -123,13 +123,16 @@ jobs:
   # that in a browser. One matrix instead of three copies of the same twelve
   # steps. The file names are the ones app/utils/device.py looks for when the
   # app updates itself, so the two must not drift apart.
+  # Ubuntu 24.04 by name for both Linux builds, not ubuntu-latest: that moves
+  # to 26.04 from October 2026, and a binary built there needs its newer glibc,
+  # so it would not start on most Linux installs people have.
   headless:
     name: ${{ matrix.name }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             name: linux-x86_64
             asset: LLMSelfbot-linux-x86_64
           - os: ubuntu-24.04-arm
@@ -205,14 +208,14 @@ jobs:
           fi
 
       - name: Upload
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: LLMSelfbot-${{ matrix.name }}
           path: dist/${{ matrix.asset }}
 
       - name: Attach to release
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: dist/${{ matrix.asset }}
 
@@ -220,9 +223,11 @@ jobs:
   # itself, built with BeeWare's Briefcase around the same app/. mobile/stage.py
   # lays the project out and makes the few packages nobody publishes for
   # phones; see it for why each is needed.
+  # On 24.04 by name, the image every Android build so far was made on: 26.04
+  # (ubuntu-latest from October 2026) changes the default Java under Gradle.
   android:
     name: android
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -302,14 +307,14 @@ jobs:
           sha256sum LLMSelfbot-android.apk
 
       - name: Upload
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: LLMSelfbot-android
           path: LLMSelfbot-android.apk
 
       - name: Attach to release
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: LLMSelfbot-android.apk
 
@@ -386,24 +391,16 @@ jobs:
           mkdir -p ipa/Payload
           cp -R "$app" ipa/Payload/
           (cd ipa && zip -qry ../LLMSelfbot-ios.ipa Payload)
-          # AltStore and SideStore keep an app up to date from a source: this
-          # one lists this release's IPA, and the README says how to add it.
-          python mobile/altstore.py --version "$APP_VERSION" --ipa LLMSelfbot-ios.ipa \
-            --tag "$GITHUB_REF_NAME" > altstore.json
           shasum -a 256 LLMSelfbot-ios.ipa
 
       - name: Upload
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: LLMSelfbot-ios
-          path: |
-            LLMSelfbot-ios.ipa
-            altstore.json
+          path: LLMSelfbot-ios.ipa
 
       - name: Attach to release
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
-          files: |
-            LLMSelfbot-ios.ipa
-            altstore.json
+          files: LLMSelfbot-ios.ipa

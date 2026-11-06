@@ -67,14 +67,15 @@
   opacity: 1;
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 55%, transparent),
               0 0 22px color-mix(in srgb, var(--color-accent) 35%, transparent);
-  animation: halo-breathe 3.2s ease-in-out infinite;
+  /* Stepped about fifteen times a second (see Aurora): a breath this slow shows no steps. */
+  animation: halo-breathe 3.2s steps(24) infinite;
 }
 /* Waiting on something outside it (connecting, a login): amber, and faster. */
 .halo.is-busy::before {
   opacity: 1;
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-warn) 65%, transparent),
               0 0 18px color-mix(in srgb, var(--color-warn) 30%, transparent);
-  animation: halo-breathe 1.6s ease-in-out infinite;
+  animation: halo-breathe 1.6s steps(16) infinite;
 }
 /* Actively at it (writing, typing): the same ring, breathing faster. */
 .halo.is-live.is-fast::before { animation-duration: 1.6s; }
@@ -440,6 +441,83 @@
 }
 .settings-row:hover { background: rgb(255 255 255 / 0.022); }
 
+/* What runs: each social's own mark beside its switch, as a little app icon in its own colours, lit with a soft
+   glow of that colour. Switched off, it goes grey and quiet; switched on, it comes back in colour with a small
+   spring. The app's own rows there get a quiet tile of the same size, so the names line up down the list. */
+.settings-mark {
+  position: relative;
+  display: grid;
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  place-items: center;
+  border-radius: 10px;
+  color: var(--color-muted);
+  background: rgb(255 255 255 / 0.045);
+}
+.settings-mark.is-social {
+  color: #fff;
+  background: var(--tone);
+  transition: filter 0.35s var(--swift), opacity 0.35s var(--swift), transform 0.45s var(--spring);
+}
+.settings-mark.is-snapchat { color: #141414; }
+/* TikTok's and X's colours in platforms.ts are their marks' colours, which on themselves could not be seen. */
+.settings-mark.is-tiktok,
+.settings-mark.is-x { background: #0d0d0f; }
+.settings-mark.is-instagram {
+  background: linear-gradient(45deg, #feda75, #fa7e1e 25%, #d62976 55%, #962fbf 80%, #4f5bd5);
+}
+.settings-mark.is-imessage { background: linear-gradient(180deg, #5df67a, #0cbd2a); }
+.settings-mark.is-social.is-off {
+  filter: grayscale(1);
+  opacity: 0.4;
+  transform: scale(0.92);
+}
+:root[data-motion="off"] .settings-mark.is-social { transition: none; }
+/* Each mark centred in its tile and as big as the others. Measured, not guessed: each one's ink was measured as
+   Icon.svelte draws it, then scaled so its box has the area of an 18px square, and moved so the middle of its box is the
+   middle of the tile. The ones already centred are those drawn on the grid's middle. Scaled first, so the move is
+   measured on the mark as drawn. */
+.settings-mark.is-social > svg {
+  transform: scale(var(--mark-s, 1)) translate(var(--mark-dx, 0%), var(--mark-dy, 0%));
+}
+.settings-mark.is-discord { --mark-s: 1.206; }
+.settings-mark.is-snapchat { --mark-s: 1.089; }
+.settings-mark.is-tiktok { --mark-s: 1.129; }
+.settings-mark.is-instagram { --mark-s: 1.137; }
+.settings-mark.is-x { --mark-s: 1.107; }
+.settings-mark.is-reddit { --mark-s: 1.053; }
+.settings-mark.is-whatsapp { --mark-s: 1.055; }
+.settings-mark.is-minecraft { --mark-s: 1.184; --mark-dy: -0.88%; }
+.settings-mark.is-imessage { --mark-s: 1.156; --mark-dy: -2.42%; }
+.settings-mark.is-telegram { --mark-s: 1.202; --mark-dx: -2.77%; --mark-dy: -2.68%; }
+/* A row with a mark (What runs): the mark, the words and the switch all centre on the words you can see. The line
+   under the words with the setting's name only shows when the row is pointed at, and taking a line's height of its
+   own it held the words above the middle of the row, the marks and the switches below them. Holding nothing else, it
+   shows in the row's own padding instead. */
+.settings-row:has(> .settings-mark) > .settings-text { position: relative; }
+/* Where a switch's little example shows beside the words (Discord's, Snapchat's), it is a little taller than they
+   are: the words take its height in every row with a mark, centred in it, so the rows down the list stay one height. */
+@container (min-width: 700px) {
+  .settings-row:has(> .settings-mark) > .settings-text {
+    display: flex;
+    min-height: 57px;
+    flex-direction: column;
+    justify-content: center;
+  }
+}
+.settings-row:has(> .settings-mark) .settings-meta:not(:has(.settings-restart, button)) {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  left: 0;
+  margin-top: 1px;
+  flex-wrap: nowrap;
+  overflow: hidden;
+  white-space: nowrap;
+  line-height: 12px;
+}
+
 /* A setting that was just used (a command run with its prefix, a trigger
    word): the row lights twice like a model's row in Models when it answers,
    and a tag beside its name says what was used. */
@@ -647,8 +725,9 @@
 :root .app-backdrop.is-covered::after,
 :root .app-backdrop.is-covered * { visibility: hidden; animation-play-state: paused; }
 
-/* The window not in front (App.svelte sets data-away): the slow ambient loops hold still until it is, so an app left
-   open behind a game draws nothing. Big Picture, made to be watched from across the room, keeps moving. */
+/* The window not in front, or nobody touching it for a while (App.svelte sets data-away): the slow ambient loops
+   hold still until someone is back, so an app left open draws nothing. Big Picture, made to be watched from across
+   the room, keeps moving. */
 :root[data-away] .app-backdrop::before,
 :root[data-away] .app-backdrop::after,
 :root[data-away] .app-backdrop *,
@@ -667,10 +746,19 @@
 .app-shell {
   position: relative;
   z-index: 1;
+  /* A phone's notch and home indicator: the panel's colour runs under them, its contents stay clear of them
+     (viewport-fit=cover in index.html; every one of these is 0 on a computer). */
+  padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px)
+           env(safe-area-inset-left, 0px);
 }
 
-/* Aurora: two broad blooms of accent light drifting past each other. The blur
-   is what turns two gradients into something that reads as depth. */
+/* Aurora: two broad blooms of accent light drifting past each other.
+
+   Cheap on purpose, measured in the app's own window: a 143Hz screen redrew both, blurred (blur(90px) on layers
+   wider than the screen), 143 times a second on the laptop's integrated graphics, well over a whole core for a
+   background nobody watches, and the panel stuttered with it. So the softness is drawn into the gradients (the
+   same falloff the blur gave, stop by stop) and nothing is blurred as it moves, and the drift steps about fifteen
+   times a second (steps() between eased keyframes): too slow a motion to see the steps, a tenth of the redraws. */
 .app-backdrop[data-kind="aurora"]::before,
 .app-backdrop[data-kind="aurora"]::after {
   content: "";
@@ -678,36 +766,59 @@
   width: 85vmax;
   height: 85vmax;
   border-radius: 50%;
-  filter: blur(90px);
   opacity: 0.4;
   will-change: transform;
 }
 .app-backdrop[data-kind="aurora"]::before {
   left: -25vmax;
   top: -30vmax;
-  animation-duration: 22s;
   background: radial-gradient(circle at 50% 50%,
-    color-mix(in srgb, var(--color-accent) 60%, transparent) 0%,
-    transparent 68%);
-  animation: aurora-a 22s ease-in-out infinite alternate;
+    color-mix(in srgb, var(--color-accent) 52%, transparent) 0%,
+    color-mix(in srgb, var(--color-accent) 38%, transparent) 25%,
+    color-mix(in srgb, var(--color-accent) 17%, transparent) 50%,
+    color-mix(in srgb, var(--color-accent) 9%, transparent) 60%,
+    color-mix(in srgb, var(--color-accent) 4%, transparent) 68%,
+    color-mix(in srgb, var(--color-accent) 1%, transparent) 80%,
+    transparent 90%);
+  /* 22s there and back: each eighth of the way 2.75s, in 41 steps. */
+  animation: aurora-a 22s steps(41) infinite alternate;
 }
 .app-backdrop[data-kind="aurora"]::after {
   right: -30vmax;
   bottom: -35vmax;
   background: radial-gradient(circle at 50% 50%,
-    color-mix(in srgb, var(--color-accent-2, var(--color-accent)) 55%, transparent) 0%,
-    transparent 68%);
-  animation: aurora-b 28s ease-in-out infinite alternate;
+    color-mix(in srgb, var(--color-accent-2, var(--color-accent)) 48%, transparent) 0%,
+    color-mix(in srgb, var(--color-accent-2, var(--color-accent)) 35%, transparent) 25%,
+    color-mix(in srgb, var(--color-accent-2, var(--color-accent)) 16%, transparent) 50%,
+    color-mix(in srgb, var(--color-accent-2, var(--color-accent)) 8%, transparent) 60%,
+    color-mix(in srgb, var(--color-accent-2, var(--color-accent)) 4%, transparent) 68%,
+    color-mix(in srgb, var(--color-accent-2, var(--color-accent)) 1%, transparent) 80%,
+    transparent 90%);
+  animation: aurora-b 28s steps(52) infinite alternate;
 }
+/* The same two paths as before, eased: the in-between frames follow ease-in-out, so stepping keeps the slow start
+   and finish. */
 @keyframes aurora-a {
-  0%   { transform: translate3d(0, 0, 0) scale(1); }
-  50%  { transform: translate3d(26vw, 4vh, 0) scale(1.3); }
-  100% { transform: translate3d(8vw, 20vh, 0) scale(1.05); }
+  0%    { transform: translate3d(0, 0, 0) scale(1); }
+  12.5% { transform: translate3d(3.35vw, 0.52vh, 0) scale(1.039); }
+  25%   { transform: translate3d(13vw, 2vh, 0) scale(1.15); }
+  37.5% { transform: translate3d(22.65vw, 3.48vh, 0) scale(1.261); }
+  50%   { transform: translate3d(26vw, 4vh, 0) scale(1.3); }
+  62.5% { transform: translate3d(23.68vw, 6.06vh, 0) scale(1.268); }
+  75%   { transform: translate3d(17vw, 12vh, 0) scale(1.175); }
+  87.5% { transform: translate3d(10.32vw, 17.94vh, 0) scale(1.082); }
+  100%  { transform: translate3d(8vw, 20vh, 0) scale(1.05); }
 }
 @keyframes aurora-b {
-  0%   { transform: translate3d(0, 0, 0) scale(1.1); }
-  50%  { transform: translate3d(-22vw, -6vh, 0) scale(0.85); }
-  100% { transform: translate3d(-6vw, -20vh, 0) scale(1.15); }
+  0%    { transform: translate3d(0, 0, 0) scale(1.1); }
+  12.5% { transform: translate3d(-2.84vw, -0.77vh, 0) scale(1.068); }
+  25%   { transform: translate3d(-11vw, -3vh, 0) scale(0.975); }
+  37.5% { transform: translate3d(-19.16vw, -5.23vh, 0) scale(0.882); }
+  50%   { transform: translate3d(-22vw, -6vh, 0) scale(0.85); }
+  62.5% { transform: translate3d(-19.94vw, -7.81vh, 0) scale(0.889); }
+  75%   { transform: translate3d(-14vw, -13vh, 0) scale(1); }
+  87.5% { transform: translate3d(-8.06vw, -18.19vh, 0) scale(1.111); }
+  100%  { transform: translate3d(-6vw, -20vh, 0) scale(1.15); }
 }
 
 /* Nebula: one very large conic sweep turning slowly behind a heavy blur, so
@@ -721,7 +832,10 @@
   height: 190vmax;
   margin: -95vmax 0 0 -95vmax;
   opacity: 0.3;
-  filter: blur(110px);
+  /* No blur as it turns (see Aurora): the sweep's colours already run into each other, and the one hard spot, its
+     middle where they all meet, is faded out by a mask that turns with it unchanged. */
+  -webkit-mask-image: radial-gradient(circle, transparent 0%, rgb(0 0 0 / 0.35) 9%, #000 26%);
+  mask-image: radial-gradient(circle, transparent 0%, rgb(0 0 0 / 0.35) 9%, #000 26%);
   will-change: transform;
   background: conic-gradient(
     from 0deg,
@@ -730,7 +844,8 @@
     color-mix(in srgb, var(--color-bg) 85%, transparent),
     color-mix(in srgb, var(--color-accent) 55%, transparent)
   );
-  animation: nebula-spin 120s linear infinite;
+  /* A turn in two minutes, about fifteen steps a second. */
+  animation: nebula-spin 120s steps(1800) infinite;
 }
 @keyframes nebula-spin {
   from { transform: rotate(0deg); }
@@ -751,13 +866,15 @@
   box-shadow: 0 0 60px color-mix(in srgb, var(--color-accent-2, var(--color-accent)) 22%, transparent) inset;
   opacity: 0;
   will-change: transform, opacity;
-  animation: ring-out var(--life, 14s) ease-out infinite;
+  animation: ring-out var(--life, 14s) linear infinite;
   animation-delay: var(--delay, 0s);
 }
+/* Stepped, about fifteen times a second (see Aurora), each part of the way in its own steps; the growth follows the
+   ease-out it had, through the frames in between. */
 @keyframes ring-out {
-  0%   { opacity: 0;    transform: scale(0.15); }
-  15%  { opacity: 0.5; }
-  70%  { opacity: 0.16; }
+  0%   { opacity: 0;    transform: scale(0.15); animation-timing-function: steps(32); }
+  15%  { opacity: 0.5;  transform: scale(0.74); animation-timing-function: steps(115); }
+  70%  { opacity: 0.16; transform: scale(2.28); animation-timing-function: steps(63); }
   100% { opacity: 0;    transform: scale(2.6); }
 }
 
@@ -900,13 +1017,17 @@
 /* Text typing itself in (lib/typewrite.ts): what is not typed yet keeps its place, unseen, so nothing moves while it
    types; a caret of the accent runs ahead of the letters, and blinks twice at the end before going. */
 .tw-rest { visibility: hidden; }
-.tw-caret {
-  display: inline-block;
+/* Not a box in the line: a line can break either side of one, so a word on its way to the next line stopped short at
+   the caret and hopped down when it passed. An empty inline is nothing to the line; what is seen hangs off it. */
+.tw-caret { position: relative; }
+.tw-caret::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
   width: 2px;
-  height: 1.05em;
-  margin: 0 -2px -0.18em 0;
   border-radius: 1px;
-  vertical-align: baseline;
   background: var(--color-accent);
   box-shadow: 0 0 8px var(--color-accent);
 }
@@ -1046,6 +1167,54 @@ textarea {
   transform: translateY(-1px);
 }
 
+/* ── Buttons with depth ─────────────────────────────────────────────────────
+   Every button with a face of its own is tinted with the theme, the way Apple's "tinted" buttons are: a fill of
+   the theme's own colour, light and even, and nothing else. No outline, no line of light on any edge, no shade at
+   its foot, no shadow under it at rest. Each of those was tried here and read as an old raised button ("legacy",
+   three times: a ruled top line and a shaded foot; then a glass edge caught at two corners, white whatever the
+   theme). Pointed at, its tint deepens, a soft light of the theme sits where the pointer is (lib/feel.ts gives the
+   place) and a glow of it spreads under the button; pressed, the tint gives a little. The tint and the light ease
+   in and out: they are worked from registered numbers (--d3-lit, --d3-down), which can be eased where a gradient
+   cannot. Drawn on a layer behind the button's contents (::before, under a stacking context of its own), so no
+   button's own background, border, glow or motion is touched; in the components layer at no specificity, so a
+   button that places itself (absolutely, say) still does. */
+@property --d3-lit { syntax: "<number>"; inherits: false; initial-value: 0; }
+@property --d3-down { syntax: "<number>"; inherits: false; initial-value: 0; }
+@layer components {
+  :where(.btn-3d, .chip, .sel-trigger, .lp-trigger, .tz-trigger, .aa-persona-opt, .acct-alert-btn, .acct-chip, .acct-persona, .add-platform, .ask-btn, .bp-btn, .bp-chip, .bp-tile, .cd-down, .cd-react, .cd-send, .cd-toggle, .cd-tool, .ch-fr-btn, .ch-ignored-btn, .ch-unignore, .ch-call, .cs-clear, .cs-cta, .cs-key, .cs-recent-chip, .err-btn, .fc-z, .fp-up, .latest-btn, .lc-btn, .ms-get, .ms-page, .np-face-btn, .le-auto, .le-big, .lg-errs, .lg-jump, .lg-kind, .lg-src, .lg-switch, .lm-sure, .mm-last, .mm-forget, .mm-tool, .mp-choice, .nh-cmd, .note-btn, .np-source, .pal-scope, .pc-btn, .pp-mode, .pp-reveal, .psc-pill, .pt-auto, .pt-btn, .pv-edit, .re-status, .re-tool, .reply-btn, .rp-all-btn, .save-go, .sf-btn, .sf-chip, .sh-older, .sn-tip, .sys-action, .sys-ok, .sys-qr, .tg-btn, .tg-go, .tg-state, .tp-act, .tp-btn, .tp-page, .tp-start, .tz-here, .vn-play, .vp-big, .vp-chip, .slider-clear, .settings-use-everyones, .platform-card, .ch-recent-card, .pr-part, .le-tile, .ls-tile, .sh-tile, .cl-voice, .cl-btn, .cl-leg-pick) {
+    position: relative;
+    isolation: isolate;
+  }
+  /* The tint, and the light on it where the pointer is. */
+  :where(.btn-3d, .chip, .sel-trigger, .lp-trigger, .tz-trigger, .aa-persona-opt, .acct-alert-btn, .acct-chip, .acct-persona, .add-platform, .ask-btn, .bp-btn, .bp-chip, .bp-tile, .cd-down, .cd-react, .cd-send, .cd-toggle, .cd-tool, .ch-fr-btn, .ch-ignored-btn, .ch-unignore, .ch-call, .cs-clear, .cs-cta, .cs-key, .cs-recent-chip, .err-btn, .fc-z, .fp-up, .latest-btn, .lc-btn, .ms-get, .ms-page, .np-face-btn, .le-auto, .le-big, .lg-errs, .lg-jump, .lg-kind, .lg-src, .lg-switch, .lm-sure, .mm-last, .mm-forget, .mm-tool, .mp-choice, .nh-cmd, .note-btn, .np-source, .pal-scope, .pc-btn, .pp-mode, .pp-reveal, .psc-pill, .pt-auto, .pt-btn, .pv-edit, .re-status, .re-tool, .reply-btn, .rp-all-btn, .save-go, .sf-btn, .sf-chip, .sh-older, .sn-tip, .sys-action, .sys-ok, .sys-qr, .tg-btn, .tg-go, .tg-state, .tp-act, .tp-btn, .tp-page, .tp-start, .tz-here, .vn-play, .vp-big, .vp-chip, .slider-clear, .settings-use-everyones, .platform-card, .ch-recent-card, .pr-part, .le-tile, .ls-tile, .sh-tile, .cl-voice, .cl-btn, .cl-leg-pick)::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    border-radius: inherit;
+    pointer-events: none;
+    background:
+      radial-gradient(160px circle at var(--mx, 50%) var(--my, -30%),
+                      color-mix(in srgb, var(--color-accent) calc(14% * var(--d3-lit)), transparent), transparent 70%),
+      linear-gradient(color-mix(in srgb, var(--color-accent) calc(8% + 5% * var(--d3-lit) - 3% * var(--d3-down)),
+                                rgb(255 255 255 / 0.035)),
+                      color-mix(in srgb, var(--color-accent) calc(8% + 5% * var(--d3-lit) - 3% * var(--d3-down)),
+                                rgb(255 255 255 / 0.035)));
+    box-shadow: 0 0 0 transparent;
+    transition: --d3-lit 0.3s var(--swift), --d3-down 0.14s var(--swift), box-shadow 0.3s var(--swift);
+  }
+  :where(.btn-3d, .chip, .sel-trigger, .lp-trigger, .tz-trigger, .aa-persona-opt, .acct-alert-btn, .acct-chip, .acct-persona, .add-platform, .ask-btn, .bp-btn, .bp-chip, .bp-tile, .cd-down, .cd-react, .cd-send, .cd-toggle, .cd-tool, .ch-fr-btn, .ch-ignored-btn, .ch-unignore, .ch-call, .cs-clear, .cs-cta, .cs-key, .cs-recent-chip, .err-btn, .fc-z, .fp-up, .latest-btn, .lc-btn, .ms-get, .ms-page, .np-face-btn, .le-auto, .le-big, .lg-errs, .lg-jump, .lg-kind, .lg-src, .lg-switch, .lm-sure, .mm-last, .mm-forget, .mm-tool, .mp-choice, .nh-cmd, .note-btn, .np-source, .pal-scope, .pc-btn, .pp-mode, .pp-reveal, .psc-pill, .pt-auto, .pt-btn, .pv-edit, .re-status, .re-tool, .reply-btn, .rp-all-btn, .save-go, .sf-btn, .sf-chip, .sh-older, .sn-tip, .sys-action, .sys-ok, .sys-qr, .tg-btn, .tg-go, .tg-state, .tp-act, .tp-btn, .tp-page, .tp-start, .tz-here, .vn-play, .vp-big, .vp-chip, .slider-clear, .settings-use-everyones, .platform-card, .ch-recent-card, .pr-part, .le-tile, .ls-tile, .sh-tile, .cl-voice, .cl-btn, .cl-leg-pick):hover:not(:disabled)::before {
+    --d3-lit: 1;
+    box-shadow: 0 10px 26px -14px color-mix(in srgb, var(--color-accent) 45%, transparent);
+  }
+  :where(.btn-3d, .chip, .sel-trigger, .lp-trigger, .tz-trigger, .aa-persona-opt, .acct-alert-btn, .acct-chip, .acct-persona, .add-platform, .ask-btn, .bp-btn, .bp-chip, .bp-tile, .cd-down, .cd-react, .cd-send, .cd-toggle, .cd-tool, .ch-fr-btn, .ch-ignored-btn, .ch-unignore, .ch-call, .cs-clear, .cs-cta, .cs-key, .cs-recent-chip, .err-btn, .fc-z, .fp-up, .latest-btn, .lc-btn, .ms-get, .ms-page, .np-face-btn, .le-auto, .le-big, .lg-errs, .lg-jump, .lg-kind, .lg-src, .lg-switch, .lm-sure, .mm-last, .mm-forget, .mm-tool, .mp-choice, .nh-cmd, .note-btn, .np-source, .pal-scope, .pc-btn, .pp-mode, .pp-reveal, .psc-pill, .pt-auto, .pt-btn, .pv-edit, .re-status, .re-tool, .reply-btn, .rp-all-btn, .save-go, .sf-btn, .sf-chip, .sh-older, .sn-tip, .sys-action, .sys-ok, .sys-qr, .tg-btn, .tg-go, .tg-state, .tp-act, .tp-btn, .tp-page, .tp-start, .tz-here, .vn-play, .vp-big, .vp-chip, .slider-clear, .settings-use-everyones, .platform-card, .ch-recent-card, .pr-part, .le-tile, .ls-tile, .sh-tile, .cl-voice, .cl-btn, .cl-leg-pick):active:not(:disabled)::before {
+    --d3-down: 1;
+    transition-duration: 0.08s;
+  }
+  :where(.btn-3d, .chip, .sel-trigger, .lp-trigger, .tz-trigger, .aa-persona-opt, .acct-alert-btn, .acct-chip, .acct-persona, .add-platform, .ask-btn, .bp-btn, .bp-chip, .bp-tile, .cd-down, .cd-react, .cd-send, .cd-toggle, .cd-tool, .ch-fr-btn, .ch-ignored-btn, .ch-unignore, .ch-call, .cs-clear, .cs-cta, .cs-key, .cs-recent-chip, .err-btn, .fc-z, .fp-up, .latest-btn, .lc-btn, .ms-get, .ms-page, .np-face-btn, .le-auto, .le-big, .lg-errs, .lg-jump, .lg-kind, .lg-src, .lg-switch, .lm-sure, .mm-last, .mm-forget, .mm-tool, .mp-choice, .nh-cmd, .note-btn, .np-source, .pal-scope, .pc-btn, .pp-mode, .pp-reveal, .psc-pill, .pt-auto, .pt-btn, .pv-edit, .re-status, .re-tool, .reply-btn, .rp-all-btn, .save-go, .sf-btn, .sf-chip, .sh-older, .sn-tip, .sys-action, .sys-ok, .sys-qr, .tg-btn, .tg-go, .tg-state, .tp-act, .tp-btn, .tp-page, .tp-start, .tz-here, .vn-play, .vp-big, .vp-chip, .slider-clear, .settings-use-everyones, .platform-card, .ch-recent-card, .pr-part, .le-tile, .ls-tile, .sh-tile, .cl-voice, .cl-btn, .cl-leg-pick):disabled::before { background: none; box-shadow: none; }
+}
+:root[data-motion="off"] :where(.btn-3d, .chip, .sel-trigger, .lp-trigger, .tz-trigger, .aa-persona-opt, .acct-alert-btn, .acct-chip, .acct-persona, .add-platform, .ask-btn, .bp-btn, .bp-chip, .bp-tile, .cd-down, .cd-react, .cd-send, .cd-toggle, .cd-tool, .ch-fr-btn, .ch-ignored-btn, .ch-unignore, .ch-call, .cs-clear, .cs-cta, .cs-key, .cs-recent-chip, .err-btn, .fc-z, .fp-up, .latest-btn, .lc-btn, .ms-get, .ms-page, .np-face-btn, .le-auto, .le-big, .lg-errs, .lg-jump, .lg-kind, .lg-src, .lg-switch, .lm-sure, .mm-last, .mm-forget, .mm-tool, .mp-choice, .nh-cmd, .note-btn, .np-source, .pal-scope, .pc-btn, .pp-mode, .pp-reveal, .psc-pill, .pt-auto, .pt-btn, .pv-edit, .re-status, .re-tool, .reply-btn, .rp-all-btn, .save-go, .sf-btn, .sf-chip, .sh-older, .sn-tip, .sys-action, .sys-ok, .sys-qr, .tg-btn, .tg-go, .tg-state, .tp-act, .tp-btn, .tp-page, .tp-start, .tz-here, .vn-play, .vp-big, .vp-chip, .slider-clear, .settings-use-everyones, .platform-card, .ch-recent-card, .pr-part, .le-tile, .ls-tile, .sh-tile, .cl-voice, .cl-btn, .cl-leg-pick)::before { transition: none; }
+
 /* A list or grid arriving one item after another, each popping in with a
    little jelly (lib/domino.ts sets each one's turn and says when). Held back
    until its moment; an item that arrives later pops in on its own. Fill
@@ -1058,8 +1227,9 @@ textarea {
   animation: domino-in var(--domino-dur, 0.55s) var(--jelly) backwards;
   animation-delay: calc(var(--i, 0) * var(--domino-step, 40ms));
 }
-/* A page opened to be read at once (cascade.ts, data-cascade="quick"): each item lands in two thirds the time. */
-[data-cascade="quick"] { --domino-dur: 0.36s; }
+/* A page opened to be read at once (cascade.ts, data-cascade="quick"): its items close behind each other
+   (domino.ts), each still given time to ease in. */
+[data-cascade="quick"] { --domino-dur: 0.5s; }
 @keyframes domino-in {
   from { opacity: 0; transform: translateY(12px) scale(0.92); }
   60% { opacity: 1; }
@@ -1090,6 +1260,68 @@ textarea {
   animation: jelly-pop 0.52s var(--spring) both;
 }
 
+/* Not for a menu, though: one drops out of its button (lib/unroll.ts, which gives each row its turn). It grows
+   from the end by its button to its whole size, corners round all the way (the clip sits on its 1px ring), each
+   row fading in as the edge reaches it, and then its shadow spreads out from under it. The first stretch is
+   unroll.ts's UNROLL: change one, change both. */
+.unroll {
+  animation: unroll-down 0.32s backwards, unroll-fade 0.12s ease-out backwards;
+}
+.unroll.is-up {
+  animation-name: unroll-up, unroll-fade;
+}
+@keyframes unroll-down {
+  0% {
+    transform: translateY(-4px);
+    clip-path: inset(-1px -1px calc(100% - 40px) -1px round var(--unroll-r, 15px));
+    animation-timing-function: cubic-bezier(0.33, 1, 0.68, 1);
+  }
+  75% {
+    transform: none;
+    clip-path: inset(-1px round var(--unroll-r, 15px));
+    animation-timing-function: ease-out;
+  }
+  100% {
+    transform: none;
+    clip-path: inset(-24px -40px -64px -40px round var(--unroll-r, 15px));
+  }
+}
+@keyframes unroll-up {
+  0% {
+    transform: translateY(4px);
+    clip-path: inset(calc(100% - 40px) -1px -1px -1px round var(--unroll-r, 15px));
+    animation-timing-function: cubic-bezier(0.33, 1, 0.68, 1);
+  }
+  75% {
+    transform: none;
+    clip-path: inset(-1px round var(--unroll-r, 15px));
+    animation-timing-function: ease-out;
+  }
+  100% {
+    transform: none;
+    clip-path: inset(-24px -40px -64px -40px round var(--unroll-r, 15px));
+  }
+}
+@keyframes unroll-fade {
+  from { opacity: 0; }
+}
+.unroll [data-unroll] {
+  animation: unroll-row 0.24s cubic-bezier(0.2, 0.8, 0.2, 1) var(--d, 0ms) backwards;
+}
+.unroll.is-up [data-unroll] {
+  animation-name: unroll-row-up;
+}
+@keyframes unroll-row {
+  from { opacity: 0; transform: translateY(-5px); }
+}
+@keyframes unroll-row-up {
+  from { opacity: 0; transform: translateY(5px); }
+}
+:root[data-motion="off"] .unroll,
+:root[data-motion="off"] .unroll [data-unroll] {
+  animation: none;
+}
+
 /* Cards stagger in so a page assembles rather than snapping. */
 @keyframes rise {
   from { opacity: 0; transform: translate3d(0, 12px, 0); }
@@ -1117,10 +1349,9 @@ textarea {
   from { opacity: 0; }
   to { opacity: 1; }
 }
-/* While a block is still dropping into place, what is inside it waits, held on
-   its first frame: it starts once the block has landed (lib/cascade.ts takes
-   the mark off). Opening a tab, then the tab's own motion, one after the other
-   rather than both at once. */
+/* Until a block starts dropping into place, what is inside it waits, held on
+   its first frame: lib/cascade.ts takes the mark off a moment into the drop,
+   so the tab's own motion starts with it, never after a still pause. */
 [data-arriving],
 [data-arriving]::before,
 [data-arriving]::after,
@@ -1132,10 +1363,6 @@ textarea {
 .page-enter {
   animation: page-in 0.3s var(--swift) both;
   backface-visibility: hidden;
-}
-
-.toast-in {
-  animation: jelly-pop 0.5s var(--spring) both;
 }
 
 /* ── Nav ──────────────────────────────────────────────────────────────────── */
@@ -1212,7 +1439,7 @@ textarea {
 }
 .attention-dot.is-error {
   background: var(--color-bad);
-  animation: dot-pulse 2.4s ease-in-out infinite;
+  animation: dot-pulse 2.4s steps(18) infinite;
 }
 .attention-dot.is-warn { background: var(--color-warn); }
 /* Not a problem, just something new: an available update. */
@@ -1449,19 +1676,27 @@ textarea {
 
 /* Menus, lists and popovers - the right-click menu, every dropdown, the pickers -
    in the panels' material too: liquid glass under Glass, heavier frost under
-   Frosted, solid under Solid. More blur and more fill than a card, a sheen
-   across the top and a light edge, so whatever is behind turns to soft colour
-   and what they say stays easy to read. Dialogs (.glow) stay solid: they are
-   for reading, at length. */
+   Frosted, solid under Solid. More blur and more fill than a card, an even
+   fill with an edge barely there and a soft shadow, so whatever is behind
+   turns to soft colour and what they say stays easy to read. (A sheen across
+   the top and a line of light along it, which they had, read as an old
+   bevelled panel.) Dialogs (.glow) stay solid: they are for reading, at
+   length. */
 /* Filled enough that what they say reads first: at 46% the glass let the page
-   underneath show through too much to read a list over it. */
+   underneath show through too much to read a list over it.
+
+   And filled enough to read WITHOUT the blur. 74% was only legible because the
+   blur smeared the page behind into colour; where the blur is not drawn (some
+   webviews skip backdrop-filter outright), 74% left the inbox's own words
+   showing crisply through the account picker, which is what it looked like on
+   the desktop app. The blur is the nicety here, not the thing doing the work. */
 :root[data-surface="glass"] {
-  --float-fill: 74%;
+  --float-fill: 95%;
   --float-blur: 32px;
   --float-sat: 1.8;
 }
 :root[data-surface="frost"] {
-  --float-fill: 88%;
+  --float-fill: 97%;
   --float-blur: 36px;
   --float-sat: 1.5;
 }
@@ -1469,17 +1704,11 @@ textarea {
 :root[data-surface="frost"] .glass.floating:not(.glow),
 :root[data-surface="glass"] .float-surface,
 :root[data-surface="frost"] .float-surface {
-  background:
-    linear-gradient(180deg, rgb(255 255 255 / 0.09), rgb(255 255 255 / 0.02) 34%, transparent 62%),
-    color-mix(in srgb, var(--color-card) var(--float-fill), transparent);
-  border-color: rgb(255 255 255 / 0.1);
+  background: color-mix(in srgb, var(--color-card) var(--float-fill), transparent);
+  border-color: rgb(255 255 255 / 0.05);
   -webkit-backdrop-filter: blur(var(--float-blur)) saturate(var(--float-sat));
   backdrop-filter: blur(var(--float-blur)) saturate(var(--float-sat));
-  box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 0.14),
-    inset 0 0 0 1px rgb(255 255 255 / 0.03),
-    0 0 0 1px color-mix(in srgb, var(--color-edge) 60%, transparent),
-    0 18px 44px -14px rgb(0 0 0 / 0.65);
+  box-shadow: 0 18px 44px -14px rgb(0 0 0 / 0.65);
 }
 
 /* A field as wide as its words (lib/autowidth.ts): it grows with a letter in the same frame, and eases back as they
@@ -1644,6 +1873,20 @@ mark {
   font-size: 10.5px;
   line-height: 1.35;
   color: var(--color-faint);
+}
+/* Between the app's own tabs and the socials': a hairline, standing between them in the narrow scroller and lying
+   across the list beside the page, fading out at its ends. */
+.settings-rail-sep {
+  flex: 0 0 1px;
+  align-self: stretch;
+  margin: 9px 4px;
+  background: rgb(255 255 255 / 0.12);
+}
+@media (min-width: 1024px) {
+  .settings-rail-sep {
+    margin: 8px 14px;
+    background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.13) 16%, rgb(255 255 255 / 0.13) 84%, transparent);
+  }
 }
 
 @media (min-width: 1024px) {
@@ -1840,15 +2083,20 @@ mark {
   overflow: hidden;
 }
 
-/* The theme reveal (lib/themesweep.ts) is the browser's own view transition:
-   its own crossfade is not wanted, the script draws the blob, the thump and
-   the old theme sinking back. */
-::view-transition-old(root),
-::view-transition-new(root) {
-  animation: none;
-  mix-blend-mode: normal;
+/* The theme reveal (lib/themesweep.ts): one flat layer in the new accent, moved by the graphics card alone, so the
+   page under it never stops. It covers nothing: everything under it keeps its own light and dark and takes on its
+   colour, so the app is all there as it passes. Its edge is uneven on purpose (a circle reads as a mask, this as poured
+   paint), and soft: its colour comes through `color`, for the glow to be the same colour. */
+.theme-sweep.is-wash { mix-blend-mode: color; }
+.theme-sweep-blob {
+  position: absolute;
+  border-radius: 47% 53% 51% 49% / 52% 46% 54% 48%;
+  background: currentColor;
+  box-shadow: 0 0 48px 12px currentColor;
+  transform: scale(0.03);
+  will-change: transform;
 }
-/* While the colours change, nothing fades them: inside the blob the new theme
+/* While the colours change, nothing fades them: behind the blob the new theme
    is simply there. Every panel and button easing to its new colour was a
    repaint of the whole page each frame, on top of the change itself. */
 html.theme-switching,
@@ -1858,29 +2106,11 @@ html.theme-switching *::after {
   transition: none !important;
 }
 
-.theme-sweep-bar {
-  position: absolute;
-  top: -10%;
-  left: 0;
-  width: 42%;
-  height: 120%;
-  transform: skewX(-12deg);
-  background: linear-gradient(
-    100deg,
-    transparent 0%,
-    color-mix(in srgb, var(--color-accent) 10%, transparent) 30%,
-    color-mix(in srgb, var(--color-accent) 55%, transparent) 62%,
-    color-mix(in srgb, var(--color-accent-2, var(--color-accent)) 85%, transparent) 78%,
-    #fff 84%,
-    transparent 100%
-  );
-}
-
-/* Four-point stars scattered over the whole screen, not just off the bar.
-   Each one pops in, twinkles a few times quickly, and is gone. The delay is
-   tied to where it sits horizontally, so they light up in the sweep's wake
-   rather than all at once. Drawn with two crossed gradients: an SVG or an
-   image would be another asset to ship for a shape this simple. */
+/* Four-point stars scattered round where the theme is pouring out from. Each
+   one pops in, twinkles a few times quickly, and is gone. The delay is tied to
+   how far out it sits, so they light up as the edge reaches them rather than
+   all at once. Drawn with two crossed gradients: an SVG or an image would be
+   another asset to ship for a shape this simple. */
 .theme-sweep-star {
   position: absolute;
   width: var(--size, 10px);
@@ -2357,6 +2587,44 @@ body,
   pointer-events: none;
 }
 
+/* People waiting on a reply, on Chats while you are on another page: a small
+   accent count beside its name, the same solid accent as the counts on the chat
+   list's own avatars. In the collapsed rail it rides the icon's bottom corner;
+   the top corner is the attention dot's. */
+.nav-waiting {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  color: var(--color-bg);
+  background: var(--color-accent);
+  box-shadow: 0 4px 12px -5px color-mix(in srgb, var(--color-accent) 75%, transparent);
+  animation: nav-waiting-in 0.5s var(--spring) both;
+}
+.nav-waiting.is-rail {
+  position: absolute;
+  right: -8px;
+  bottom: -6px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 3px;
+  font-size: 8.5px;
+  box-shadow: 0 0 0 2px var(--color-surface);
+  pointer-events: none;
+}
+@keyframes nav-waiting-in {
+  from { opacity: 0; transform: scale(0.4); }
+  to { opacity: 1; transform: scale(1); }
+}
+:root[data-motion="off"] .nav-waiting { animation: none; }
+
 /* Motion off in the app, not in Windows: a spinner that stands still reads as
    the page being stuck, which is what it looked like on a PC with animation
    effects off. */
@@ -2580,7 +2848,9 @@ body,
 /* The page you are on: its icon in a tile, its name, both coming in with it. */
 .page-title { display: inline-flex; min-width: 0; align-items: center; gap: 8px; animation: page-title-in 0.36s var(--spring) both; }
 .page-title > * { pointer-events: none; }
-.page-title h1 { overflow: hidden; font-size: 13.5px; font-weight: 650; letter-spacing: -0.01em; white-space: nowrap; color: var(--color-ink); }
+/* The same size and line height as the crumbs beside it. At 13.5 against 12 their baselines fell 0.13px apart, which at
+   the usual scale rounds to different pixels: the page's name sat a whole pixel higher than the words after it. */
+.page-title h1 { overflow: hidden; font-size: 13px; line-height: 20px; font-weight: 650; letter-spacing: -0.01em; white-space: nowrap; color: var(--color-ink); }
 .page-title-icon {
   display: grid;
   width: 22px;
@@ -2595,7 +2865,7 @@ body,
 }
 @keyframes page-title-in { from { opacity: 0; transform: translateY(5px); } }
 /* In Settings, where in it: the tab a click away, the section where you are. */
-.crumbs { display: inline-flex; min-width: 0; align-items: center; gap: 2px; font-size: 12px; color: var(--color-muted); }
+.crumbs { display: inline-flex; min-width: 0; align-items: center; gap: 2px; font-size: 13px; line-height: 20px; color: var(--color-muted); }
 .crumb-sep { display: grid; flex-shrink: 0; place-items: center; color: var(--color-faint); }
 .crumb { overflow: hidden; padding: 2px 7px; border-radius: 7px; white-space: nowrap; text-overflow: ellipsis; }
 button.crumb { transition: background-color 0.15s ease, color 0.15s ease; }
@@ -2604,22 +2874,21 @@ button.crumb:hover { color: var(--color-ink); background: rgb(255 255 255 / 0.06
 /* No room for the way there in a pocket-sized window: the page's name says enough. */
 @media (max-width: 760px) { .crumbs { display: none; } }
 
-/* The buttons, in groups: a soft well each, the app's own apart from the window's. */
+/* The buttons, in groups, the app's own apart from the window's: bare icons, no plate under them and none under a
+   button pointed at (a soft well round each group, and a square lit under a button, were asked away). Space alone
+   keeps the groups apart; pointed at, the icon itself lights and makes its little motion. */
 .tb-group {
   display: flex;
   align-items: center;
   gap: 1px;
   padding: 2px;
-  border-radius: 11px;
-  background: rgb(255 255 255 / 0.035);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-edge) 70%, transparent);
 }
 .tb-btn {
   position: relative;
   color: var(--color-muted);
-  transition: background-color 0.15s ease, color 0.15s ease, transform 0.3s var(--spring);
+  transition: color 0.15s ease, transform 0.3s var(--spring);
 }
-.tb-btn:hover { color: var(--color-ink); background: rgb(255 255 255 / 0.09); }
+.tb-btn:hover { color: var(--color-ink); }
 .tb-btn:active { transform: scale(0.88); transition-duration: 0.1s; }
 .tb-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 45%, transparent); }
 .tb-ico { display: grid; transition: transform 0.32s var(--spring), filter 0.2s ease; }
@@ -2631,7 +2900,7 @@ button.crumb:hover { color: var(--color-ink); background: rgb(255 255 255 / 0.06
 .tb-btn.is-size:hover .tb-ico { transform: scale(0.84); }
 .tb-btn.is-size.is-pocket:hover .tb-ico { transform: scale(1.16); }
 .tb-btn.is-min:hover .tb-ico { transform: translateY(2px); }
-.tb-btn.is-close:hover { color: #fff; background: color-mix(in srgb, var(--color-bad) 78%, transparent); }
+.tb-btn.is-close:hover { color: var(--color-bad); }
 .tb-btn.is-close:hover .tb-ico { transform: rotate(90deg); }
 .speaker:not(.is-off):hover .tb-ico { animation: speaker-waves 0.9s ease-in-out infinite; }
 @keyframes speaker-waves { 50% { transform: translateY(-1px) scale(1.12); } }

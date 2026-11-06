@@ -148,16 +148,21 @@ def _from_disk(uid: str, persona: str = "") -> dict:
         out["facts"] = {}
         out["persona"] = None
 
-    # A Snapchat chat (its id is a chat id, not a number): named, pictured and counted from what Snapchat's runner read
-    # and the bot logged.
+    # A Snapchat, TikTok or Instagram chat (its id is a chat id, not a number): named, pictured and counted from what
+    # its runner read and the bot logged.
     if not uid.isdigit():
         from app.utils import snappeople
         info = snappeople.describe([uid]).get(uid)
         if info:
             out["display_name"] = out.get("display_name") or info["name"]
             out["avatar"] = out.get("avatar") or info["avatar"]
-            out.update(platform="snapchat", messages=info["messages"], first_seen=info["first_seen"],
+            out.update(platform=info.get("platform") or "snapchat", messages=info["messages"], first_seen=info["first_seen"],
                        last_seen=info["last_seen"], messages_7d=info["messages_7d"])
+            # A TikTok or Instagram person's username and their profile's bio, as their card shows a Discord user's;
+            # their followers, and their latest posts.
+            for k in ("username", "bio", "followers", "verified", "posts"):
+                if info.get(k) not in (None, "") and not out.get(k):
+                    out[k] = info[k]
 
     # The bot has been writing the display name into memory as a "name" fact since long before the profile cache existed, so use it when the cache has not caught up. Without this, everyone already in the database shows their @handle as their name until they happen to message again.
     if not out.get("display_name") and facts.get("name"):

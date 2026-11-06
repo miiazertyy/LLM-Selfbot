@@ -426,7 +426,7 @@ check("Discord: what goes out is the touched copy, gone after", "_pic_sent = awa
       and '{"file": discord.File(_pic_sent)}' in runner)
 bridge = src("app/platforms/snapchat_bridge.py")
 check("Snapchat: the same, as a Snap", bridge.count("await _queue_picture_if_any(msg, response)") == 2
-      and 'f"snapchat_{ACCOUNT_INDEX}"' in bridge and "_queue_outgoing(chat, \"\", image=sent)" in bridge)
+      and 'f"{PLATFORM}_{ACCOUNT_INDEX}"' in bridge and "_queue_outgoing(chat, \"\", image=sent)" in bridge)
 schema = src("app/web/schema.py")
 check("Settings knows every picture setting", all(f'"bot.pictures.{k}"' in schema for k in (
     "auto_look.mode", "auto_look.look", "auto_look.looks", "auto_look.strength", "auto_look.vary",

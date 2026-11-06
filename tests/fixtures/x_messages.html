@@ -1,0 +1,105 @@
+<!doctype html>
+<!--
+  A stand-in for x.com's messages page: the same hooks (data-testid), the same nesting, and the same two-pane
+  shape, with nobody's words in it. It is what xbot.js's readers are checked against when there is no X account to
+  read a real one with (tests/x_logic.mjs). Once there is one, x_probe.js --html writes a real page sanitized the
+  same way, and this is replaced by it.
+
+  What matters here, and what the readers lean on:
+    - the conversation list is rows of [data-testid="conversation"], each with a link to /messages/<id>
+    - the open conversation is [data-testid="messageEntry"] rows inside [data-testid="DmScrollerContainer"]
+    - its own messages are drawn to the right of the pane's middle, theirs to the left
+    - the box to write in is a contenteditable, not a textarea
+-->
+<meta charset="utf-8">
+<title>x</title>
+<style>
+  body { margin: 0; font: 14px sans-serif; }
+  [data-testid="primaryColumn"] { display: flex; width: 1000px; height: 600px; }
+  .list { width: 320px; border-right: 1px solid #333; }
+  .pane { position: relative; width: 680px; }
+  [data-testid="DmScrollerContainer"] { height: 520px; overflow-y: auto; }
+  [data-testid="messageEntry"] { display: block; width: 300px; margin: 6px; padding: 6px; }
+  .mine { margin-left: 360px; }
+  [data-testid="conversation"] { display: block; padding: 8px; }
+</style>
+
+<div data-testid="primaryColumn">
+  <div class="list">
+    <!-- One person, unread. The row is a div holding the link, not a link itself: a link inside a link is not
+         something a browser will keep, and X does not draw one. -->
+    <div data-testid="cellInnerDiv">
+      <div data-testid="conversation" role="link" tabindex="0" aria-label="Unread conversation">
+        <a href="/messages/1111-2222" aria-label="x"></a>
+        <div data-testid="UserAvatar-Container-someone"><img src="about:blank" alt="x"></div>
+        <a href="/someone">xxxxx xxxx</a>
+        <span>@someone</span>
+        <span>xx xxxx xx xxxxx</span>
+      </div>
+    </div>
+    <!-- A group, read. -->
+    <div data-testid="cellInnerDiv">
+      <div data-testid="conversation" role="link" tabindex="0">
+        <a href="/messages/3333-4444" aria-label="x"></a>
+        <div data-testid="UserAvatar-Container-two"><img src="about:blank" alt="x"></div>
+        <a href="/two">xx</a>
+        <a href="/three">xxx</a>
+        <span>xxxx xxxxxxx</span>
+        <span>xxxxx xx</span>
+      </div>
+    </div>
+    <!-- One X writes to itself, which is never answered. -->
+    <div data-testid="cellInnerDiv">
+      <div data-testid="conversation" role="link" tabindex="0">
+        <a href="/messages/5555-6666" aria-label="x"></a>
+        <a href="/grok">Grok</a>
+        <span>xxxx</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="pane">
+    <div data-testid="DmScrollerContainer">
+      <!-- Theirs, on the left. -->
+      <div data-testid="cellInnerDiv">
+        <div data-testid="messageEntry">
+          <div data-testid="UserAvatar-Container-someone"></div>
+          <span>xxx xxxx xx xxxxx</span>
+          <time datetime="2026-11-01T09:14:00.000Z">9:14 AM</time>
+        </div>
+      </div>
+      <!-- Theirs again, a photo with no words. -->
+      <div data-testid="cellInnerDiv">
+        <div data-testid="messageEntry">
+          <div data-testid="UserAvatar-Container-someone"></div>
+          <img src="about:blank" alt="Image">
+          <time datetime="2026-11-01T09:15:00.000Z">9:15 AM</time>
+        </div>
+      </div>
+      <!-- Its own, on the right, with a reaction on it. -->
+      <div data-testid="cellInnerDiv">
+        <div data-testid="messageEntry" class="mine">
+          <span>xxxx xxxx</span>
+          <div data-testid="messageEntryReactions"><img alt="❤️" src="about:blank"></div>
+          <time datetime="2026-11-01T09:16:00.000Z">9:16 AM</time>
+        </div>
+      </div>
+      <!-- Theirs, a link. -->
+      <div data-testid="cellInnerDiv">
+        <div data-testid="messageEntry">
+          <div data-testid="UserAvatar-Container-someone"></div>
+          <div data-testid="card.wrapper"><a href="https://example.com/xxxx">xxxxxxx</a></div>
+          <time datetime="2026-11-01T09:18:00.000Z">9:18 AM</time>
+        </div>
+      </div>
+    </div>
+    <div data-testid="dmComposerTextInputContainer">
+      <div data-testid="dmComposerTextInput" contenteditable="true" role="textbox"></div>
+      <div data-testid="dmComposerSendButton" role="button" aria-disabled="true">xxxx</div>
+    </div>
+  </div>
+</div>
+
+<!-- The rail, which is what says it is signed in at all. -->
+<div data-testid="SideNav_AccountSwitcher_Button" role="button">xxxxx @aliciamwwoff</div>
+<a data-testid="AppTabBar_Home_Link" href="/home">xxxx</a>

@@ -19,7 +19,10 @@ type Opts = { seconds?: number; sound?: boolean };
 export function typewrite(node: HTMLElement, opts: Opts = {}) {
   if (!get(motionEnabled)) return;
   const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT, {
-    acceptNode: (n) => ((n.textContent ?? "").length ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT),
+    // Only words. The space between two rows of a list is text too, and a box put round it is a row of its own: in a
+    // summary's grid that pushed every label and line a cell along, each line came out a letter wide, and the list
+    // stood thousands of pixels tall until the typing ended and it all fell back into place.
+    acceptNode: (n) => (/\S/.test(n.textContent ?? "") ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT),
   });
   const parts: { typed: Text; rest: HTMLElement; full: string }[] = [];
   const found: Text[] = [];

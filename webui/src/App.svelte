@@ -2,11 +2,15 @@
   import { onMount, untrack } from "svelte";
   import { api } from "./lib/api";
   import { visiblePoll } from "./lib/poll";
+  import { refreshSocials, socialsOn } from "./lib/socials";
+  import { accountsRes, slotsRes } from "./lib/accounts/state";
+  import { reloadPersonas } from "./lib/personas/store";
   import { appearance, appearanceVersion, customBgOn, customBgDim, loadAppearance,
            backdropId, surfaceId } from "./lib/stores";
   import { RIPPLE_RINGS } from "./lib/backdrops";
   import { applyCustomFace } from "./lib/fonts";
-  import { toasts, toast, snowEnabled, motionEnabled, themeId, fontId, health, loadPrefs,
+  import Notices from "./lib/components/Notices.svelte";
+  import { toast, snowEnabled, motionEnabled, themeId, fontId, health, loadPrefs,
            logoLinkOff, bigPicture, bigPictureArriving, bigPictureCovering, setBigPicture,
            uiSound, uiVolume, settingsPath, settingsSection } from "./lib/stores";
   import { TABS } from "./lib/settingsmap";
@@ -16,7 +20,7 @@
   import { applyTheme } from "./lib/themes";
   import { applyFont } from "./lib/fonts";
   import logo from "./assets/icon.png";
-  import { startChatLive, startChatPrefetch } from "./lib/chats";
+  import { loadChatAccounts, startChatLive, startChatPrefetch, waitingTotal } from "./lib/chats";
   import { warmPages } from "./lib/warm";
   import { busyRoutes, doneRoutes, progressText } from "./lib/busy";
   import ProgressRing from "./lib/components/ProgressRing.svelte";
@@ -32,6 +36,7 @@
   import Icon from "./lib/components/Icon.svelte";
   import Snow from "./lib/components/Snow.svelte";
   import PageIssues from "./lib/components/PageIssues.svelte";
+  import { dismissable, dismissedIssues, issueKey } from "./lib/components/IssueList.svelte";
   import LoadingBadge from "./lib/components/LoadingBadge.svelte";
 
   // Big Picture Mode's code, fetched the first time it is opened, or before:
@@ -51,23 +56,43 @@
   // Away from the window (another app in front, a game): the background's slow drift and the Dashboard's glow are
   // held still (app.css, :root[data-away]). They ran all day, every glass panel blurred over them afresh each frame,
   // with nobody looking. A moment after leaving, so a click on another window and straight back changes nothing.
+  // Left in front with nobody touching it for a minute and a half counts as away too: on a 143Hz screen those loops
+  // kept the laptop's graphics busy for a window nobody was looking at. Any move, key or scroll brings them back.
   onMount(() => {
+    const IDLE_MS = 90_000;
     let t = 0;
+    let idle = 0;
     const away = () => {
       clearTimeout(t);
       t = window.setTimeout(() => (document.documentElement.dataset.away = ""), 1500);
     };
+    // Even without focus: a pointer crossing the window on its way elsewhere wakes it, and it rests again after.
     const back = () => {
       clearTimeout(t);
       delete document.documentElement.dataset.away;
+      clearTimeout(idle);
+      idle = window.setTimeout(away, IDLE_MS);
     };
+    // Told once a second at most: a mouse move fires far more often than that.
+    let lastTouch = 0;
+    const touched = () => {
+      const now = Date.now();
+      if (now - lastTouch < 1000) return;
+      lastTouch = now;
+      back();
+    };
+    const INPUT = ["pointermove", "pointerdown", "keydown", "wheel", "touchstart"] as const;
     window.addEventListener("blur", away);
     window.addEventListener("focus", back);
+    for (const e of INPUT) window.addEventListener(e, touched, { passive: true });
     if (!document.hasFocus()) away();
+    else idle = window.setTimeout(away, IDLE_MS);
     return () => {
       clearTimeout(t);
+      clearTimeout(idle);
       window.removeEventListener("blur", away);
       window.removeEventListener("focus", back);
+      for (const e of INPUT) window.removeEventListener(e, touched);
     };
   });
 
@@ -226,6 +251,21 @@
   const rail = $derived(winW < RAIL_AT && !pinned);
   const pocket = $derived(winW < RAIL_AT);
 
+  /** Put away with its ×: no dot for it either, or the sidebar would still be pointing at a banner that is gone. */
+  const gone = (i: { level: string; title: string }) => dismissable(i.level) && $dismissedIssues.has(issueKey(i));
+  /** Each page's dot: the worst of what is still showing there. A page whose banners have all been put away has none. */
+  const attention = $derived.by(() => {
+    const out: Record<string, string> = { ...($health.routes ?? {}) };
+    const rank: Record<string, number> = { error: 0, warn: 1, info: 2 };
+    const pages = new Set(($health.issues ?? []).map((i) => i.route));
+    for (const page of pages) {
+      const left = ($health.issues ?? []).filter((i) => i.route === page && !gone(i));
+      if (!left.length) delete out[page];
+      else out[page] = left.reduce((w, i) => ((rank[i.level] ?? 3) < (rank[w] ?? 3) ? i.level : w), left[0].level);
+    }
+    return out;
+  });
+
   function toggleSize() {
     const t = pocket ? DESK : POCKET;
     setSize(t.w, t.h);
@@ -342,8 +382,23 @@
       }
     };
     pollHealth();
+    // Which socials are on, with the same beat: one switched off is shown nowhere (lib/socials.ts).
+    refreshSocials();
     // Big Picture shows the health issues too, so this one keeps going under it.
-    const stopHealthPoll = visiblePoll(pollHealth, 15000, { underBigPicture: true });
+    const stopHealthPoll = visiblePoll(() => { pollHealth(); refreshSocials(); }, 15000, { underBigPicture: true });
+    // A social switched on or off, from Settings or anywhere else: every list of accounts is asked for again, so it
+    // leaves (or comes back to) every page at once.
+    let socialsSeen = "";
+    const stopSocials = socialsOn.subscribe((on) => {
+      const now = JSON.stringify(on);
+      if (socialsSeen && now !== socialsSeen) {
+        accountsRes.refresh({ force: true, quiet: true });
+        slotsRes.refresh({ force: true, quiet: true });
+        reloadPersonas();
+        loadChatAccounts().catch(() => {});
+      }
+      socialsSeen = now;
+    });
 
     // Asking an account who is waiting is an IPC round trip to the bot, slow
     // enough that fetching it when the Chats tab opens meant a skeleton every
@@ -397,6 +452,7 @@
 
     return () => {
       stopHealthPoll();
+      stopSocials();
       stopChatPrefetch();
       stopChatLive();
       stopWarm();
@@ -684,6 +740,8 @@
           {@const info = $busyRoutes[key]}
           {@const pct = progressText(info)}
           {@const justDone = route !== key && !bg && !!$doneRoutes[key]}
+          <!-- People waiting on a reply, on any account, said on Chats while you are somewhere else. -->
+          {@const waiting = key === "chats" && route !== key && !bg && !justDone ? $waitingTotal : 0}
           <button
             onclick={() => navigate(key)}
             data-active={route === key}
@@ -702,17 +760,19 @@
                 <span class="nav-ring"><ProgressRing done={info?.done} total={info?.total} size={26} /></span>
               {:else if rail && justDone}
                 <span class="nav-done-dot" aria-hidden="true"></span>
+              {:else if rail && waiting}
+                <span class="nav-waiting is-rail" aria-hidden="true">{waiting > 99 ? "99+" : waiting}</span>
               {/if}
-              {#if ($health.routes ?? {})[key]}
+              {#if attention[key]}
                 <!-- Something on this page needs attention. The dot rides on
                      the icon so it stays visible in the collapsed rail. -->
                 <span
-                  class="attention-dot {$health.routes[key] === 'error'
+                  class="attention-dot {attention[key] === 'error'
                     ? 'is-error'
-                    : $health.routes[key] === 'info'
+                    : attention[key] === 'info'
                       ? 'is-info'
                       : 'is-warn'}"
-                  title={($health.issues ?? []).filter((i) => i.route === key).map((i) => i.title).join(" · ")}
+                  title={($health.issues ?? []).filter((i) => i.route === key && !gone(i)).map((i) => i.title).join(" · ")}
                 ></span>
               {/if}
             </span>
@@ -729,6 +789,10 @@
                   <path d="M4 8.5 l2.6 2.6 L12 5.4" fill="none" stroke="currentColor"
                         stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
                 </svg>
+              </span>
+            {:else if !rail && waiting}
+              <span class="nav-waiting ml-auto" role="status" aria-label="{waiting} waiting on a reply">
+                {waiting > 99 ? "99+" : waiting}
               </span>
             {/if}
           </button>
@@ -769,7 +833,7 @@
          not part of this row, so anything laid out here runs straight underneath
          them. The padding keeps that corner clear. -->
     <header
-      class="app-header chrome-surface pywebview-drag-region flex h-9 shrink-0 items-center gap-2 border-b border-edge bg-surface/70 pl-3
+      class="app-header chrome-surface pywebview-drag-region flex h-9 shrink-0 items-center gap-2 border-b border-edge bg-surface/70 pt-px pl-3
         {desktop ? 'pr-[176px] has-chrome' : 'pr-4'}"
       class:vol-open={desktop && volOpen}
     >
@@ -783,10 +847,10 @@
       {/key}
       {#if crumbs}
         <nav class="crumbs" aria-label="Where in Settings">
-          <span class="crumb-sep" aria-hidden="true"><Icon name="chevron" size={11} /></span>
+          <span class="crumb-sep" aria-hidden="true"><Icon name="chevron" size={12} /></span>
           <button type="button" class="crumb no-drag" onclick={() => settingsSection.set(crumbs.tab.id)}
                   title="Back to the start of {crumbs.tab.name}">{crumbs.tab.name}</button>
-          <span class="crumb-sep" aria-hidden="true"><Icon name="chevron" size={11} /></span>
+          <span class="crumb-sep" aria-hidden="true"><Icon name="chevron" size={12} /></span>
           {#key crumbs.sub.id}
             <span class="crumb is-here">{crumbs.sub.name}</span>
           {/key}
@@ -855,16 +919,4 @@
 
 <Snow enabled={$snowEnabled} />
 
-<div class="pointer-events-none fixed bottom-4 right-4 z-50 flex flex-col items-end gap-2">
-  {#each $toasts as t}
-    <div
-      class="toast-in glass max-w-xs px-4 py-3 text-sm shadow-xl {t.kind === 'err'
-        ? 'border-bad/40 text-bad'
-        : t.kind === 'ok'
-          ? 'border-good/40 text-good'
-          : 'text-ink'}"
-    >
-      {t.text}
-    </div>
-  {/each}
-</div>
+<Notices />

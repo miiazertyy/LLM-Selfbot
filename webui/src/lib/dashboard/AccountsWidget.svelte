@@ -21,6 +21,7 @@
   import Button from "../components/Button.svelte";
   import Empty from "../components/Empty.svelte";
   import Icon from "../components/Icon.svelte";
+  import { platformOf } from "../platforms";
   import StatusDot from "../components/StatusDot.svelte";
   import { menu as contextMenu, copyText, type MenuEntry } from "../contextmenu";
   import Spark from "./Spark.svelte";
@@ -102,7 +103,7 @@
     {#each rows as r (r.slot.id)}
       <div class="flex items-center gap-3 py-2.5" use:contextMenu={() => accountMenu(r)}>
         <span class="aw-av">
-          <Avatar src={r.rt?.avatar} name={r.name} size={30} zoom={false} silhouette={r.slot.platform === "snapchat" && !!r.rt?.username} />
+          <Avatar src={r.rt?.avatar} name={r.name} size={30} zoom={false} silhouette={platformOf(r.slot.platform).silhouette && !!r.rt?.username} />
           <span class="aw-dot aw-dot-sm"><StatusDot status={r.presence} size={10} /></span>
         </span>
         <div class="min-w-0 flex-1">
@@ -126,14 +127,14 @@
             <!-- Who, and what it is doing -->
             <div class="flex min-w-0 items-center gap-3">
               <span class="aw-av">
-                <Avatar src={r.rt?.avatar} name={r.name} size={44} silhouette={r.slot.platform === "snapchat" && !!r.rt?.username} />
+                <Avatar src={r.rt?.avatar} name={r.name} size={44} silhouette={platformOf(r.slot.platform).silhouette && !!r.rt?.username} />
                 <span class="aw-dot"><StatusDot status={r.presence} size={12} /></span>
               </span>
               <div class="min-w-0 flex-1">
                 <div class="flex min-w-0 items-center gap-2">
                   <span class="selectable min-w-0 truncate text-[14px] font-semibold text-ink" title={r.name}>{r.name}</span>
                   <span class="shrink-0 text-faint" title={platformName(r.slot.platform)}>
-                    <Icon name={r.slot.platform === "snapchat" ? "snapchat" : "discord"} size={12} />
+                    <Icon name={platformOf(r.slot.platform).icon} size={12} />
                   </span>
                 </div>
                 <div class="mt-0.5 flex min-w-0 items-center gap-1.5">

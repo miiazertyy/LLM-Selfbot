@@ -62,7 +62,8 @@ check("Chats: the all-clear check chimes as it pops", '<span class="ch-zero-mark
 mem = read("pages/Memory.svelte")
 check("Memory: the figures count up, popping in", "<Num value={s.n} />" in mem and "use:domino={{ step: 80 }}" in mem)
 check("Memory: the people, and someone's facts as they are opened",
-      "use:domino={{ step: 35, max: 14 }}" in mem and "{#key selected}" in mem)
+      # Once: rows sliding to a new order or back from a filter don't pop in again (tests/test_memory_view.py).
+      "use:domino={{ step: 35, max: 14, once: true }}" in mem and "{#key selected}" in mem)
 check("Memory: a person pressed squashes", ".mm-row:active { transform: scale(0.97);" in mem)
 
 print("\n== Settings > Appearance, its own way and faster: the colours flood in ==")
@@ -139,18 +140,26 @@ mp = read("lib/components/ModelsPanel.svelte")
 check("a list can plug in, sliding across, with its note as it lands",
       'if (o.variant === "plug") node.classList.add("is-plug");' in dm and 'sound?: "pluck" | "wind" | "key" | "seat" | "none";' in dm
       and ".domino.is-plug.is-in > :not([data-there])" in css and "@keyframes domino-plug" in css)
-check("the chain of models plugs in one by one, a woody tock each as it lands, quickly",
-      'use:domino={{ step: 45, variant: "plug", sound: "seat", soundAt: 120, level: 0.85, once: true }}' in mp)
+check("the chain of models plugs in one by one, a woody tock each as it lands, close behind each other",
+      'use:domino={{ step: 30, variant: "plug", sound: "seat", soundAt: 150, level: 0.85, once: true }}' in mp)
 check("each job plugs in after it, its model a moment later, with its tock",
-      'use:domino={{ step: 35, variant: "plug", sound: "seat", soundAt: 150, level: 0.65, once: true }}' in mp
+      'use:domino={{ step: 24, variant: "plug", sound: "seat", soundAt: 180, level: 0.65, once: true }}' in mp
       and '<div class="mp-job-wrap">' in mp)
 check("a beam of light runs across each model, then its light comes on",
-      "@keyframes mp-beam" in mp and "@keyframes mp-light" in mp and "var(--domino-step, 45ms) + 60ms" in mp
-      and "var(--domino-step, 45ms) + 190ms" in mp)
-check("the Models tabs open in under half the time: a quicker wave, and each item lands sooner",
+      "@keyframes mp-beam" in mp and "@keyframes mp-light" in mp and "var(--domino-step, 30ms) + 40ms" in mp
+      and "var(--domino-step, 30ms) + 150ms" in mp)
+# Each move slower than it was, the steps between them smaller: five models are lit as soon as they were (690ms).
+_step = int(re.search(r'use:domino=\{\{ step: (\d+), variant: "plug", sound: "seat", soundAt: \d+, level: 0\.85', mp).group(1))
+_light = re.search(r"animation: mp-light ([\d.]+)s[^;]*;\s*animation-delay: calc\(var\(--i, 0\) \* var\(--domino-step, \d+ms\) \+ (\d+)ms\)", mp)
+_beam = float(re.search(r"animation: mp-beam ([\d.]+)s", mp).group(1))
+_total = 4 * _step + int(_light.group(2)) + float(_light.group(1)) * 1000
+check("each move takes its time, and the whole run is as long as it was", _beam >= 0.5 and float(_light.group(1)) >= 0.4
+      and 640 <= _total <= 740, f"beam {_beam}s, five lit at {_total:.0f}ms")
+check("the Models tabs open as soon as they did, but calmer: blocks barely apart, each easing in slower",
       'data-cascade={tab.id === "groq" ? "quick" : undefined}' in read("pages/Settings.svelte")
-      and "const QUICK = { perPx: 0.16, maxDelay: 140, duration: 340 };" in read("lib/cascade.ts")
-      and '[data-cascade="quick"] { --domino-dur: 0.36s; }' in css)
+      and "const QUICK = { perPx: 0.05, maxDelay: 50, duration: 440 };" in read("lib/cascade.ts")
+      and 'const QUICK_EASING = "cubic-bezier(0.22, 0.75, 0.25, 1)";' in read("lib/cascade.ts")
+      and '[data-cascade="quick"] { --domino-dur: 0.5s; }' in css)
 check("a job's model plugs in from the right, and the icons pop",
       "@keyframes mp-plug" in mp and "translateX(22px)" in mp and "@keyframes mp-icon" in mp)
 check("with Animations off, none of it", ':global(:root[data-motion="off"]) .mp-head-icon { animation: none; }' in mp
@@ -160,8 +169,10 @@ check("only as the tab opens: a model added later or a reorder is not a show", m
 print("\n== Settings > Models, made over ==")
 mh = read("lib/components/ModelsHero.svelte")
 st = read("pages/Settings.svelte")
-check("each part opens on an orb with a ring of light turning round it, and how things stand there as chips",
-      'class="mh-orb" use:chime={"land"}' in mh and "@keyframes mh-turn" in mh and 'class="mh-chips domino"' in mh
+# A gradient, a shadow, a highlight and a ring of light turning for ever on the Intel chip: rejected as legacy, 2026-11-05.
+check("each part opens on the tile every other part of Settings has, and how things stand there as chips",
+      'class="mh-mark" use:chime={"land"}' in mh and "mh-turn" not in mh and "linear-gradient" not in mh
+      and "width: 40px" in mh and 'class="mh-chips domino"' in mh
       and '{#if tab.id === "groq"}' in st and "<ModelsHero which={sub.id}" in st)
 check("the chips say it in plain words: replies, providers, the computer's server, today's requests",
       "to fall back on" in mh and "connected" in mh and '"running" : "not running"' in mh and '"request") + " today"' in mh)
@@ -171,8 +182,8 @@ pp = read("lib/components/ProvidersPanel.svelte")
 check("each provider lit in its own colour, a check on its mark once connected, the cards coming in one by one",
       "--tint: {TINT[p.id] ?? 'var(--color-accent)'}" in pp and 'class="pp-ok"' in pp and pp.count("use:domino=") == 2)
 us = read("lib/components/UsagePanel.svelte")
-check("today's figures roll up, the models' cards come in one by one",
-      "<Num value={totals.requests} />" in us and us.count("use:domino=") == 2)
+check("the providers' cards and the models' rows come in one by one, a note each",
+      us.count("use:domino=") == 2 and 'sound: "pluck"' in us and 'sound: "wind"' in us)
 check("a key icon for keys: it was asked for and drew nothing", "key:" in read("lib/components/Icon.svelte"))
 
 print(f"\n{len(PASS)} passed, {len(FAIL)} failed")

@@ -11,9 +11,12 @@
     size = 48,
     spin = false,
     ring = true,
-  }: { p?: Pick<Persona, "name" | "color" | "avatar"> | null; size?: number; spin?: boolean; ring?: boolean } = $props();
+  }: { p?: Pick<Persona, "name" | "color" | "color2" | "avatar"> | null; size?: number; spin?: boolean; ring?: boolean } = $props();
 
   const color = $derived(colorOf(p));
+  /** With a theme of two colours, the ring runs into the second and it glows from the far side. */
+  const rim = $derived(p?.color2 || `color-mix(in srgb, ${color} 30%, transparent)`);
+  const far = $derived(p?.color2 || "transparent");
   let broken = $state(false);
   $effect(() => {
     void p?.avatar;
@@ -21,7 +24,7 @@
   });
 </script>
 
-<span class="po" class:is-spin={spin} style="--po-size: {size}px; --po-c: {color}" aria-hidden="true">
+<span class="po" class:is-spin={spin} style="--po-size: {size}px; --po-c: {color}; --po-rim: {rim}; --po-c2: {far}" aria-hidden="true">
   {#if ring}<span class="po-ring"></span>{/if}
   <span class="po-face">
     {#if p?.avatar && !broken}
@@ -46,8 +49,7 @@
     position: absolute;
     inset: -3px;
     border-radius: 999px;
-    background: conic-gradient(from 0deg, var(--po-c), color-mix(in srgb, var(--po-c) 30%, transparent) 40%,
-      transparent 60%, var(--po-c));
+    background: conic-gradient(from 0deg, var(--po-c), var(--po-rim) 40%, transparent 60%, var(--po-c));
     -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 2.5px), #000 calc(100% - 2px));
     mask: radial-gradient(farthest-side, transparent calc(100% - 2.5px), #000 calc(100% - 2px));
     opacity: 0.55;
@@ -65,6 +67,7 @@
     border-radius: 999px;
     background:
       radial-gradient(circle at 32% 28%, color-mix(in srgb, var(--po-c) 55%, transparent), transparent 70%),
+      radial-gradient(circle at 74% 80%, color-mix(in srgb, var(--po-c2) 52%, transparent), transparent 66%),
       color-mix(in srgb, var(--po-c) 16%, var(--color-card));
     box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--po-c) 30%, transparent);
   }

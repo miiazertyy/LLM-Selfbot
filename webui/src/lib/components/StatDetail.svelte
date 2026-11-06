@@ -12,10 +12,12 @@
    * multi-coloured. The app gives each theme an accent and a second accent, and
    * measured against that theme's own surface the pair falls below the
    * normal-vision colour separation floor in four of the six themes - so
-   * Discord and Snapchat get a chart each instead of two colours on one.
+   * Each platform gets a chart of its own instead of colours on one.
    */
   import { onMount } from "svelte";
   import { api } from "../api";
+  import { platformOn, socialsOn } from "../socials";
+  import { PLATFORMS, PLATFORM_IDS } from "../platforms";
   import Icon from "./Icon.svelte";
   import StatChart from "./StatChart.svelte";
   import UserChip from "./UserChip.svelte";
@@ -64,9 +66,9 @@
 
   // ── Derived shapes ─────────────────────────────────────────────────────────
   const series = $derived(data?.series ?? []);
-  const dayTotals = $derived(series.map((d: any) => d.discord + d.snapchat));
-  const discordDaily = $derived(series.map((d: any) => d.discord));
-  const snapDaily = $derived(series.map((d: any) => d.snapchat));
+  // Every number on the row, whatever the platform is called: adding one used to mean editing this by hand.
+  const dayTotals = $derived(series.map((d: any) => Object.entries(d || {})
+    .reduce((n: number, [k, v]) => n + (k === "day" || typeof v !== "number" ? 0 : v), 0)));
 
   const dayLabels = $derived(
     series.map((d: any) =>
@@ -112,8 +114,15 @@
   const busiestHour = $derived(
     data?.busiest?.hour == null ? "" : `${String(data.busiest.hour).padStart(2, "0")}:00`,
   );
-  const platform = $derived(data?.platform ?? { discord: 0, snapchat: 0 });
-  const bothPlatforms = $derived(platform.discord > 0 && platform.snapchat > 0);
+  const platform = $derived<Record<string, number>>(data?.platform ?? {});
+  /** The platforms in the table: Discord's and Snapchat's always, the newer ones once they have replies. */
+  const columns = $derived(
+    PLATFORM_IDS.map((id) => [id, PLATFORMS[id].short ?? PLATFORMS[id].name] as const)
+      .filter(([k]) => ((k === "discord" || k === "snapchat") || (platform[k] ?? 0) > 0)
+        && platformOn($socialsOn, k)),
+  );
+  /** A chart each, when more than one platform has replies. */
+  const used = $derived(columns.filter(([k]) => (platform[k] ?? 0) > 0));
 </script>
 
 <div
@@ -237,8 +246,9 @@
               <thead class="sticky top-0 bg-card text-[11px] uppercase tracking-wider text-faint">
                 <tr>
                   <th class="px-3 py-2 font-medium">Day</th>
-                  <th class="px-3 py-2 text-right font-medium">Discord</th>
-                  <th class="px-3 py-2 text-right font-medium">Snapchat</th>
+                  {#each columns as [, name]}
+                    <th class="px-3 py-2 text-right font-medium">{name}</th>
+                  {/each}
                   <th class="px-3 py-2 text-right font-medium">Total</th>
                 </tr>
               </thead>
@@ -246,10 +256,11 @@
                 {#each series as d, i}
                   <tr class="hover:bg-white/[0.03]">
                     <td class="px-3 py-1.5 text-muted">{dayLabels[i]}</td>
-                    <td class="px-3 py-1.5 text-right tabular-nums text-ink">{d.discord}</td>
-                    <td class="px-3 py-1.5 text-right tabular-nums text-ink">{d.snapchat}</td>
+                    {#each columns as [k]}
+                      <td class="px-3 py-1.5 text-right tabular-nums text-ink">{d[k] ?? 0}</td>
+                    {/each}
                     <td class="px-3 py-1.5 text-right font-medium tabular-nums text-ink">
-                      {d.discord + d.snapchat}
+                      {dayTotals[i]}
                     </td>
                   </tr>
                 {/each}
@@ -265,23 +276,18 @@
             <StatChart values={dayTotals} labels={dayLabels} kind="area" height={160} unit="replies" />
           </section>
 
-          <!-- Two charts rather than two colours: see the note at the top. -->
-          {#if bothPlatforms}
-            <section class="grid gap-4 sm:grid-cols-2">
-              <div>
-                <h3 class="mb-2 flex items-baseline gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-faint">
-                  Discord
-                  <span class="font-normal tracking-normal text-muted">{platform.discord.toLocaleString()}</span>
-                </h3>
-                <StatChart values={discordDaily} labels={dayLabels} kind="area" height={100} unit="replies" />
-              </div>
-              <div>
-                <h3 class="mb-2 flex items-baseline gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-faint">
-                  Snapchat
-                  <span class="font-normal tracking-normal text-muted">{platform.snapchat.toLocaleString()}</span>
-                </h3>
-                <StatChart values={snapDaily} labels={dayLabels} kind="area" height={100} unit="replies" />
-              </div>
+          <!-- A chart each rather than colours: see the note at the top. -->
+          {#if used.length > 1}
+            <section class="grid gap-4 sm:grid-cols-2" class:lg:grid-cols-3={used.length > 2}>
+              {#each used as [k, name] (k)}
+                <div>
+                  <h3 class="mb-2 flex items-baseline gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-faint">
+                    {name}
+                    <span class="font-normal tracking-normal text-muted">{(platform[k] ?? 0).toLocaleString()}</span>
+                  </h3>
+                  <StatChart values={series.map((d: any) => d[k] ?? 0)} labels={dayLabels} kind="area" height={100} unit="replies" />
+                </div>
+              {/each}
             </section>
           {/if}
 

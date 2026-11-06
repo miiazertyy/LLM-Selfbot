@@ -22,18 +22,29 @@ What happens now:
     (start_pull asks for_pull).
   - With no room for any size of it, it says how much is needed and downloads
     nothing.
+  - llama.cpp's files are looked at too, by what their own header says (it
+    has no /api/show). A LoRA, an add-on for a model that cannot answer on its
+    own, was once downloaded from a repo's lora/ folder as "the model" (its
+    every real size was too big for the computer); it is never picked now, and
+    one already there is said and fixed like a draft: the model itself when it
+    fits, else something that does, a smaller copy of it included.
 """
 import copy
+import gzip
+import http.client
 import json
+import math
 import os
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import threading
 import time
 import urllib.error
 import urllib.request
+from urllib.parse import quote
 
 from app.utils import localai
 
@@ -42,9 +53,12 @@ GB = 1024 ** 3
 # How long a model that would not load is left alone: it will not load a minute later either.
 REST = 600.0
 
+# llama.cpp's router says only "model name=<name> failed to load" (a 500 that Try showed as "This computer answered
+# 500."), its child's own words going nowhere. Not any "failed to load": its "Failed to load image" is a bad picture.
 _LOAD_FAILED = re.compile(
-    r"error loading model|failed to load model|check_tensor_dims|has wrong shape|missing tensor|"
-    r"unknown model architecture|unsupported model architecture|(llama-server|llama runner) process has terminated",
+    r"error loading model|failed to load model|model name=.+? failed to load|check_tensor_dims|has wrong shape|"
+    r"missing tensor|unknown model architecture|unsupported model architecture|"
+    r"(llama-server|llama runner) process has terminated",
     re.I)
 
 
@@ -104,37 +118,125 @@ def _billions(text) -> float:
     return n / 1000 if m.group(2).upper() == "M" else n
 
 
-def inspect(model: str, base_url: str, timeout: float = 15.0) -> dict | None:
-    """What a model on Ollama really is; None when it is not Ollama there, or it does not have the model.
+# The value types of a GGUF header, as struct letters: 8 is a string and 9 an array, read apart.
+_GGUF_TYPES = {0: "B", 1: "b", 2: "H", 3: "h", 4: "I", 5: "i", 6: "f", 7: "?", 10: "Q", 11: "q", 12: "d"}
 
-    `helper` is a file that is not a model on its own: the vision part of one, or a draft for speculative
-    decoding. The file says so itself: its type, or how many parameters it has against the size its name gives
-    (a 1.9B "27B"). Not by the words "MTP" or "draft" in its tags alone: those are the repo's, and the model
-    itself carries them too."""
+
+def gguf_info(path) -> dict | None:
+    """What a GGUF file says about itself, for llama.cpp, which has nothing like Ollama's /api/show: its general.*,
+    adapter.* and split.* settings, and how many parameters its tensors hold, as general.parameter_count the way
+    Ollama gives it (left out for one part of a split file, which holds only some). None for a file that is not GGUF,
+    or cannot be read."""
+    try:
+        with open(path, "rb") as f:
+            def unpack(fmt: str) -> tuple:
+                size = struct.calcsize(fmt)
+                data = f.read(size)
+                if len(data) != size:
+                    raise EOFError
+                return struct.unpack(fmt, data)
+
+            def text(keep: bool = True) -> str:
+                n, = unpack("<Q")
+                if not keep or n > 65536:
+                    f.seek(n, 1)
+                    return ""
+                return f.read(n).decode("utf-8", "replace")
+
+            if f.read(4) != b"GGUF":
+                return None
+            version, = unpack("<I")
+            if version < 2:
+                return None          # the first version counted in 32 bits; nothing has written it for years
+            tensors, count = unpack("<QQ")
+            out = {}
+            for _ in range(count):
+                key = text()
+                kind, = unpack("<I")
+                keep = key.startswith(("general.", "adapter.", "split."))
+                if kind == 8:
+                    value = text(keep)
+                elif kind == 9:
+                    # The tokenizer's lists: hundreds of thousands of words, gone past without being kept.
+                    item, n = unpack("<IQ")
+                    if item == 8:
+                        for _ in range(n):
+                            text(False)
+                    elif item in _GGUF_TYPES:
+                        f.seek(struct.calcsize("<" + _GGUF_TYPES[item]) * n, 1)
+                    else:
+                        return None  # lists of lists: no file written by llama.cpp has them
+                    continue
+                elif kind in _GGUF_TYPES:
+                    value, = unpack("<" + _GGUF_TYPES[kind])
+                else:
+                    return None
+                if keep:
+                    out[key] = value
+            params = 0
+            for _ in range(tensors):
+                text(False)
+                dims, = unpack("<I")
+                if dims > 8:
+                    return None
+                params += math.prod(unpack(f"<{dims}Q"))
+                f.seek(12, 1)        # its type, and where its data starts
+            if int(out.get("split.count") or 1) <= 1:
+                out.setdefault("general.parameter_count", params)
+            return out
+    except (OSError, EOFError, struct.error, ValueError, OverflowError, MemoryError):
+        return None
+
+
+def helper_kind(info: dict, has: float = 0.0, said: float = 0.0) -> str:
+    """Which sort of file this is that is not a model on its own, by what it says about itself: "vision", "adapter",
+    "draft", or "" for a model. `has` and `said` are billions of parameters, when something else knows them better."""
+    has = has or float(info.get("general.parameter_count") or 0) / 1e9
+    said = said or _billions(info.get("general.size_label"))
+    words = str(info.get("general.description") or "").lower()
+    if str(info.get("general.type") or "").lower() == "adapter" or info.get("adapter.type"):
+        return "adapter"
+    if str(info.get("general.type") or "").lower() == "mmproj" or str(info.get("general.architecture") or "") == "clip":
+        return "vision"
+    if (has and said and has < said / 3) or (not said and re.search(r"\bdraft\b", words)):
+        return "draft"
+    return ""
+
+
+def inspect(model: str, base_url: str, timeout: float = 15.0) -> dict | None:
+    """What a local model really is: Ollama's word for it, else what llama.cpp's file says about itself. None when
+    neither has the model.
+
+    `helper` is a file that is not a model on its own: the vision part of one, a LoRA (an add-on that changes the
+    model it is put on), or a draft for speculative decoding. The file says so itself: its type, or how many
+    parameters it has against the size its name gives (a 1.9B "27B"). Not by the words "MTP" or "draft" in its tags
+    alone: those are the repo's, and the model itself carries them too."""
     req = urllib.request.Request(localai.server_root(base_url) + "/api/show",
                                  data=json.dumps({"model": model}).encode(),
                                  headers={"content-type": "application/json"}, method="POST")
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             data = json.loads(r.read().decode("utf-8", "replace"))
+        info, details = data.get("model_info") or {}, data.get("details") or {}
     except Exception:
+        info, details = None, {}
+    if not any(str(k).startswith("general.") for k in info or {}):
+        # Not Ollama: llama.cpp answers /api/show with a 404, and its router a file it cannot run with "failed to
+        # load" and nothing more. The file is asked instead.
+        path = localai.file_model_path(model, base_url)
+        info = (gguf_info(path) if path else None) or info
+    if info is None:
         return None
-    info = data.get("model_info") or {}
-    details = data.get("details") or {}
     has = float(info.get("general.parameter_count") or 0) / 1e9 or _billions(details.get("parameter_size"))
     said = _billions(info.get("general.size_label"))
-    words = str(info.get("general.description") or "").lower()
-    kind = ""
-    if str(info.get("general.type") or "").lower() == "mmproj" or str(info.get("general.architecture") or "") == "clip":
-        kind = "vision"
-    elif (has and said and has < said / 3) or (not said and re.search(r"\bdraft\b", words)):
-        kind = "draft"
+    kind = helper_kind(info, has, said)
     return {"helper": bool(kind), "kind": kind, "has": has, "said": said,
             "name": str(info.get("general.basename") or info.get("general.name") or "")}
 
 
 def what(kind: str) -> str:
-    return "the vision part of a model" if kind == "vision" else "a draft model, a small helper for a bigger one"
+    return {"vision": "the vision part of a model", "adapter": "a LoRA add-on for a model"}.get(
+        kind, "a draft model, a small helper for a bigger one")
 
 
 # ── The model itself, on HuggingFace ──────────────────────────────────────────
@@ -151,14 +253,82 @@ def hf_repo(model: str) -> tuple:
     return "", ""
 
 
-def _hf_get(url: str, timeout: float = 20.0, accept: str = "application/json", tries: int = 4):
-    """JSON from HuggingFace. It drops the connection now and then on a few quick requests in a row (WinError
-    10054), so that is tried again after a moment; an answer it gives (a 400, a 404) is not."""
-    for attempt in range(tries):
-        req = urllib.request.Request(url, headers={"accept": accept, "user-agent": "LLMSelfbot"})
+# One connection to Hugging Face, kept open, one request at a time. From some computers it cuts about every other new
+# connection as it starts (WinError 10054), worst on a few quick ones in a row; once one is up, what goes over it is not
+# cut, and a search as you type asks often enough to keep it up.
+_hf_lock = threading.Lock()
+_hf_conn = None
+# Where the next page of the last answer is (its Link header), for each thread: read right after asking, in the same
+# thread, so a search can go on past the batch it was given (hfsearch._look).
+_hf_local = threading.local()
+
+
+def hf_next() -> str:
+    """The next page of the last answer this thread had from Hugging Face, or ""."""
+    return getattr(_hf_local, "next", "")
+
+
+def hf_next_reset() -> None:
+    _hf_local.next = ""
+
+
+def _hf_drop() -> None:
+    global _hf_conn
+    if _hf_conn is not None:
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as r:
-                return json.loads(r.read().decode("utf-8", "replace"))
+            _hf_conn.close()
+        except Exception:
+            pass
+    _hf_conn = None
+
+
+def _hf_request(path: str, timeout: float, accept: str) -> tuple:
+    """(status, its Location, the body) over the connection kept open. One it had closed in the meantime is no failure:
+    asked again at once, on a new one."""
+    global _hf_conn
+    headers = {"accept": accept, "accept-encoding": "gzip", "user-agent": "LLMSelfbot"}
+    with _hf_lock:
+        while True:
+            kept = _hf_conn is not None and _hf_conn.sock is not None
+            try:
+                if _hf_conn is None:
+                    _hf_conn = localai.hf_connection("huggingface.co", timeout)
+                _hf_conn.timeout = timeout
+                if _hf_conn.sock is not None:
+                    _hf_conn.sock.settimeout(timeout)
+                _hf_conn.request("GET", path, headers=headers)
+                r = _hf_conn.getresponse()
+                body = r.read()
+                found = re.search(r'<([^>]+)>\s*;\s*rel="?next"?', r.getheader("link") or "")
+                _hf_local.next = found.group(1) if found else ""
+                if (r.getheader("content-encoding") or "").lower() == "gzip":
+                    body = gzip.decompress(body)
+                return r.status, r.getheader("location") or "", body
+            except (http.client.HTTPException, OSError) as e:
+                _hf_drop()
+                if not kept:
+                    localai.hf_failed()
+                    raise urllib.error.URLError(e) from e
+
+
+def _hf_get(url: str, timeout: float = 20.0, accept: str = "application/json", tries: int = 4):
+    """JSON from HuggingFace. The connection dropping is tried again after a moment; an answer it gives (a 400, a 404)
+    is not. A redirect is followed, as a repo that was renamed answers with one."""
+    for attempt in range(tries):
+        path = url.removeprefix("https://huggingface.co")
+        try:
+            for _ in range(4):
+                status, location, body = _hf_request(path, timeout, accept)
+                if status not in (301, 302, 303, 307, 308) or not location:
+                    break
+                if location.startswith("https://huggingface.co/"):
+                    location = location.removeprefix("https://huggingface.co")
+                if not location.startswith("/"):
+                    raise urllib.error.HTTPError(url, status, "Sent elsewhere", None, None)
+                path = location
+            if status != 200:
+                raise urllib.error.HTTPError(url, status, f"Hugging Face answered {status}", None, None)
+            return json.loads(body.decode("utf-8", "replace"))
         except urllib.error.HTTPError:
             raise
         except (urllib.error.URLError, ConnectionError, TimeoutError):
@@ -168,8 +338,9 @@ def _hf_get(url: str, timeout: float = 20.0, accept: str = "application/json", t
 
 
 def repo_files(repo: str) -> list:
-    """Every file in a HuggingFace repo, with its size: [{"name", "size"}]."""
-    data = _hf_get(f"https://huggingface.co/api/models/{repo}?blobs=true")
+    """Every file in a HuggingFace repo, with its size: [{"name", "size"}]. Tried six times: four in a row dropped as
+    the app started, back when every connection here went over an IPv6 route that cuts them (localai.hf_source)."""
+    data = _hf_get(f"https://huggingface.co/api/models/{repo}?blobs=true", tries=6)
     return [{"name": s["rfilename"], "size": int(s.get("size") or 0)}
             for s in data.get("siblings") or [] if s.get("rfilename")]
 
@@ -182,8 +353,19 @@ QUANTS = ("Q4_K_M", "Q4_K_S", "IQ4_XS", "IQ4_NL", "Q4_0", "Q4_1",
           "Q2_K", "Q2_K_S", "IQ2_M", "IQ2_S", "IQ2_XS", "IQ2_XXS", "IQ1_M", "IQ1_S",
           "BF16", "F16", "F32")
 _TAG = re.compile(r"[-_.]((?:I?Q\d(?:_[A-Z0-9]+)*)|BF16|F16|F32)\.gguf$", re.I)
-# Never the model itself: the vision part, a draft, the data a quant was made with, one part of a split file.
-_NOT_MODEL = re.compile(r"mmproj|projector|draft|imatrix|-of-\d{3,}", re.I)
+# Never the model itself: the vision part, a draft, the data a quant was made with, one part of a split file. Nor the
+# small speed-up file some repos keep beside it ("MTP/mtp-gemma-4-12b-it-Q8_0.gguf", half a gigabyte, in a size that can
+# be asked for by name), which is named as a draft is not. A model built with those heads in has MTP further along its
+# name ("Qwen3.6-35B-A3B-MTP-Q4_K_M.gguf"), and stays.
+_NOT_MODEL = re.compile(r"mmproj|projector|draft|imatrix|-of-\d{3,}|(?:^|/)(?:fast)?mtp[-_/]", re.I)
+# Nor a LoRA, an add-on for the model that llama.cpp cannot run on its own, often in a lora/ folder beside it: a
+# 4.4 GB "lora/Qwen3.8-27B-Humanlike-Chat-2.0-LoRA-r320-F16.gguf" was downloaded as the model, being the one file of
+# its repo small enough for the computer, and every Try of it answered 500. Unless it says it is merged into the model.
+_ADAPTER = re.compile(r"(?<![a-z])q?lora(?![a-z])|(?<![a-z])adapters?(?![a-z])", re.I)
+
+
+def is_adapter_name(name: str) -> bool:
+    return bool(_ADAPTER.search(name or "")) and not re.search(r"merge", os.path.basename(name or ""), re.I)
 
 
 def model_files(files: list) -> list:
@@ -191,7 +373,7 @@ def model_files(files: list) -> list:
     out = []
     for f in files:
         name = f["name"]
-        if not name.lower().endswith(".gguf") or _NOT_MODEL.search(name):
+        if not name.lower().endswith(".gguf") or _NOT_MODEL.search(name) or is_adapter_name(name):
             continue
         m = _TAG.search(name)
         if m and m.group(1).upper() in QUANTS:
@@ -368,9 +550,12 @@ def resolves(repo: str, tag: str, size: int) -> bool:
     return False
 
 
-def _best(repo: str, files: list) -> tuple:
-    """(the file to get, "") or (None, why not)."""
+def _best(repo: str, files: list, by_file: bool = False) -> tuple:
+    """(the file to get, "") or (None, why not). Ollama is handed a size by name, which HuggingFace has to resolve;
+    llama.cpp (`by_file`) is given the file itself."""
     picks, why = choices(files, machine())
+    if by_file:
+        return (picks[0], "") if picks else (None, why)
     for f in picks[:4]:
         if resolves(repo, f["tag"], f["size"]):
             return f, ""
@@ -417,29 +602,48 @@ def _flavour(name: str) -> set:
 
 
 def alternatives(repo: str, mach: dict, room_back: int = 0, look_at: int = 8) -> list:
-    """The maker's other models of the same kind this computer has room for, best first: [{"model", "repo", "tag",
-    "size", "label"}]. Best is the closest kind, then one in a 4-bit size (a bigger model squeezed to 2 bits answers
-    worse than a smaller one at 4), then the most parameters. `room_back` is disk that switching frees: the file that
-    does not load goes first."""
+    """The maker's other models of the same kind this computer has room for, and copies of this very model others
+    put up in sizes its maker has not (LessThanThreeAI's Humanlike 27B starts at 14 GB; hum-ma has it at 8 GB), best
+    first: [{"model", "repo", "tag", "size", "label", "by"}], `by` naming who put up a copy, "" for the maker. Best is
+    the closest kind, then one in a 4-bit size (a bigger model squeezed to 2 bits answers worse than a smaller one at
+    4), then the most parameters, then the copy most people use. `room_back` is disk that switching frees: the file
+    that does not load goes first."""
     author, _, name = (repo or "").partition("/")
     if not author or not name:
         return []
-    try:
-        listed = _hf_get(f"https://huggingface.co/api/models?author={author}&limit=200")
-    except Exception:
-        return []
-    mine = _flavour(name)
-    near = []
-    for m in listed if isinstance(listed, list) else []:
-        rid = str(m.get("id") or m.get("modelId") or "")
-        if not rid or rid == repo or "/" not in rid:
+    # Copies are named after the model, with "-GGUF" (or the like) on the end.
+    base = re.sub(r"([-_.](gguf|i1|imatrix))+$", "", name, flags=re.I)
+    found = []
+    for url in (f"https://huggingface.co/api/models?author={author}&limit=200",
+                f"https://huggingface.co/api/models?search={quote(base)}&filter=gguf&limit=50"):
+        try:
+            # Tried longer than one repo's files: one of these lost to a dropped connection loses every candidate.
+            got = _hf_get(url, tries=6)
+        except Exception:
             continue
-        score = len(mine & _flavour(rid.split("/", 1)[1]))
-        if score >= max(2, len(mine) - 1):
-            near.append((score, _billions(rid.split("/", 1)[1]), rid))
+        found += [m for m in got if isinstance(m, dict)] if isinstance(got, list) else []
+    mine, params = _flavour(name), _billions(name)
+    near, seen = [], set()
+    for m in found:
+        rid = str(m.get("id") or m.get("modelId") or "")
+        if not rid or rid == repo or "/" not in rid or rid in seen:
+            continue
+        seen.add(rid)
+        tags = m.get("tags")
+        if isinstance(tags, list) and tags and "gguf" not in tags:
+            continue                 # weights for other servers (safetensors, FP8, GPTQ): nothing here runs them
+        who, _, theirs = rid.partition("/")
+        words = _flavour(theirs)
+        score = len(mine & words)
+        if who == author:
+            if score >= max(2, len(mine) - 1):
+                near.append((score, _billions(theirs), rid, "", int(m.get("downloads") or 0)))
+        elif mine and mine <= words and params and _billions(theirs) == params:
+            # Someone else's: only this very model, every word of its name and its size, never a lookalike.
+            near.append((score, params, rid, who, int(m.get("downloads") or 0)))
     room = dict(mach, free=mach.get("free", 0) + max(0, room_back))
     out = []
-    for score, params, rid in sorted(near, key=lambda x: (-x[0], -x[1]))[:look_at]:
+    for score, size, rid, by, downloads in sorted(near, key=lambda x: (-x[0], -x[1]))[:look_at]:
         try:
             picks, _ = choices(repo_files(rid), room)
         except Exception:
@@ -448,7 +652,8 @@ def alternatives(repo: str, mach: dict, room_back: int = 0, look_at: int = 8) ->
             continue
         best = picks[0]
         out.append({"model": f"hf.co/{rid}:{best['tag']}", "repo": rid, "tag": best["tag"], "size": best["size"],
-                    "label": rid.split("/", 1)[1], "_rank": (score, best["tag"].lstrip("I").startswith("Q4"), params)})
+                    "label": rid.split("/", 1)[1], "by": by,
+                    "_rank": (score, best["tag"].lstrip("I").startswith("Q4"), size, downloads)})
     out.sort(key=lambda a: a["_rank"], reverse=True)
     return [{k: v for k, v in a.items() if k != "_rank"} for a in out]
 
@@ -639,9 +844,18 @@ def _remove(model: str, base_url: str) -> None:
         localai.delete_model(model, base_url)
 
 
+def _offer(alt: dict | None) -> str:
+    """What fits instead, for the log: something smaller by the same maker, or a smaller copy of the model itself."""
+    if not alt:
+        return ""
+    who = f"A smaller copy of it by {alt['by']}" if alt.get("by") else "A smaller one by the same maker"
+    return (f" {who} fits: {alt['label']} ({alt['tag']}, {_gb(alt['size'])}). "
+            f"Switch to it on This computer, in Settings, Models.")
+
+
 def offer_smaller(model: str, base_url: str, big: dict) -> dict:
-    """A model in use too big for this computer: said, with something smaller by the same maker that fits offered,
-    one click away (use_alt). Never switched to unasked."""
+    """A model in use too big for this computer: said, with something smaller that fits offered (by the same maker,
+    or a copy of it someone made smaller), one click away (use_alt). Never switched to unasked."""
     if not _busy.acquire(blocking=False):
         return status()
     try:
@@ -658,10 +872,8 @@ def offer_smaller(model: str, base_url: str, big: dict) -> dict:
                 found = []
             # Ollama is handed a size by name, which HuggingFace has to resolve; llama.cpp is given the file itself.
             alt = next((a for a in found if kind == "file" or resolves(a["repo"], a["tag"], a["size"])), None)
-        offer = (f" A smaller one by the same maker fits: {alt['label']} ({alt['tag']}, {_gb(alt['size'])}). "
-                 f"Switch to it on This computer, in Settings, Models.") if alt else ""
         _say("stuck", model, f"it is too big for this computer: {too_big_words(big)}", alt=alt,
-             log=f"{model} is too big for this computer: {too_big_words(big)}.{offer}", level="warn")
+             log=f"{model} is too big for this computer: {too_big_words(big)}.{_offer(alt)}", level="warn")
     finally:
         _busy.release()
     return status()
@@ -679,14 +891,18 @@ def repair(model: str, base_url: str, error: str = "") -> dict:
 
 def _repair(model: str, base_url: str, error: str) -> dict:
     _say("checking", model)
+    # llama.cpp is given files the app downloads (named after the file); Ollama downloads by name itself.
+    by_file = localai.pull_kind(base_url) == "file"
     info = inspect(model, base_url)
     if info is None or not info["helper"]:
         why = reason(error) if error else "it would not load"
-        tip = " Updating Ollama may fix it." if "version" in why or "read" in why else ""
+        tip = f" Updating {'llama.cpp' if by_file else 'Ollama'} may fix it." if "version" in why or "read" in why else ""
         _say("stuck", model, why, log=f"{model} will not load: {why}.{tip}", level="warn")
         return status()
     part = what(info["kind"])
     repo, _ = hf_repo(model)
+    if not repo and by_file:
+        repo, _ = localai.source_of(model)
     if not repo:
         _say("stuck", model, f"the file is {part}, not the model itself",
              log=f"{model} will not load: the file is {part}, not the model itself. Download the model itself.",
@@ -695,40 +911,48 @@ def _repair(model: str, base_url: str, error: str) -> dict:
     try:
         files = repo_files(repo)
     except Exception as e:
-        _say("stuck", model, f"the file is {part}, and HuggingFace could not be asked for the model ({e})",
-             log=f"{model} is {part}, not the model. HuggingFace did not answer, trying again later.", level="warn")
+        # Said in words: the panel showed "(<urlopen error [WinError 10054] An existing connection was forcibly
+        # closed by the remote host>)". It is asked again shortly (watch).
+        _say("stuck", model, f"the file is {part}, and Hugging Face could not be asked for the model itself just now. "
+                             f"It is asked again in a minute",
+             log=f"{model} is {part}, not the model. Hugging Face did not answer ({type(e).__name__}), trying "
+                 f"again in a minute.", level="warn")
         return status()
-    pick, why = _best(repo, files)
+    pick, why = _best(repo, files, by_file)
     if not pick:
-        # Something smaller by the same maker that fits, counting the room the useless file gives back: offered.
-        held = ((localai.ollama_models(base_url) or {}).get(model) or {}).get("size") or 0
-        alt = next((a for a in alternatives(repo, machine(), held) if resolves(a["repo"], a["tag"], a["size"])), None)
-        offer = (f" A smaller one by the same maker fits: {alt['label']} ({alt['tag']}, {_gb(alt['size'])}). "
-                 f"Switch to it on This computer, in Settings, Models.") if alt else ""
+        # Something smaller that fits, counting the room the useless file gives back: offered.
+        held = (localai.file_sizes().get(model, 0) if by_file
+                else ((localai.ollama_models(base_url) or {}).get(model) or {}).get("size") or 0)
+        alt = next((a for a in alternatives(repo, machine(), held)
+                    if by_file or resolves(a["repo"], a["tag"], a["size"])), None)
         _say("stuck", model, f"the file is {part}, and the model itself does not fit: {why}", alt=alt,
-             log=f"{model} will not load: Ollama downloaded {part}, not the model. The model itself does not "
-                 f"fit on this computer: {why}.{offer}", level="warn")
+             log=f"{model} will not load: it is {part}, not the model. The model itself does not fit on this "
+                 f"computer: {why}.{_offer(alt)}", level="warn")
         return status()
     new = f"hf.co/{repo}:{pick['tag']}"
-    if new not in (localai.ollama_models(base_url) or {}):
-        _say("fixing", model, f"downloading the model itself, {pick['tag']}, {_gb(pick['size'])}", new,
-             log=f"{model} will not load: Ollama downloaded {part}, not the model. Downloading the model itself "
+    # What it is called once in: llama.cpp names a model after its file.
+    name = os.path.splitext(os.path.basename(pick["name"]))[0] if by_file else new
+    if name not in (localai.file_sizes() if by_file else (localai.ollama_models(base_url) or {})):
+        _say("fixing", model, f"downloading the model itself, {pick['tag']}, {_gb(pick['size'])}", name,
+             log=f"{model} will not load: it is {part}, not the model. Downloading the model itself "
                  f"({pick['tag']}, {_gb(pick['size'])}), then replies use it.", level="warn")
         failed = _wait_for_pull(new, base_url, time.time() + 6 * 3600)
         if failed:
             _say("stuck", model, f"the model itself could not be downloaded: {failed}",
                  log=f"Could not download {new}: {failed}.", level="warn")
             return status()
-    again = inspect(new, base_url)
+        if by_file:
+            name = _last_pulled.get("model") or name
+    again = inspect(name, base_url)
     if again is not None and again["helper"]:
         _say("stuck", model, "that file is not the model either",
-             log=f"{new} is not the model itself either. Pick another size under Models.", level="warn")
+             log=f"{name} is not the model itself either. Pick another size under Models.", level="warn")
         return status()
-    changed = switch(model, new)
+    changed = switch(model, name)
     # Of no use on its own, and gigabytes on the disk.
-    localai.delete_model(model, base_url)
-    _say("fixed", model, "", new,
-         log=f"Fixed: {new} is the model itself, and the {changed} setting{'s' if changed != 1 else ''} that "
+    (localai.delete_file_model if by_file else localai.delete_model)(model, base_url)
+    _say("fixed", model, "", name,
+         log=f"Fixed: {name} is the model itself, and the {changed} setting{'s' if changed != 1 else ''} that "
              f"named the broken one use it now.")
     return status()
 
@@ -827,12 +1051,16 @@ def watch(load_config, every: float = 15.0) -> None:
         pass
     while True:
         time.sleep(every)
-        # A model too big for this computer with nothing smaller found for it yet: looked for again every few
-        # minutes. Hugging Face drops connections now and then, and the first look, as the app starts, found nothing.
+        # A model too big for this computer (or a helper file whose model is) with nothing smaller found for it yet:
+        # looked for again every few minutes; Hugging Face not answering about it at all, after a minute. Hugging
+        # Face drops connections now and then, and the first look, as the app starts, found nothing.
         try:
             st = status()
-            if (st.get("state") == "stuck" and not st.get("alt") and str(st.get("why") or "").startswith("it is too big")
-                    and time.time() - float(st.get("at") or 0) > 300 and st.get("model") in configured(load_config())):
+            why = str(st.get("why") or "")
+            if (st.get("state") == "stuck" and not st.get("alt")
+                    and re.search(r"^it is too big|does not fit|could not be asked", why)
+                    and time.time() - float(st.get("at") or 0) > (60 if "could not be asked" in why else 300)
+                    and st.get("model") in configured(load_config())):
                 check_configured(load_config(), [st["model"]])
         except Exception:
             pass

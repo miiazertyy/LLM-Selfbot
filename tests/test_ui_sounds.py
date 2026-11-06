@@ -37,7 +37,9 @@ NAMES = ("tap", "up", "tick", "on", "off", "select", "open", "menu", "ok", "info
 # Things moving into place as a tab opens, and dragging.
 ARRIVING = ("wind", "slide", "rise", "done", "key", "land", "pluck", "zip", "seat", "medal", "settle", "glint", "grow")
 DRAGGING = ("lift", "slot", "drop", "grab", "release", "hover")
-NEW = ARRIVING + DRAGGING
+# Big Picture opening, and a page of it sliding in.
+BIG_PICTURE = ("dawn", "whoosh")
+NEW = ARRIVING + DRAGGING + BIG_PICTURE
 check("each one has a recipe", all(f'case "{n}":' in snd for n in NAMES + NEW))
 check("and a least gap between two", all(f" {n}: " in snd[snd.index("const GAP"):snd.index("const booked")] for n in NAMES + NEW))
 check("a tab opening sets off many at once: each quieter than the one before, never below two fifths",
@@ -99,8 +101,8 @@ check("the sounds follow it at once, eased so a drag has no clicks; measured ren
 check("moving it while muted turns the sounds back on", "if (!$uiSound && v > 0) uiSound.set(true);" in app_src)
 check("a bar's note rises with it as it grows, further the taller it is, and rings as it lands",
       'case "grow": {' in snd and "glide: to" in snd and "PENTA[Math.round(Math.min(1, Math.max(0, p)) * 8)]" in snd)
-check("the medals shine without a ting: the three at the end of the opening were not liked",
-      "play(" not in read("lib/components/RankBadge.svelte"))
+check("the medals shine without a ting as they arrive: the three at the end of the opening were not liked",
+      "play(" not in read("lib/components/RankBadge.svelte").split("onMount(() => {", 1)[1])
 check("a slider ticks, a checkbox flips", 'document.addEventListener("input"' in snd and 'play(t.checked ? "on" : "off")' in snd)
 check("a slider by hand: taken hold of and let go, a detent per notch passed (not per pixel), firmer at zero or "
       "its default, a knock at either end, every press from the keyboard",
@@ -206,7 +208,7 @@ check("remembered, on the server too", 'export const uiSound = persisted<boolean
 prefs = (ROOT / "app" / "web" / "routes" / "prefs_routes.py").read_text(encoding="utf-8")
 check("which keeps it, and Big Picture's own switch, which it never did", '"uiSound", "bigPictureSound"' in prefs)
 bp = read("lib/bigpicture/sounds.ts")
-check("off silences Big Picture's sounds too", bp.count("!get(uiSound)") == 2)
+check("off silences Big Picture's sounds too", "!get(uiSound)" in bp and 'from "../uisound"' in bp)
 
 print("\n== how they measure ==")
 proc = subprocess.run(["node", str(ROOT / "tests" / "sounds_measure.mjs")], capture_output=True, text=True,

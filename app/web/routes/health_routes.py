@@ -253,10 +253,19 @@ def _issues(supervisor) -> list:
                     "is picked for it under Models.",
                     "Models", section="models")
 
-    # ── Accounts ─────────────────────────────────────────────────────────────
-    discord_n = ipc._count_accounts()
-    snap_n = ipc._count_snap_accounts()
-    if discord_n == 0 and snap_n == 0:
+    # ── Accounts ── a social switched off is shown nowhere, its warnings included (app/utils/socials.py).
+    from app.utils import socials
+    on = socials.on(config)
+    discord_n = ipc._count_accounts() if on["discord"] else 0
+    snap_n = ipc._count_snap_accounts() if on["snapchat"] else 0
+    if (discord_n == 0 and snap_n == 0 and not (on["tiktok"] and ipc._count_tiktok_accounts())
+            and not (on["instagram"] and ipc._count_instagram_accounts())
+            and not (on["x"] and ipc._count_x_accounts())
+            and not (on["reddit"] and ipc._count_reddit_accounts())
+            and not (on["whatsapp"] and ipc._count_whatsapp_accounts())
+            and not (on["minecraft"] and ipc._count_minecraft_accounts())
+            and not (on["imessage"] and ipc._count_imessage_accounts())
+            and not (on["telegram"] and ipc._count_telegram_accounts())):
         add("accounts", "error", "No accounts configured",
             "Nothing can run until one is configured.",
             "Add Discord account")
@@ -268,6 +277,8 @@ def _issues(supervisor) -> list:
         except Exception:
             children = []
     for child in children:
+        if not socials.child_shown(child.get("role"), child.get("account"), on):
+            continue
         label = child.get("label") or child.get("id")
         if child.get("state") == "crashing":
             add("accounts", "error", f"{label} keeps crashing",
@@ -279,8 +290,61 @@ def _issues(supervisor) -> list:
                 f"Logs → filter by {child.get('id', 'the account')}")
 
     # ── Snapchat runtime ─────────────────────────────────────────────────────
-    snap_on = (config.get("snapchat", {}).get("enabled", False)
-               and services.get("snapchat", {}).get("enabled", True))
+    snap_on = on["snapchat"]
+    # TikTok, Instagram, X and Reddit drive the same browser, through the same packages.
+    try:
+        from app.core.ipc import (_count_instagram_accounts, _count_reddit_accounts, _count_tiktok_accounts,
+                                  _count_x_accounts)
+        browser_counts = [("TikTok", _count_tiktok_accounts() if on["tiktok"] else 0),
+                          ("Instagram", _count_instagram_accounts() if on["instagram"] else 0),
+                          ("X", _count_x_accounts() if on["x"] else 0),
+                          ("Reddit", _count_reddit_accounts() if on["reddit"] else 0)]
+    except Exception:
+        browser_counts = []
+    for label, count in browser_counts:
+        # Only once, and only when Snapchat's own checks below are not already saying the same thing.
+        if not count or (snap_on and snap_n):
+            continue
+        from app.web.routes.system_routes import _snap_dir_for_probe, _which
+        if not _which("node"):
+            add("settings", "error", "Node.js is not installed",
+                f"{label} drives a real browser through Node. Install it from nodejs.org first.",
+                f"{label}, Install, Node.js", section=f"{label} setup")
+        elif not (_snap_dir_for_probe() / "node_modules").is_dir():
+            add("settings", "error", "The browser packages are not installed",
+                f"{label} needs them before it can run.", f"{label}, Install", section=f"{label} setup")
+        elif not _chrome_path_cached():
+            add("settings", "error", "The browser is missing",
+                "Its download did not finish. Repairing fetches it again.",
+                f"{label}, Install, Repair install", section=f"{label} setup")
+        break
+    # ── Minecraft runtime ── its own install, mindcraft-ce, and no browser at all.
+    try:
+        mc_n = ipc._count_minecraft_accounts() if on["minecraft"] else 0
+    except Exception:
+        mc_n = 0
+    if mc_n:
+        from app.platforms.minecraft import install as mc_install
+        if not mc_install._which("node"):
+            add("settings", "error", "Node.js is not installed",
+                "Minecraft plays through mindcraft, which runs on Node. Install version 22 or newer from nodejs.org.",
+                "Minecraft, Install", section="Minecraft setup")
+        elif not mc_install.present():
+            add("settings", "error", "Minecraft support is not installed",
+                "Its accounts cannot join a world until it is.", "Minecraft, Install", section="Minecraft setup")
+    # ── iMessage ── Node alone (its own fetch and WebSocket), and a Mac running BlueBubbles, which its card watches.
+    try:
+        # Only the ones through a Mac: an iPhone's has no runner, and needs no Node.
+        im_n = sum(1 for i in range(1, ipc._count_imessage_accounts() + 1)
+                   if os.getenv(f"IMESSAGE_SERVER_{i}", "").strip().lower() != "phone") if on["imessage"] else 0
+    except Exception:
+        im_n = 0
+    if im_n:
+        from app.web.routes.system_routes import _which
+        if not _which("node"):
+            add("settings", "error", "Node.js is not installed",
+                "iMessage reads and sends through Node. Install version 22 or newer from nodejs.org.",
+                "nodejs.org", section="iMessage setup")
     if snap_on and snap_n:
         from app.web.routes.system_routes import SNAP_DIR, _snap_dir_for_probe, _which
         if not _which("node"):
@@ -305,12 +369,12 @@ def _issues(supervisor) -> list:
             add("settings", "warn", "Telegram is half configured",
                 "TELEGRAM_BOT_TOKEN is set but TELEGRAM_OWNER_ID is not, so the "
                 "control bot will not start.",
-                "App, Telegram, TELEGRAM_OWNER_ID", section="Telegram")
+                "App, Telegram, TELEGRAM_OWNER_ID", section="telegram bot")
         elif owner and not token:
             add("settings", "warn", "Telegram is half configured",
                 "TELEGRAM_OWNER_ID is set but TELEGRAM_BOT_TOKEN is not, so the "
                 "control bot will not start.",
-                "App, Telegram, TELEGRAM_BOT_TOKEN", section="Telegram")
+                "App, Telegram, TELEGRAM_BOT_TOKEN", section="telegram bot")
 
     # ── Persona ──────────────────────────────────────────────────────────────
     try:
@@ -330,6 +394,14 @@ def _issues(supervisor) -> list:
             add("system", "warn", "ffmpeg not found",
                 "Voice messages fall back to a lower-quality path.",
                 "Dependency doctor → ffmpeg")
+        try:
+            calls_on = bool((((load_config() or {}).get("bot") or {}).get("calls") or {}).get("vc"))
+        except Exception:
+            calls_on = False
+        if calls_on and not binaries.opus_status().get("dll"):
+            add("system", "warn", "opus library not found",
+                "Voice channels (Discord) need it to hear and be heard. It downloads itself on first use.",
+                "Dependency doctor → opus")
     except Exception:
         pass
 

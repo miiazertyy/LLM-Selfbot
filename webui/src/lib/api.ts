@@ -26,12 +26,17 @@ const SLOW_EXEMPT = [
   "/api/chats/reply",
   "/api/pictures",
   "/api/snapchat/install",
+  "/api/minecraft/",
   "/api/system/update",
   "/api/system/ffmpeg/install",
   "/api/friends/",
   "/api/local/",
   // A provider's model list is a round trip to that provider.
   "/api/providers/",
+  // The community catalog, a profile's files and its download: GitHub, at GitHub's pace.
+  "/api/community",
+  // Who is in each call, asked again and again behind the list of channels.
+  "/api/chats/voice",
 ];
 
 function watched(path: string, method: string): boolean {
@@ -41,7 +46,9 @@ function watched(path: string, method: string): boolean {
 
 async function request(path: string, options: RequestInit = {}): Promise<any> {
   const method = options.method || "GET";
-  const headers: Record<string, string> = { ...(options.headers as any) };
+  // Says it is the panel itself: changes that act as you on GitHub refuse anything without it, so another website's
+  // page can't make them (it can't send this header without asking first, and the panel never says yes).
+  const headers: Record<string, string> = { "x-llmselfbot": "1", ...(options.headers as any) };
   if (options.body && !(options.body instanceof FormData)) {
     headers["content-type"] = "application/json";
   }
@@ -71,6 +78,79 @@ async function request(path: string, options: RequestInit = {}): Promise<any> {
   }
 }
 
+/** A file sent as a request's body, read off the disk as it goes (never held in memory), with how far it has got.
+ *  `abort` stops it, rejecting with status 0. */
+function sendFile(url: string, file: File, onProgress: (done: number, total: number) => void) {
+  const xhr = new XMLHttpRequest();
+  const done = new Promise<any>((resolve, reject) => {
+    xhr.open("POST", url);
+    xhr.setRequestHeader("x-llmselfbot", "1");
+    xhr.setRequestHeader("content-type", "application/octet-stream");
+    xhr.upload.onprogress = (e) => { if (e.lengthComputable) onProgress(e.loaded, e.total); };
+    xhr.onload = () => {
+      let data: any = null;
+      try {
+        data = JSON.parse(xhr.responseText);
+      } catch {}
+      if (xhr.status >= 200 && xhr.status < 300) resolve(data);
+      else reject(new ApiError(xhr.status, data?.detail || xhr.statusText));
+    };
+    xhr.onerror = () => reject(new ApiError(-1, "The file could not be sent."));
+    xhr.onabort = () => reject(new ApiError(0, "Stopped."));
+    xhr.send(file);
+  });
+  return { done, abort: () => xhr.abort() };
+}
+
+// ── A Minecraft account's screen, as its bot reports it (agent_hooks.mjs hudOf) ──
+/** One slot: its picture is textures/<tex>/<icon> under the view, and `slot` is where it is, for a click. */
+export type McSlot = { name: string; id: string; count: number; left: number | null; icon?: string; ench?: boolean;
+                       slot?: number; lore?: string[] } | null;
+export type McHud = {
+  ok: boolean; reason?: string; who: string; health: number; food: number; saturation?: number; air: number | null;
+  at: { x: number; y: number; z: number }; where: string; day: number; ticks: number; raining: number;
+  yaw?: number; pitch?: number; held: number;
+  hotbar: McSlot[]; carried: NonNullable<McSlot>[]; armour: McSlot[]; armourPoints?: number; offhand?: McSlot;
+  xp?: { level: number; progress: number }; mode?: string; hardcore?: boolean;
+  effects?: { id: number; name: string; level: number; left: number | null; good: boolean; icon: string }[];
+  bossBars?: { title: string; health: number; color: string; notches: number }[];
+  sidebar?: { title: string; rows: { text: string; value: number | null; fixed?: string }[] } | null;
+  title?: { text: string; sub: string; at: number; for: number } | null;
+  overHotbar?: string;
+  window?: { title: string; kind: string; slots: McSlot[]; cursor?: McSlot } | null;
+  dead?: boolean; sleeping?: boolean; driving?: boolean;
+  near: { name: string; away: number }[];
+  chat: { text: string; from: string; at: number }[];
+  tex?: string; sprites?: boolean;
+  players?: { name: string; shown: string; ping: number; away: number | null }[];
+  tabTop?: string; tabBottom?: string;
+  debug?: {
+    xyz: number[]; block: number[]; chunk: number[]; inChunk: number[]; facing: string; toward: string;
+    yaw: number; pitch: number; biome: string; light: number | null; sky: number | null;
+    looking: { name: string; at: number[] } | null; target: { name: string; away: number } | null;
+    speed: number; ground: boolean; entities: number; players: number; ping: number; tps: number | null;
+    version: string; brand: string; difficulty: string; memory: number;
+    net?: { sent: string[]; got: string[] };
+  };
+};
+/** One thing a persona saw online in its free time. */
+export type WebSeen = { ts: number; title: string; url: string; site: string; note: string };
+export type WebJournal = {
+  persona: string; entries: WebSeen[]; free_time: boolean; sessions_per_day: number; next_at: number | null;
+  browser: { ready: boolean; why: string; running: boolean; resting: boolean }; busy: boolean;
+};
+export type WebNow = {
+  busy: boolean; persona: string; name: string; step: string; steps: string[]; url: string; since: number;
+  shot: string; shot_at: number;
+  last: { persona: string; at: number; saw: { title: string; url: string; site: string; note: string }[];
+          seconds: number } | null;
+};
+/** What the hands are doing, sent whole each time. */
+export type McInput = {
+  keys: { forward: boolean; back: boolean; left: boolean; right: boolean; jump: boolean; sprint: boolean; sneak: boolean };
+  yaw: number; pitch: number; attack: boolean; use: boolean;
+};
+
 /** A path asked as one persona (app/utils/personas.py). Left as it is for "", which the server reads as Default. */
 function scoped(path: string, persona = ""): string {
   if (!persona) return path;
@@ -80,6 +160,8 @@ function scoped(path: string, persona = ""): string {
 export const api = {
   request,
   status: () => request("/api/status"),
+  /** Which socials are switched on (lib/socials.ts). */
+  socials: (): Promise<{ on: Record<string, boolean> }> => request("/api/socials"),
   accounts: () => request("/api/accounts"),
   accountAction: (id: string, action: string) =>
     request(`/api/accounts/${id}/${action}`, { method: "POST" }),
@@ -126,6 +208,210 @@ export const api = {
     request(`/api/accounts/discord/browser-login/status${proxy ? `?proxy=${encodeURIComponent(proxy)}` : ""}`),
   discordBrowserLoginCancel: () =>
     request("/api/accounts/discord/browser-login/cancel", { method: "POST" }),
+  // A TikTok account, signed in in a browser window of its own (app/utils/tiktok_browser_login.py).
+  tiktokBrowserLoginStart: (body: { proxy?: string } = {}) =>
+    request("/api/accounts/tiktok/browser-login/start", { method: "POST", body: JSON.stringify(body) }),
+  tiktokBrowserLoginStatus: () => request("/api/accounts/tiktok/browser-login/status"),
+  tiktokBrowserLoginCancel: () => request("/api/accounts/tiktok/browser-login/cancel", { method: "POST" }),
+
+  // Reddit signs in the same way: a window opens, a person signs in, the session stays in its profile.
+  redditBrowserLoginStart: (body: { proxy?: string } = {}) =>
+    request("/api/accounts/reddit/browser-login/start", { method: "POST", body: JSON.stringify(body) }),
+  redditBrowserLoginStatus: () => request("/api/accounts/reddit/browser-login/status"),
+  redditBrowserLoginCancel: () => request("/api/accounts/reddit/browser-login/cancel", { method: "POST" }),
+  redditCard: (url: string) => request(`/api/chats/reddit-card?url=${encodeURIComponent(url)}`),
+  xCard: (url: string) => request(`/api/chats/x-card?url=${encodeURIComponent(url)}`),
+  // WhatsApp: a code to type into the phone, or a QR to point it at. Nothing opens on this machine.
+  whatsappLinkStart: (body: { number?: string; way?: "code" | "qr"; proxy?: string }) =>
+    request("/api/accounts/whatsapp/link/start", { method: "POST", body: JSON.stringify(body) }),
+  whatsappLinkStatus: () => request("/api/accounts/whatsapp/link/status"),
+  whatsappLinkCancel: () => request("/api/accounts/whatsapp/link/cancel", { method: "POST" }),
+  redditSignInCode: (code: string, index = 0) =>
+    request("/api/accounts/reddit/sign-in/code",
+            { method: "POST", body: JSON.stringify({ code, index }) }),
+  // Instagram signs itself in, in a window you can watch: its login is the app's to keep, so adding an account
+  // hands it over once and every sign-in after uses it. A code from the account's email or phone is the one thing
+  // only a person has.
+  instagramSignInStart: (body: { index?: number; username?: string; password?: string; totp?: string; proxy?: string }) =>
+    request("/api/accounts/instagram/sign-in/start", { method: "POST", body: JSON.stringify(body) }),
+  instagramSignInStatus: () => request("/api/accounts/instagram/sign-in/status"),
+  instagramSignInCode: (code: string, index = 0) =>
+    request("/api/accounts/instagram/sign-in/code", { method: "POST", body: JSON.stringify({ code, index }) }),
+  instagramSignInCancel: () => request("/api/accounts/instagram/sign-in/cancel", { method: "POST" }),
+  // X the same way, with one more thing on it: the email or phone X asks for when it questions a login.
+  xSignInStart: (body: { index?: number; username?: string; password?: string; totp?: string; email?: string; proxy?: string }) =>
+    request("/api/accounts/x/sign-in/start", { method: "POST", body: JSON.stringify(body) }),
+  xSignInStatus: () => request("/api/accounts/x/sign-in/status"),
+  xSignInCode: (code: string, index = 0) =>
+    request("/api/accounts/x/sign-in/code", { method: "POST", body: JSON.stringify({ code, index }) }),
+  xSignInCancel: () => request("/api/accounts/x/sign-in/cancel", { method: "POST" }),
+  // iMessage: whether a BlueBubbles server answers at that address with that password, and what it says of the Mac
+  // (app/utils/bluebubbles.py). Editing one, an empty password is the one saved for that account.
+  /** An iPhone iMessage account's address for its Shortcuts automation, with a QR code of it, and whether the phone
+   *  has been heard from. `base` is where this page was opened, when that was not this PC. */
+  imessageRelay: (index: number, base = "") =>
+    request(`/api/imessage/relay/${index}${base ? `?base=${encodeURIComponent(base)}` : ""}`) as Promise<{
+      ok: boolean; reason?: string; url?: string; qr?: string; open?: boolean; bind?: string;
+      addresses?: { url: string; kind: string }[]; heard?: { at: number; test: boolean } | null;
+    }>,
+  /** Signing a Telegram account in: its api_id and api_hash from my.telegram.org, its number, then the code
+   *  Telegram sends and, where the account has one, its two-step password. The session never comes back. */
+  telegramSignInStart: (body: { index?: number; api_id?: string; api_hash?: string; phone?: string; proxy?: string }) =>
+    request("/api/accounts/telegram/sign-in/start", { method: "POST", body: JSON.stringify(body) }) as Promise<{
+      state: string; detail?: string; phone?: string;
+    }>,
+  telegramSignInStatus: () => request("/api/accounts/telegram/sign-in/status") as Promise<{
+    state: string; detail?: string; index?: number; slots?: unknown[]; name?: string; username?: string;
+  }>,
+  telegramSignInCode: (code: string) =>
+    request("/api/accounts/telegram/sign-in/code", { method: "POST", body: JSON.stringify({ code }) }),
+  telegramSignInPassword: (password: string) =>
+    request("/api/accounts/telegram/sign-in/password", { method: "POST", body: JSON.stringify({ password }) }),
+  telegramSignInCancel: () => request("/api/accounts/telegram/sign-in/cancel", { method: "POST" }),
+  /** A Minecraft account signed in with Microsoft: a code to type (or open) at microsoft.com/link, then its real
+   *  name, from Microsoft. The server it plays on comes along, so the account is added whole. */
+  minecraftSignInStart: (body: { host?: string; port?: string; index?: number }) =>
+    request("/api/accounts/minecraft/sign-in/start", { method: "POST", body: JSON.stringify(body) }) as Promise<{
+      state: string; code?: string; link?: string; uri?: string; expires?: number; reason?: string;
+    }>,
+  minecraftSignInStatus: () => request("/api/accounts/minecraft/sign-in/status") as Promise<{
+    state: string; code?: string; link?: string; uri?: string; expires?: number; reason?: string;
+    name?: string; index?: number; slots?: unknown[];
+  }>,
+  minecraftSignInCancel: () => request("/api/accounts/minecraft/sign-in/cancel", { method: "POST" }),
+  // A premium account's skin (app/platforms/minecraft/skin_change.py): what its card knows of it, a picture put on
+  // it (none: the skin it has, with the arms asked for), or taken off.
+  minecraftSkin: (index: number) =>
+    request(`/api/accounts/minecraft/${index}/skin`) as Promise<{
+      ok: boolean; premium: boolean; slim: boolean; source: string; skin: string; picture: string;
+    }>,
+  minecraftSkinSet: (index: number, file: File | null, slim: boolean) => {
+    const form = new FormData();
+    if (file) form.append("file", file, "skin.png");
+    form.append("variant", slim ? "slim" : "classic");
+    return request(`/api/accounts/minecraft/${index}/skin`, { method: "POST", body: form }) as
+      Promise<{ ok: boolean; reason?: string; slim?: boolean }>;
+  },
+  minecraftSkinReset: (index: number) =>
+    request(`/api/accounts/minecraft/${index}/skin`, { method: "DELETE" }) as Promise<{ ok: boolean; reason?: string }>,
+  imessageTest: (body: { server: string; password?: string; index?: number }) =>
+    request("/api/accounts/imessage/connection/test", { method: "POST", body: JSON.stringify(body) }) as Promise<{
+      ok: boolean; reason?: string; server?: string; account?: string; macos?: string; bluebubbles?: string;
+      private_api?: boolean; helper?: boolean; warning?: string;
+    }>,
+  /** A TikTok account's LIVE: on or not, and its last lines and answers. */
+  liveFeed: (account: string) => request(`/api/live/${encodeURIComponent(account)}`),
+  liveAudio: (account: string, name: string) =>
+    `/api/live/${encodeURIComponent(account)}/audio/${encodeURIComponent(name)}`,
+  // The practice LIVE (Settings, TikTok, LIVE): who goes live and how, a fresh start, the persona's line to something
+  // in its chat (with the LIVE settings on screen), that line said out loud, and its sound.
+  // ── Calls (app/web/routes/call_routes.py) ──
+  callVoices: (persona = "") => request(`/api/calls/voices${persona ? `?persona=${encodeURIComponent(persona)}` : ""}`),
+  callSpeed: (body: { persona: string; speaker: string; voice: string; hear?: string; think?: string; speak?: string }) =>
+    request("/api/calls/speed", { method: "POST", body: JSON.stringify(body) }),
+  /** A WAV of the voice saying one line. Fetched as a file, not JSON. */
+  callPreview: async (body: { engine: string; provider: string; voice: string; persona: string; model?: string }): Promise<Blob> => {
+    const r = await fetch("/api/calls/preview", {
+      method: "POST", headers: { "content-type": "application/json", "x-llmselfbot": "1" }, body: JSON.stringify(body),
+    });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.detail || "That voice could not be heard.");
+    return r.blob();
+  },
+  /** Try a call's WebSocket, with the call settings on screen. */
+  /** One speaker's voices: listed, fetched from its provider, or typed when they cannot be listed. */
+  callSpeakerVoices: (provider: string, model: string, persona = "") =>
+    request(`/api/calls/speaker-voices?${new URLSearchParams({ provider, model, ...(persona ? { persona } : {}) })}`),
+  /** This computer's own voice (app/voice/onboard.py): what is fetched, and how far a fetch has got. */
+  callLocal: () => request("/api/calls/local"),
+  callLocalGet: (model: string) => request("/api/calls/local/get", { method: "POST", body: JSON.stringify({ model }) }),
+  callLocalRemove: (model: string) => request("/api/calls/local/remove", { method: "POST", body: JSON.stringify({ model }) }),
+  callTryUrl: (params: Record<string, string>) => {
+    const q = new URLSearchParams(Object.entries(params).filter(([, v]) => v !== undefined && v !== null));
+    return `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/api/calls/try?${q}`;
+  },
+  liveDemo: (persona = "") => request(`/api/live-demo${persona ? `?persona=${encodeURIComponent(persona)}` : ""}`),
+  liveDemoStart: () => request("/api/live-demo/start", { method: "POST" }),
+  liveDemoAnswer: (body: { event: string; name: string; text: string; persona: string; live: Record<string, unknown> }) =>
+    request("/api/live-demo/answer", { method: "POST", body: JSON.stringify(body) }),
+  liveDemoVoice: (id: string) => request("/api/live-demo/voice", { method: "POST", body: JSON.stringify({ id }) }),
+  liveDemoAudio: (name: string) => `/api/live-demo/audio/${encodeURIComponent(name)}`,
+  /** The practice LIVE's screen of its own (livedemo_routes.py): one picture or video per persona, kept with it. */
+  liveScreen: (persona: string) => request(`/api/live-demo/screen?persona=${encodeURIComponent(persona)}`),
+  uploadLiveScreen: (file: File, persona: string) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    return request(`/api/live-demo/screen?persona=${encodeURIComponent(persona)}`, { method: "POST", body: fd });
+  },
+  clearLiveScreen: (persona: string) =>
+    request(`/api/live-demo/screen?persona=${encodeURIComponent(persona)}`, { method: "DELETE" }),
+  /** Its address changes with the file (`version`), so it's kept for good; `still` is a video's still, for its tile. */
+  liveScreenUrl: (persona: string, version: number, still = false) =>
+    `/api/live-demo/screen/file?persona=${encodeURIComponent(persona)}&v=${version}${still ? "&still=true" : ""}`,
+  // TikTok beyond the inbox (app/web/routes/tiktok_routes.py): someone's posts, a video's like, save and comment, a
+  // LIVE it is visiting, For You, posting the persona's videos.
+  tiktokTheirs: (target: string, user_id: string) =>
+    request(`/api/tiktok/theirs?target=${encodeURIComponent(target)}&user_id=${encodeURIComponent(user_id)}`),
+  tiktokTheirsRefresh: (target: string, user_id: string) =>
+    request("/api/tiktok/theirs/refresh", { method: "POST", body: JSON.stringify({ target, user_id }) }),
+  tiktokAction: (target: string, url: string, action: "like" | "save" | "comment", text = "") =>
+    request("/api/tiktok/action", { method: "POST", body: JSON.stringify({ target, url, action, text }) }),
+  tiktokCommentText: (target: string, url: string) =>
+    request("/api/tiktok/comment-text", { method: "POST", body: JSON.stringify({ target, url }) }),
+  tiktokOut: (target: string) => request(`/api/tiktok/out?target=${encodeURIComponent(target)}`),
+  tiktokVisit: (target: string, handle: string) =>
+    request("/api/tiktok/visit", { method: "POST", body: JSON.stringify({ target, handle }) }),
+  tiktokLeave: (target: string) => request("/api/tiktok/leave", { method: "POST", body: JSON.stringify({ target }) }),
+  tiktokForYou: (target: string) => request("/api/tiktok/foryou", { method: "POST", body: JSON.stringify({ target }) }),
+  tiktokPosting: () => request("/api/tiktok/posting"),
+  tiktokCaption: (persona: string, name: string) =>
+    request("/api/tiktok/caption", { method: "POST", body: JSON.stringify({ persona, name }) }),
+  tiktokPost: (body: { target: string; persona: string; name: string; caption: string; privacy: string; dry_run?: boolean }) =>
+    request("/api/tiktok/post", { method: "POST", body: JSON.stringify(body) }),
+  // A shared TikTok: its caption, whose it is, its cover (TikTok's public oEmbed).
+  tiktokCard: (url: string) => request(`/api/chats/tiktok-card?url=${encodeURIComponent(url)}`),
+  // ── Instagram beyond the inbox ──
+  instagramTheirs: (target: string, user_id: string) =>
+    request(`/api/instagram/theirs?target=${encodeURIComponent(target)}&user_id=${encodeURIComponent(user_id)}`),
+  instagramTheirsRefresh: (target: string, user_id: string) =>
+    request("/api/instagram/theirs/refresh", { method: "POST", body: JSON.stringify({ target, user_id }) }),
+  instagramStories: (target: string, user_id: string) =>
+    request(`/api/instagram/stories?target=${encodeURIComponent(target)}&user_id=${encodeURIComponent(user_id)}`),
+  instagramStory: (target: string, user_id: string, action: "watch" | "reply", text = "", emoji = "") =>
+    request("/api/instagram/story", { method: "POST", body: JSON.stringify({ target, user_id, action, text, emoji }) }),
+  instagramAction: (target: string, url: string, action: "like" | "save" | "comment", text = "") =>
+    request("/api/instagram/action", { method: "POST", body: JSON.stringify({ target, url, action, text }) }),
+  instagramCommentText: (target: string, url: string) =>
+    request("/api/instagram/comment-text", { method: "POST", body: JSON.stringify({ target, url }) }),
+  instagramOut: (target: string) => request(`/api/instagram/out?target=${encodeURIComponent(target)}`),
+  instagramReels: (target: string) =>
+    request("/api/instagram/reels", { method: "POST", body: JSON.stringify({ target }) }),
+  instagramFollow: (target: string, username: string) =>
+    request("/api/instagram/follow", { method: "POST", body: JSON.stringify({ target, username }) }),
+  instagramNote: (target: string, text = "") =>
+    request("/api/instagram/note", { method: "POST", body: JSON.stringify({ target, text }) }),
+  instagramPosting: () => request("/api/instagram/posting"),
+  // X and Reddit, which share one dialog (PostTo.svelte).
+  xPosting: () => request("/api/x/posting"),
+  xPost: (body: { target: string; text: string; picture?: string; dry_run?: boolean }) =>
+    request("/api/x/post", { method: "POST", body: JSON.stringify(body) }),
+  redditPosting: () => request("/api/reddit/posting"),
+  redditPost: (body: { target: string; title: string; text: string; where?: string; picture?: string;
+                       dry_run?: boolean }) =>
+    request("/api/reddit/post", { method: "POST", body: JSON.stringify(body) }),
+  whatsappPosting: () => request("/api/whatsapp/posting"),
+  whatsappStatus: (body: { target: string; text: string; picture?: string; dry_run?: boolean }) =>
+    request("/api/whatsapp/status", { method: "POST", body: JSON.stringify(body) }),
+  whatsappGroups: (target: string) => request(`/api/whatsapp/groups?target=${encodeURIComponent(target)}`),
+  whatsappLeave: (body: { target: string; chat: string }) =>
+    request("/api/whatsapp/group/leave", { method: "POST", body: JSON.stringify(body) }),
+  whatsappSeenStatuses: (target: string) =>
+    request(`/api/whatsapp/statuses?target=${encodeURIComponent(target)}`),
+  instagramCaption: (body: { persona: string; name: string; as: string }) =>
+    request("/api/instagram/caption", { method: "POST", body: JSON.stringify(body) }),
+  instagramPost: (body: { target: string; persona: string; name: string; caption: string; as: string; dry_run?: boolean }) =>
+    request("/api/instagram/post", { method: "POST", body: JSON.stringify(body) }),
+  // A shared Instagram post or reel: its caption, whose it is, its picture (the embed page anyone can read).
+  instagramCard: (url: string) => request(`/api/chats/instagram-card?url=${encodeURIComponent(url)}`),
   // A persona's settings: everyone's with its own on top (app/utils/personas.py). No persona: everyone's.
   config: (persona = "") => request(`/api/config${persona ? `?persona=${encodeURIComponent(persona)}` : ""}`),
   // The config as JSON text for the raw editor. Text, because parsing it here
@@ -153,14 +439,34 @@ export const api = {
   // ── Persona profiles (app/web/routes/persona_routes.py) ──
   personas: () => request("/api/personas"),
   persona: (pid: string) => request(`/api/personas/${encodeURIComponent(pid)}`),
-  createPersona: (body: { name: string; color?: string; copy_from?: string; copy_memory?: boolean }) =>
+  createPersona: (body: { name: string; color?: string; color2?: string; copy_from?: string; copy_memory?: boolean }) =>
     request("/api/personas", { method: "POST", body: JSON.stringify(body) }),
-  updatePersona: (pid: string, body: { name?: string; color?: string }) =>
+  updatePersona: (pid: string, body: { name?: string; color?: string; color2?: string }) =>
     request(`/api/personas/${encodeURIComponent(pid)}`, { method: "PATCH", body: JSON.stringify(body) }),
   deletePersona: (pid: string) => request(`/api/personas/${encodeURIComponent(pid)}`, { method: "DELETE" }),
   assignPersona: (pid: string, account: string) =>
     request(`/api/personas/${encodeURIComponent(pid)}/assign`, { method: "POST", body: JSON.stringify({ account }) }),
+  /** What a persona saw online in its free time (app/utils/web/journal.py), and how it browses. */
+  webJournal: (persona: string): Promise<WebJournal> =>
+    request(`/api/web/journal?persona=${encodeURIComponent(persona)}`),
+  /** A free-time session for this persona, now: followed with webNow. */
+  webBrowseNow: (persona: string) =>
+    request("/api/web/browse-now", { method: "POST", body: JSON.stringify({ persona }) }),
+  /** The session as it happens: the step it is on and a picture of the page. */
+  webNow: (): Promise<WebNow> => request("/api/web/now"),
+  webForget: (persona: string, ts: number) =>
+    request(`/api/web/journal/${encodeURIComponent(persona)}/${ts}`, { method: "DELETE" }),
   personaText: (pid: string) => request(`/api/personas/${encodeURIComponent(pid)}/text`),
+  // A persona from your own chats (app/utils/chatpersona.py): your side only, from the exports the socials give you.
+  fromChatsStatus: () => request("/api/from-chats/status"),
+  fromChatsUpload: (file: File, onProgress: (done: number, total: number) => void) =>
+    sendFile(`/api/from-chats/upload?name=${encodeURIComponent(file.name)}`, file, onProgress),
+  fromChatsRemove: (key: string) =>
+    request("/api/from-chats/remove", { method: "POST", body: JSON.stringify({ key }) }),
+  fromChatsWrite: () => request("/api/from-chats/write", { method: "POST" }),
+  fromChatsCreate: (name: string, color: string, color2 = "") =>
+    request("/api/from-chats/create", { method: "POST", body: JSON.stringify({ name, color, color2 }) }),
+  fromChatsReset: () => request("/api/from-chats/reset", { method: "POST" }),
   savePersonaText: (pid: string, text: string) =>
     request(`/api/personas/${encodeURIComponent(pid)}/text`, { method: "POST", body: JSON.stringify({ text }) }),
   setPersonaAvatar: (pid: string, picture: string) =>
@@ -171,6 +477,36 @@ export const api = {
     return request(`/api/personas/${encodeURIComponent(pid)}/avatar`, { method: "POST", body: fd });
   },
   clearPersonaAvatar: (pid: string) => request(`/api/personas/${encodeURIComponent(pid)}/avatar`, { method: "DELETE" }),
+  // ── Community profiles (app/web/routes/community_routes.py): the catalog on GitHub, adding one, sharing your own ──
+  community: (force = false) => request(`/api/community${force ? "?force=true" : ""}`),
+  communityStats: (force = false) => request(`/api/community/stats${force ? "?force=true" : ""}`),
+  communityProfile: (slug: string) => request(`/api/community/profiles/${encodeURIComponent(slug)}`),
+  communityFile: (slug: string, name: string, v: number) =>
+    `/api/community/files/${encodeURIComponent(slug)}/${name}?v=${v}`,
+  communityInstall: (slug: string, copy = false) =>
+    request("/api/community/install", { method: "POST", body: JSON.stringify({ slug, copy }) }),
+  communityUpdatePreview: (pid: string) => request(`/api/community/installed/${encodeURIComponent(pid)}/update`),
+  communityUpdate: (pid: string, confirm = false) =>
+    request(`/api/community/installed/${encodeURIComponent(pid)}/update`, { method: "POST", body: JSON.stringify({ confirm }) }),
+  communityShareForm: (pid: string) => request(`/api/community/share/${encodeURIComponent(pid)}`),
+  communitySharePreview: (pid: string, form: Record<string, unknown>) =>
+    request(`/api/community/share/${encodeURIComponent(pid)}/preview`, { method: "POST", body: JSON.stringify(form) }),
+  communityShare: (pid: string, form: Record<string, unknown>) =>
+    request(`/api/community/share/${encodeURIComponent(pid)}`, { method: "POST", body: JSON.stringify(form) }),
+  communityRemove: (slug: string) =>
+    request("/api/community/remove", { method: "POST", body: JSON.stringify({ slug }) }),
+  communityMine: (force = false) => request(`/api/community/mine${force ? "?force=true" : ""}`),
+  communityReport: (slug: string, reason: string, details: string) =>
+    request("/api/community/report", { method: "POST", body: JSON.stringify({ slug, reason, details }) }),
+  communityQueue: () => request("/api/community/queue"),
+  communityModerate: (command: string, target: string, reason = "", number = 0) =>
+    request("/api/community/moderate", { method: "POST", body: JSON.stringify({ command, target, reason, number }) }),
+  githubSignin: () => request("/api/community/signin"),
+  githubSigninStart: () => request("/api/community/signin", { method: "POST" }),
+  githubSigninCancel: () => request("/api/community/signin", { method: "DELETE" }),
+  githubSignout: () => request("/api/community/signout", { method: "POST" }),
+  communityLink: (what: string, opts: { slug?: string; number?: number; open?: boolean } = {}) =>
+    request("/api/community/link", { method: "POST", body: JSON.stringify({ what, ...opts }) }),
   resetPersonaSetting: (pid: string, key: string) =>
     request(`/api/personas/${encodeURIComponent(pid)}/settings/${key}`, { method: "DELETE" }),
   // Discord's current client build number, read off its web app just now.
@@ -244,11 +580,28 @@ export const api = {
     request("/api/chats/react", { method: "POST", body: JSON.stringify({ user_id, mid, emoji, remove, target }) }),
   // A message typed in Chats, sent as the account; drops a reply the bot had lined up.
   /** `files` are pictures pasted into the composer: {name, data} with data base64, no prefix. */
-  chatsSend: (user_id: string, text: string, target = "", files: { name: string; data: string }[] = []) =>
-    request("/api/chats/send", { method: "POST", body: JSON.stringify({ user_id, text, target, files }) }),
+  // `reply_to`: the id of the message it answers (Discord's reply; Snapchat's and TikTok's Reply on it).
+  chatsSend: (user_id: string, text: string, target = "", files: { name: string; data: string }[] = [], reply_to = "") =>
+    request("/api/chats/send", { method: "POST", body: JSON.stringify({ user_id, text, target, files, reply_to }) }),
   // The last messages of a conversation, both sides, oldest first.
   chatsHistory: (user_id: string, target = "", limit = 20) =>
     request("/api/chats/history", { method: "POST", body: JSON.stringify({ user_id, target, limit }) }),
+  // The servers the account is in, their categories and the text channels it may read. Discord only.
+  chatsServers: (target = "") =>
+    request(`/api/chats/servers?target=${encodeURIComponent(target)}`) as Promise<{
+      supported: boolean; target: string;
+      guilds: { id: string; name: string; icon: string; members: number; channels: {
+        id: string; name: string; category: string; topic: string; nsfw: boolean; voice: boolean;
+        can_send: boolean; waiting: boolean }[] }[];
+    }>,
+  // Who is in each voice channel of one server, by channel id. Only looks; Discord only. `first`: the channels on
+  // screen, whose names it looks for first.
+  chatsVoice: (target: string, guild: string, first: string[] = []) =>
+    request(`/api/chats/voice?target=${encodeURIComponent(target)}&guild=${encodeURIComponent(guild)}&first=${first.join(",")}`) as Promise<{
+      supported: boolean; target: string;
+      channels: Record<string, { count: number; people: { id: string; name: string; avatar: string; muted: boolean;
+        deaf: boolean; live: boolean; video: boolean }[] }>;
+    }>,
   // Someone's last message in full, pictures included.
   chatsMessage: (user_id: string, target = "") =>
     request("/api/chats/message", { method: "POST", body: JSON.stringify({ user_id, target }) }),
@@ -284,6 +637,13 @@ export const api = {
   // Friend requests, answered now rather than on the background timer.
   friends: (target = "") =>
     request(`/api/friends${target ? `?target=${encodeURIComponent(target)}` : ""}`),
+  /** A friend request sent by username, from the Chats tab: Discord's by its API, Snapchat's through its own search.
+   *  iMessage's is a conversation started with a phone number or an email, and `text` is its first message. */
+  /** Take the Nitro gift in a message (Discord, DMs): the account redeems it, and says what became of it. */
+  giftAccept: (code: string, target = "", mid = "", user_id = "") =>
+    request("/api/gifts/accept", { method: "POST", body: JSON.stringify({ code, target, mid, user_id }) }),
+  friendAdd: (username: string, target = "", text = "") =>
+    request("/api/friends/add", { method: "POST", body: JSON.stringify({ username, target, ...(text ? { text } : {}) }) }),
   friendAction: (action: "accept" | "decline", user_id: string, target = "") =>
     request(`/api/friends/${action}`, {
       method: "POST",
@@ -299,6 +659,13 @@ export const api = {
     request(scoped(`/api/memory/${uid}`, persona), { method: "PUT", body: JSON.stringify(body) }),
   memoryDelete: (uid: string, body: any, persona = "") =>
     request(scoped(`/api/memory/${uid}`, persona), { method: "DELETE", body: JSON.stringify(body) }),
+  /** Two accounts that are one person: from then on each knows what the other was told. Not per persona - who
+   *  someone is does not change with who is talking to them. */
+  memoryLink: (user_id: string, other_id: string) =>
+    request("/api/memory/link", { method: "POST", body: JSON.stringify({ user_id, other_id }) }) as
+      Promise<{ ok: boolean; group: string[] }>,
+  memoryUnlink: (user_id: string) =>
+    request("/api/memory/unlink", { method: "POST", body: JSON.stringify({ user_id }) }),
   // ── A background and a typeface of your own ──────────────────────────────
   appearance: () => request("/api/appearance"),
   uploadAppearance: (kind: "background" | "font", file: File) => {
@@ -389,6 +756,12 @@ export const api = {
   // With the key being typed beside the address, when there is one; else the saved key.
   localProbe: (base_url: string, api_key?: string) =>
     request("/api/local/probe", { method: "POST", body: JSON.stringify({ base_url, api_key }) }),
+  localHfSearch: (q: string, sort: string, kind = "", size = "", cursor = "") =>
+    request(`/api/local/hf/search?${new URLSearchParams({ q, sort, kind, size, cursor })}`),
+  localHfSizes: (repo: string, kind: string) =>
+    request(`/api/local/hf/sizes?repo=${encodeURIComponent(repo)}&kind=${encodeURIComponent(kind)}`),
+  localHfPictures: (authors: string[]) => request(`/api/local/hf/pictures?authors=${encodeURIComponent(authors.join(","))}`),
+  localHfPicture: (author: string) => `/api/local/hf/picture?author=${encodeURIComponent(author)}`,
   localPull: (model: string, base_url?: string) =>
     request("/api/local/pull", { method: "POST", body: JSON.stringify({ model, base_url }) }),
   localPullStatus: () => request("/api/local/pull/status"),
@@ -405,11 +778,18 @@ export const api = {
     request("/api/local/forget", { method: "POST", body: JSON.stringify({ models }) }),
   // Stop Ollama and start it again the app's way, so a new context length applies.
   localRestart: () => request("/api/local/restart", { method: "POST" }),
+  /** The folder the server keeps its models in, opened whether it has any yet or not. */
+  localOpenFolder: (base_url?: string) =>
+    request("/api/local/open-folder", { method: "POST", body: JSON.stringify({ base_url }) }),
+  /** A model file sent to the models folder, and how far it has got. It can be tens of gigabytes: read off the disk as
+   *  it goes, never held in memory. `abort` stops it (rejecting with status 0), and leaves nothing behind. */
+  localImport: (file: File, onProgress: (done: number, total: number) => void) =>
+    sendFile(`/api/local/import?name=${encodeURIComponent(file.name)}`, file, onProgress),
   localReveal: (model: string, base_url?: string) =>
     request("/api/local/reveal", { method: "POST", body: JSON.stringify({ model, base_url }) }),
   // What each model has done, counted from every answer; balances where a provider will say.
   modelsUsage: (days = 7) => request(`/api/models/usage?days=${days}`),
-  modelsBalances: (refresh = false) => request(`/api/models/balances${refresh ? "?refresh=1" : ""}`),
+  modelsLeft: (refresh = false) => request(`/api/models/left${refresh ? "?refresh=1" : ""}`),
   // Start a server the app can start (or open its app) and wait until it answers (up to ~25s).
   localStart: (server = "", base_url = "") =>
     request("/api/local/start", { method: "POST", body: JSON.stringify({ server, base_url }) }),
@@ -426,11 +806,52 @@ export const api = {
     request(scoped("/api/models/plan", persona), { method: "POST", body: JSON.stringify(plan) }),
   snapStatus: () => request("/api/snapchat/status"),
   snapInstall: () => request("/api/snapchat/install", { method: "POST" }),
+  // Minecraft: mindcraft-ce, installed on demand (app/platforms/minecraft/install.py).
+  minecraftStatus: () => request("/api/minecraft/status"),
+  minecraftInstall: () => request("/api/minecraft/install", { method: "POST" }),
+  minecraftUninstall: () => request("/api/minecraft/uninstall", { method: "POST" }),
+  // A running account's card: a goal to get done, leaving the world, joining it again, what it is doing, another
+  // server to go to (text is its address), or its own server again.
+  minecraftOp: (webId: string, op: "goal" | "leave" | "join" | "state" | "server" | "home", text = "") =>
+    request(`/api/minecraft/${encodeURIComponent(webId)}/${op}`,
+            { method: "POST", body: JSON.stringify(op === "goal" ? { text } : op === "server" ? { address: text } : {}) }),
+  // Its live view: whether there is one to watch yet.
+  minecraftView: (webId: string) => request(`/api/minecraft/${encodeURIComponent(webId)}/view/status`),
+  /** What the panel draws over the picture: its chat, its hotbar, how it is doing, who is near it, and the rest of
+   *  a player's screen. Served by the bot's own process on the viewer's own server (agent_hooks.mjs), so it comes
+   *  down the same proxied path. The player list and the debug screen only when they are open. */
+  minecraftHud: (webId: string, ask: { debug?: boolean; tab?: boolean } = {}) =>
+    request(`/api/minecraft/${encodeURIComponent(webId)}/view/hud`
+            + (ask.debug || ask.tab ? `?${ask.debug ? "debug=1" : ""}${ask.debug && ask.tab ? "&" : ""}${ask.tab ? "tab=1" : ""}` : ""),
+    ) as Promise<McHud>,
+  /** A line typed into its chat as it: words, or a /command. */
+  minecraftSay: (webId: string, text: string) =>
+    request(`/api/minecraft/${encodeURIComponent(webId)}/view/say`, { method: "POST", body: JSON.stringify({ text }) }) as
+      Promise<{ ok: boolean; reason?: string }>,
+  /** Playing it by hand from its view, or letting go: its AI is paused meanwhile. */
+  minecraftDrive: (webId: string, on: boolean) =>
+    request(`/api/minecraft/${encodeURIComponent(webId)}/view/drive`, { method: "POST", body: JSON.stringify({ on }) }) as
+      Promise<{ ok: boolean; driving?: boolean; mind?: string; reason?: string }>,
+  /** The keys held, where it looks, and the mouse buttons: all of it each time. */
+  minecraftInput: (webId: string, state: McInput) =>
+    request(`/api/minecraft/${encodeURIComponent(webId)}/view/input`, { method: "POST", body: JSON.stringify(state) }) as
+      Promise<{ ok: boolean; driving?: boolean; reason?: string }>,
+  /** One thing done: a hotbar slot, drop, swap hands, put something on, move something out of a chest, respawn. */
+  minecraftAct: (webId: string, body: { do: "slot" | "drop" | "swap" | "equip" | "move" | "click" | "close" | "respawn";
+                                        slot?: number; all?: boolean; own?: boolean; button?: 0 | 1; shift?: boolean }) =>
+    request(`/api/minecraft/${encodeURIComponent(webId)}/view/act`, { method: "POST", body: JSON.stringify(body) }) as
+      Promise<{ ok: boolean; driving?: boolean; reason?: string }>,
+  // ViaProxy, for servers of any version (app/platforms/minecraft/viaproxy.py).
+  viaProxyStatus: () => request("/api/minecraft/viaproxy/status"),
+  viaProxyInstall: () => request("/api/minecraft/viaproxy/install", { method: "POST" }),
+  viaProxyUninstall: () => request("/api/minecraft/viaproxy/uninstall", { method: "POST" }),
   sysInfo: () => request("/api/system/info"),
   restartApp: () => request("/api/system/restart", { method: "POST" }),
   network: () => request("/api/system/network"),
   ffmpegStatus: () => request("/api/system/ffmpeg"),
   ffmpegInstall: () => request("/api/system/ffmpeg/install", { method: "POST" }),
+  opusStatus: () => request("/api/system/opus"),
+  opusInstall: () => request("/api/system/opus/install", { method: "POST" }),
   /** `persona` opens that persona's own pictures folder (target "pictures"). */
   openFolder: (target: string, persona = "") =>
     request("/api/system/open", { method: "POST", body: JSON.stringify(persona ? { target, persona } : { target }) }),

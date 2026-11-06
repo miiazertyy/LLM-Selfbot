@@ -21,7 +21,7 @@
 <button
   {onclick}
   disabled={disabled || loading}
-  class="jelly jelly-lift inline-flex items-center justify-center gap-1.5 rounded-[10px] font-medium
+  class="btn-3d jelly jelly-lift inline-flex items-center justify-center gap-1.5 rounded-[10px] font-medium
          disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0
          {styles[kind]} {sizes[size]}"
 >

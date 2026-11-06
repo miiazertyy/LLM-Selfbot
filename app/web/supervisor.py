@@ -6,6 +6,7 @@ import time
 from dataclasses import dataclass
 
 from app.core.launcher import spawn_role, clear_pid_file
+from app.platforms import registry
 from app.web.logbus import bus
 
 # Written by the runners in front of a Chats event on their stdout.
@@ -25,6 +26,9 @@ STABLE_RESET = 60.0
 
 # Hard ceilings. A worker that dies instantly and repeatedly is a bug, not a transient failure: give up rather than respawn forever, and never let the child table grow past a sane size.
 MAX_RESTARTS = 10
+# A worker that exits with this needs a person (its login was refused): it is left stopped, never restarted by itself.
+# Started again it would log in again, and again, every couple of minutes: how a Snapchat account got locked.
+NEEDS_SIGN_IN = 4
 MAX_CHILDREN = 32
 
 
@@ -37,7 +41,7 @@ def _alert_crash(child, title: str, detail: str):
     crashed. Only with Crash alerts on (Settings, App, Telegram); the
     controller itself has nobody to tell.
     """
-    if child.role not in ("discord", "snapchat"):
+    if child.role not in registry.IDS:
         return
     try:
         from app.utils.helpers import load_config
@@ -46,7 +50,7 @@ def _alert_crash(child, title: str, detail: str):
             return
         from app.core import ipc
         n = child.account or 1
-        target = n if child.role == "discord" else ("snap" if n == 1 else f"snap{n}")
+        target = n if child.role == "discord" else ipc.browser_target(child.role, n)
         ipc.send_command(target, "send_error_notification", {"title": title, "detail": detail, "kind": "crash"})
     except Exception:
         pass
@@ -75,6 +79,10 @@ class Supervisor:
         self.children: dict[str, Child] = {}
         self.lock = threading.RLock()
         self._running = False
+        # The accounts stopped because their social was switched off: switched on again, these start again.
+        self._switched_off: set[str] = set()
+        # Which socials were on when last looked at (app/utils/socials.py): as the app opened, then at each switch.
+        self._socials_seen: dict | None = None
 
     # ── Child management ─────────────────────────────────────────────────────
     def register(self, child_id: str, role: str, account: int | None, label: str):
@@ -84,32 +92,37 @@ class Supervisor:
     def _planned_children(self) -> dict:
         """Which children SHOULD run, from config + credentials."""
         from app.utils.helpers import load_config
-        from app.core.ipc import _count_accounts, _count_snap_accounts
+        from app.core.ipc import (_count_accounts, _count_snap_accounts, _count_tiktok_accounts,
+                                  _count_instagram_accounts, _count_x_accounts, _count_reddit_accounts,
+                                  _count_whatsapp_accounts, _count_minecraft_accounts, _count_imessage_accounts,
+                                  _count_telegram_accounts)
         out = {}
         config = load_config()
         services = config.get("services", {}) or {}
-        discord_on = config.get("discord", {}).get("enabled", True) \
-            and services.get("discord", {}).get("enabled", True)
-        snap_on = config.get("snapchat", {}).get("enabled", False) \
-            and services.get("snapchat", {}).get("enabled", True)
+        # Every social is on unless switched off, both of its switches counted (app/utils/socials.py). One with no
+        # accounts yet runs nothing either way: they are added on the Accounts page. The persona's Telegram accounts
+        # have a switch of their own there, never the control bot's (services.telegram, below).
+        from app.utils import socials
+        on = socials.on(config)
         tg_on = services.get("telegram", {}).get("enabled", True)
 
-        if discord_on:
-            n = _count_accounts()
-            # Where accounts run inside the app (a phone), Discord keeps its
-            # account in module state, so one runs at a time; the panel says so.
-            from app.utils import device
-            if device.single_process():
+        from app.utils import device
+        counts = {"discord": _count_accounts, "snapchat": _count_snap_accounts, "tiktok": _count_tiktok_accounts,
+                  "instagram": _count_instagram_accounts, "x": _count_x_accounts, "reddit": _count_reddit_accounts,
+                  "whatsapp": _count_whatsapp_accounts, "minecraft": _count_minecraft_accounts,
+                  "imessage": _count_imessage_accounts, "telegram": _count_telegram_accounts}
+        for p in registry.PLATFORMS:
+            # A phone has no Chrome or Node beside the app to run the others with.
+            if not on[p.id] or (device.is_phone() and not p.on_phone):
+                continue
+            # No floor of 1: without an account to run, spawning one anyway just crash-loops a runner with no log.
+            n = counts[p.id]()
+            # Where accounts run inside the app (a phone), Discord keeps its account in module state, so one runs at
+            # a time; the panel says so.
+            if p.id == "discord" and device.single_process():
                 n = min(n, 1)
             for i in range(1, n + 1):
-                out[f"discord_{i}"] = ("discord", i, f"Discord #{i}")
-        from app.utils import device
-        if snap_on and device.is_phone():
-            snap_on = False     # a phone has no Chrome or Node to run it with
-        if snap_on:
-            # No floor of 1: without SNAP_USERNAME there is no account to run, and spawning one anyway just crash-loops a runner with no login.
-            for i in range(1, _count_snap_accounts() + 1):
-                out[f"snapchat_{i}"] = ("snapchat", i, f"Snapchat #{i}")
+                out[f"{p.id}_{i}"] = (p.id, i, f"{p.name} #{i}")
         if tg_on:
             # Both halves must be real: the controller needs a numeric owner id and used to die at import on the template's placeholder text.
             from app.utils.credentials import real, real_int
@@ -117,7 +130,33 @@ class Supervisor:
                 out["telegram"] = ("telegram", None, "Telegram")
         return out
 
+    # ── Accounts waiting for a person to sign them in (NEEDS_SIGN_IN) ────────
+    # Kept on disk: the app opened again would otherwise start one at once and log it in again, once per launch.
+    @staticmethod
+    def _sign_in_file():
+        from app.utils.paths import DATA_DIR
+        return DATA_DIR / "needs_sign_in.json"
+
+    def needs_sign_in(self) -> set:
+        try:
+            return set(json.loads(self._sign_in_file().read_text(encoding="utf-8")))
+        except (OSError, ValueError, TypeError):
+            return set()
+
+    def _mark_sign_in(self, child_id: str, needs: bool):
+        ids = self.needs_sign_in()
+        if (child_id in ids) == needs:
+            return
+        ids = ids | {child_id} if needs else ids - {child_id}
+        try:
+            self._sign_in_file().write_text(json.dumps(sorted(ids)), encoding="utf-8")
+        except OSError:
+            pass
+
     def start(self, child_id: str):
+        """Start one account. Asked for by a person (start_all and a social switched on skip the accounts waiting for
+        a sign-in), so it is no longer waiting."""
+        self._mark_sign_in(child_id, False)
         with self.lock:
             child = self.children.get(child_id)
             if not child:
@@ -222,9 +261,9 @@ class Supervisor:
         """The IPC name for this child, or None if it has no command channel."""
         if child.role == "discord":
             return child.account or 1
-        if child.role == "snapchat":
-            n = child.account or 1
-            return "snap" if n == 1 else f"snap{n}"
+        if child.role in registry.BRIDGED:
+            from app.core.ipc import browser_target
+            return browser_target(child.role, child.account or 1)
         return None
 
     def stop(self, child_id: str, graceful_seconds: float = 6.0):
@@ -313,6 +352,11 @@ class Supervisor:
 
     def start_all(self):
         self._running = True
+        try:
+            from app.utils import socials
+            self._socials_seen = socials.on()
+        except Exception:
+            self._socials_seen = None
         self._sweep_stale_pids()
         # Before any account opens the database: the one-time change that gives each persona its own pictures and
         # memory runs with nobody else writing, and an old per-account persona setup is brought over.
@@ -321,10 +365,15 @@ class Supervisor:
             personas.startup()
         except Exception as e:
             print(f"[Supervisor] Personas could not be set up: {e}", flush=True)
+        waiting = self.needs_sign_in()
         for child_id, (role, account, label) in self._planned_children().items():
             with self.lock:
                 if child_id not in self.children:
                     self.register(child_id, role, account, label)
+                if child_id in waiting:
+                    bus.append("supervisor", f"{label} was left stopped: it needs you to sign it in again on "
+                                             "Accounts, then start it.", "warn")
+                    continue
                 self.start(child_id)
         threading.Thread(target=self._watchdog, daemon=True, name="supervisor-watchdog").start()
 
@@ -372,6 +421,15 @@ class Supervisor:
                     if child._stop_requested:
                         child.state = "stopped"
                         continue
+                    if code == NEEDS_SIGN_IN:
+                        child._stop_requested = True
+                        child.state = "stopped"
+                        self._mark_sign_in(child.child_id, True)
+                        bus.append("supervisor", f"{child.label} needs you to sign it in again. It was left stopped: "
+                                                 "trying again by itself would only log in again and again.", "error")
+                        alerts.append((child, f"{child.label} needs you",
+                                       "Its login was refused. Sign it in again from Accounts, then start it."))
+                        continue
                     if child.state == "crashing":
                         # Already scheduled, relaunch once the deadline passes.
                         if now >= child._retry_at:
@@ -417,6 +475,61 @@ class Supervisor:
             return set(self._planned_children())
         except Exception:
             return set()
+
+    def apply_socials(self) -> dict:
+        """A social was switched on or off in Settings, and it counts now rather than at the next launch. Off, its
+        accounts stop: the panel shows it nowhere, so nothing of it may go on answering. Switched back on, its
+        accounts start as they do when the app opens, except the ones someone had stopped by hand. Only the socials
+        whose switch changed: an account added and not started yet is left alone."""
+        from app.utils import socials
+        on = socials.on()
+        before = self._socials_seen or {}
+        turned_on = {name for name, now in on.items() if now and before.get(name) is False}
+
+        def social(role, account):
+            # The control bot is role "telegram" with no account: not a social, never touched here.
+            return role in on and not (role == "telegram" and account is None)
+
+        stopping, starting = [], []
+        with self.lock:
+            for child_id, child in self.children.items():
+                # One waiting to be restarted after a crash too, or the watchdog would bring it back.
+                alive = (child.proc and child.proc.poll() is None) or child.state in ("starting", "crashing")
+                if social(child.role, child.account) and not on[child.role] and alive:
+                    stopping.append(child_id)
+            waiting = self.needs_sign_in()
+            for child_id, (role, account, label) in self._planned_children().items():
+                if not social(role, account) or role not in turned_on or child_id in waiting:
+                    continue
+                child = self.children.get(child_id)
+                if child is None:
+                    self.register(child_id, role, account, label)
+                    starting.append(child_id)
+                elif child_id in self._switched_off and not (child.proc and child.proc.poll() is None):
+                    starting.append(child_id)
+        # Asking several to log out at once, not one after another (see stop_all).
+        threads = [threading.Thread(target=self._stop_quietly, args=(c,), daemon=True, name=f"social-off-{c}")
+                   for c in stopping]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=15)
+        self._switched_off.update(stopping)
+        for child_id in starting:
+            self._switched_off.discard(child_id)
+            if self._running:
+                self.start(child_id)
+        # The control bot counts the accounts it can command as it starts: started again, a social switched off is
+        # not among them, and one switched on is.
+        changed = bool(before) and on != before
+        ctl = self.children.get("telegram")
+        if changed and ctl and ctl.account is None and ctl.proc and ctl.proc.poll() is None and self._running:
+            threading.Thread(target=self.restart, args=("telegram",), daemon=True, name="restart-controller").start()
+        self._socials_seen = on
+        if stopping or starting:
+            bus.append("supervisor", "Socials switched: " + ", ".join(
+                [f"stopped {c}" for c in stopping] + [f"started {c}" for c in starting]))
+        return {"stopped": stopping, "started": starting if self._running else []}
 
     def running_ids(self) -> set:
         """Ids of the workers that are up, or on their way up: the ones a change to their persona has to reach."""

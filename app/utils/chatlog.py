@@ -31,6 +31,7 @@ import re
 import time
 import unicodedata
 
+from app.platforms import registry
 from app.utils.db import connect_raw
 from app.utils.paths import DATA_DIR
 
@@ -39,14 +40,44 @@ CACHE_DIR = DATA_DIR / "cache" / "chat_media"
 _ready = False
 # Snapchat accounts keep their conversations here too, as account 1000 + their number: one log, one search.
 SNAP_BASE = 1000
+# And TikTok's, as 2000 + their number.
+TIKTOK_BASE = 2000
+# And Instagram's, as 3000 + their number.
+INSTAGRAM_BASE = 3000
+# And Minecraft's, as 4000 + their number: what was said in the game's chat, to it and by it.
+MINECRAFT_BASE = 4000
+# And iMessage's, as 5000 + their number: its conversations as BlueBubbles read them off the Mac.
+IMESSAGE_BASE = 5000
+# And Telegram's, as 6000 + their number: the persona's own Telegram account, not the control bot.
+TELEGRAM_BASE = 6000
+# And X's, as 7000 + their number: its direct messages, not what it says in public.
+X_BASE = 7000
+# And Reddit's, as 8000 + their number: its chats and its inbox, not what it says in the subreddits.
+REDDIT_BASE = 8000
+# And WhatsApp's, as 9000 + their number: its chats and its groups.
+WHATSAPP_BASE = 9000
+
+# Each platform's numbering past Discord's, and the prefix its IPC targets carry ("snap2", "tiktok2", "insta2", "mc2",
+# "imsg2").
+_WEB_BASES = {p.id: (p.log_base, p.target) for p in registry.PLATFORMS if p.target}
+
+
+def web_account(platform: str, account: int) -> int:
+    """The account one browser platform's conversations are kept under: its base plus its number."""
+    base, _ = _WEB_BASES.get(platform, (SNAP_BASE, "snap"))
+    return base + int(account or 1)
 
 
 def log_account(target) -> int:
     """The account a target's conversations are kept under: a Discord account by its number ("1" or 1), a
-    Snapchat one ("snap", "snap2") by SNAP_BASE + its number."""
-    if isinstance(target, str) and target.startswith("snap"):
-        n = target[4:]
-        return SNAP_BASE + (int(n) if n.isdigit() else 1)
+    Snapchat one ("snap", "snap2") by SNAP_BASE + its number, a TikTok one by TIKTOK_BASE + it, an Instagram one
+    ("insta", "insta2") by INSTAGRAM_BASE + it."""
+    if isinstance(target, str):
+        # "insta" before "snap" and "tiktok" matters nowhere, but the longest prefix is tried first all the same.
+        for base, prefix in sorted(_WEB_BASES.values(), key=lambda b: -len(b[1])):
+            if target.startswith(prefix):
+                n = target[len(prefix):]
+                return base + (int(n) if n.isdigit() else 1)
     return int(target)
 
 
@@ -77,7 +108,7 @@ def _conn():
 
 def _body(payload: dict) -> str:
     keep = {k: payload[k] for k in ("text", "attachments", "stickers", "embeds", "reactions", "author", "reply_to",
-                                    "kind", "approx")
+                                    "kind", "approx", "gift")
             if k in payload and payload[k] not in (None, "", [], {})}
     return json.dumps(keep, ensure_ascii=False, default=str)
 
@@ -152,6 +183,28 @@ def mark_edited(account: int, mid, payload: dict) -> str | None:
         merged = {**old, **{k: v for k, v in payload.items() if k != "attachments" or not old.get("attachments")}}
         conn.execute("UPDATE chat_log SET body = ?, edited = ? WHERE account = ? AND mid = ?",
                      (_body(merged), time.time(), int(account), str(mid)))
+        conn.commit()
+        return row[0]
+    finally:
+        conn.close()
+
+
+def set_gift(account: int, mid, gift: dict) -> str | None:
+    """Where the Nitro gift in a message stands now: what it is for, and whether it is waiting, taken or gone.
+    Returns whose conversation it is in, so the panel can be told. None when the message is not kept here."""
+    conn = _conn()
+    try:
+        row = conn.execute("SELECT uid, body FROM chat_log WHERE account = ? AND mid = ?",
+                           (int(account), str(mid))).fetchone()
+        if not row:
+            return None
+        try:
+            old = json.loads(row[1])
+        except ValueError:
+            old = {}
+        old["gift"] = {**(old.get("gift") or {}), **gift}
+        conn.execute("UPDATE chat_log SET body = ? WHERE account = ? AND mid = ?",
+                     (_body(old), int(account), str(mid)))
         conn.commit()
         return row[0]
     finally:
@@ -634,7 +687,7 @@ def seed_turns(account: int, uid, before_ts: float, limit: int = 20) -> list[dic
 
 def media_path(name: str):
     """A kept picture, by its file name, or None for anything that is not one."""
-    if not re.fullmatch(r"[0-9]{1,25}_[0-9]{1,2}\.(?:png|jpg|jpeg|gif|webp|avif)", name or ""):
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,40}_[0-9]{1,2}\.(?:png|jpg|jpeg|gif|webp|avif)", name or ""):
         return None
     path = CACHE_DIR / name
     return path if path.is_file() else None

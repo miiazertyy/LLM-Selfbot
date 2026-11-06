@@ -1,0 +1,66 @@
+<!doctype html>
+<!--
+    Its inbox, in the shape redditbot.js reads:
+
+      - every row is a <shreddit-notification> carrying who it was from, what kind it is and whether it has been
+        read, with a link to the comment it is about
+      - a reply's link ends in the comment's own id; a mention's may not
+      - what kind it is comes off the row's own type attribute, never off its words: those are in whatever
+        language the account is set to
+
+    Every word is x's and every address is made up.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>xxxxxxxxxxxxx</title>
+  <style>
+    body { margin: 0; font: 14px/1.4 system-ui; }
+    shreddit-notification { display: block; padding: 10px 14px; border-bottom: 1px solid #333; }
+  </style>
+</head>
+<body>
+  <shreddit-app user-logged-in="true">
+    <div id="expand-user-drawer-button" role="button" aria-label="xxxxxx xxxx"></div>
+
+    <!-- Somebody replied under one of its comments. -->
+    <shreddit-notification
+      id="t1_mm11aa1"
+      type="comment_reply"
+      author="xxxxxxx"
+      unread
+      created-timestamp="2026-10-31T19:20:00.000Z">
+      <a href="/r/xxxxxxx/comments/1abc2de/xxxxx_xxxx/mm11aa1/">xxxx xxxxx xxx xxxxxx xx xxxx</a>
+    </shreddit-notification>
+
+    <!-- Somebody wrote its name. -->
+    <shreddit-notification
+      id="t1_mm22bb2"
+      type="username mention"
+      author="xxxxxx"
+      unread
+      created-timestamp="2026-10-31T19:40:00.000Z">
+      <a href="/r/xxxxxxx/comments/9xyz8fg/xxxx/mm22bb2/">xxx aliciamwwoff xxxxx xxxx</a>
+    </shreddit-notification>
+
+    <!-- One it has already seen. -->
+    <shreddit-notification
+      id="t1_mm33cc3"
+      type="post_reply"
+      author="xxxxxxxx"
+      data-read="true"
+      created-timestamp="2026-10-30T08:00:00.000Z">
+      <a href="/r/xxxxxxx/comments/7mno4pq/xxxxxx/mm33cc3/">xxxx xxxxxxx</a>
+    </shreddit-notification>
+
+    <!-- Reddit itself, which is never answered. -->
+    <shreddit-notification
+      id="t1_mm44dd4"
+      type="other"
+      author="reddit"
+      created-timestamp="2026-10-29T07:00:00.000Z">
+      <a href="/r/xxxxxxx/comments/0zz0000/xxx/">xxxxxxx xx xxxxxx</a>
+    </shreddit-notification>
+  </shreddit-app>
+</body>
+</html>

@@ -25,6 +25,8 @@
   import { chatCache, chatAccounts, replying, sendReply } from "../chats";
   import Badge from "../components/Badge.svelte";
   import Icon from "../components/Icon.svelte";
+  import { platformOf } from "../platforms";
+  import { platformOn, socialsOn } from "../socials";
   import { DAY_MONTH, fmtDate } from "../fmt";
   import StatChart from "../components/StatChart.svelte";
   import UserChip from "../components/UserChip.svelte";
@@ -36,6 +38,7 @@
   import Num from "./Num.svelte";
   import AccountsWidget from "./AccountsWidget.svelte";
   import LogWidget from "./LogWidget.svelte";
+  import LiveThought from "../components/LiveThought.svelte";
 
   let { inst, ctx }: { inst: WidgetInstance; ctx: any } = $props();
 
@@ -66,7 +69,11 @@
   const argmin = (a: number[]) => (a.length ? a.indexOf(Math.min(...a)) : -1);
 
   const series = $derived<any[]>(det?.series ?? []);
-  const perDay = $derived(series.map((d) => d.discord + d.snapchat));
+  // Every platform in the row, whatever it is called: a new one used to have to be added here by hand, and was
+  // not, so its replies were missing from the chart while being present in the table under it.
+  const dayTotal = (d: any) => Object.entries(d || {})
+    .reduce((n, [k, v]) => n + (k === "day" || typeof v !== "number" ? 0 : v), 0);
+  const perDay = $derived(series.map(dayTotal));
   const perDayLabels = $derived(series.map((d) => fmtDay(d.day)));
   const hours = $derived<number[]>((det?.hourly ?? []).map((h: any) => h.count));
   const hourLabels = $derived<string[]>((det?.hourly ?? []).map((h: any) => hh(h.hour)));
@@ -199,7 +206,7 @@
         <span class="fig-n"><Num value={ctx.stats?.people_7d ?? 0} /></span>
       </span>
       <span class="fig-sub truncate">
-        {#if ctx.stats?.top?.[0]}{ctx.stats.top[0].username} the most · {/if}{n(ctx.stats?.people ?? 0)} in total
+        {#if ctx.stats?.top?.[0]}{ctx.stats.top[0].username} the most{" · "}{/if}{n(ctx.stats?.people ?? 0)} in total
       </span>
     </button>
   </div>
@@ -247,18 +254,23 @@
     <div class="ap-list @2xl:grid-cols-2" use:arriving={{ heights: () => top.map((x: any) => x.count), stagger: 50, level: 0.7 }}>
       {#each top as t, i (t.platform + t.id)}
         {@const snap = t.platform === "snapchat"}
+        {@const tp = platformOf(t.platform)}
         <div class="ap-row" style="--i: {i}" data-rank={i < 3 ? i + 1 : undefined}>
-          <RankBadge n={i + 1} delay={450} />
+          <RankBadge n={i + 1} delay={450} spins />
           <span class="ap-av">
             {#if t.avatar || snap}
-              <Avatar src={t.avatar ?? ""} name={t.name} size={34} zoom={false} silhouette={snap} />
+              <Avatar src={t.avatar ?? ""} name={t.name} size={34} zoom={false} silhouette={tp.silhouette} />
             {:else}
               <span class="ap-initial" style="--h: {[...(t.name || "?")].reduce((h, ch) => (h * 31 + ch.charCodeAt(0)) % 360, 11)}">
                 {(t.name || "?").slice(0, 1).toUpperCase()}
               </span>
             {/if}
-            <span class="ap-platform" class:is-snap={snap} title={snap ? "Snapchat" : "Discord"}>
-              <Icon name={snap ? "snapchat" : "discord"} size={9} />
+            <span class="ap-platform" class:is-snap={snap} class:is-tiktok={tp.id === "tiktok"}
+                  class:is-insta={tp.id === "instagram"} class:is-x={tp.id === "x"}
+                  class:is-reddit={tp.id === "reddit"} class:is-whatsapp={tp.id === "whatsapp"}
+                  class:is-tg={tp.id === "telegram"}
+                  class:is-mc={tp.id === "minecraft"} class:is-imsg={tp.id === "imessage"} title={tp.name}>
+              <Icon name={tp.icon} size={9} />
             </span>
           </span>
           <div class="ap-main">
@@ -285,6 +297,8 @@
   {/if}
 
 <!-- ── Live log ─────────────────────────────────────────────────────────── -->
+{:else if inst.type === "thoughts"}
+  <LiveThought />
 {:else if inst.type === "log"}
   <!-- The same rows as the Logs page, not the console's text. -->
   <LogWidget lines={ctx.logs ?? []} filter={String(opt("filter") ?? "all")} tall={opt("height") === "tall"} />
@@ -316,17 +330,35 @@
   {/if}
   <StatChart values={weekdays} labels={weekdayLabels} kind="bars" height={130} unit="replies" />
 
-<!-- ── Discord and Snapchat ─────────────────────────────────────────────── -->
+<!-- ── Every platform, the newer ones once they have any ──────────────── -->
 {:else if inst.type === "platforms"}
   {@const d = det?.platform?.discord ?? 0}
   {@const s = det?.platform?.snapchat ?? 0}
-  {@const sum = Math.max(1, d + s)}
+  {@const t = det?.platform?.tiktok ?? 0}
+  {@const g = det?.platform?.instagram ?? 0}
+  {@const xx = det?.platform?.x ?? 0}
+  {@const rd = det?.platform?.reddit ?? 0}
+  {@const wa = det?.platform?.whatsapp ?? 0}
+  {@const m = det?.platform?.minecraft ?? 0}
+  {@const im = det?.platform?.imessage ?? 0}
+  {@const tg = det?.platform?.telegram ?? 0}
+  {@const sum = Math.max(1, d + s + t + g + xx + rd + m + im + tg)}
+  {@const rows = [["Discord", "discord", d, series.map((x) => x.discord)], ["Snapchat", "snapchat", s, series.map((x) => x.snapchat)],
+                  ...(t ? [["TikTok", "tiktok", t, series.map((x) => x.tiktok ?? 0)]] : []),
+                  ...(g ? [["Instagram", "instagram", g, series.map((x) => x.instagram ?? 0)]] : []),
+                  ...(xx ? [["X", "x", xx, series.map((x) => x.x ?? 0)]] : []),
+                  ...(rd ? [["Reddit", "reddit", rd, series.map((x) => x.reddit ?? 0)]] : []),
+                  ...(wa ? [["WhatsApp", "whatsapp", wa, series.map((x) => x.whatsapp ?? 0)]] : []),
+                  ...(m ? [["Minecraft", "minecraft", m, series.map((x) => x.minecraft ?? 0)]] : []),
+                  ...(im ? [["iMessage", "imessage", im, series.map((x) => x.imessage ?? 0)]] : []),
+                  ...(tg ? [["Telegram", "telegram", tg, series.map((x) => x.telegram ?? 0)]] : [])]
+                  .filter((r) => platformOn($socialsOn, String(r[1])))}
   {@const delta = change(det?.total ?? 0, det?.previous ?? 0)}
   <!-- One hue, named by label rather than colour, and each platform's own
        trend beside it: the theme's two accents are too close together to tell
        apart on most themes, so a second colour would not have worked. -->
-  <div class="pf-list space-y-4" use:arriving={{ heights: () => [d, s], stagger: 120 }}>
-    {#each [["Discord", "discord", d, series.map((x) => x.discord)], ["Snapchat", "snapchat", s, series.map((x) => x.snapchat)]] as [name, icon, count, trend], k}
+  <div class="pf-list space-y-4" use:arriving={{ heights: () => rows.map((r) => Number(r[2])), stagger: 120 }}>
+    {#each rows as [name, icon, count, trend], k}
       <div class="flex items-center gap-3">
         <span class="bubble"><Icon name={String(icon)} size={16} /></span>
         <div class="min-w-0 flex-1">
@@ -373,7 +405,7 @@
             <span class="block text-[11px] tabular-nums {u.ts && now - u.ts > 3600 ? 'text-warn' : 'text-muted'}">{waited(u.ts)}</span>
             {#if u.account}
               <span class="block max-w-[6rem] truncate text-[10px] text-faint">
-                {u.account.display_name || u.account.username || (u.account.platform === "snapchat" ? "Snapchat" : "Discord")}
+                {u.account.display_name || u.account.username || platformOf(u.account.platform).name}
               </span>
             {/if}
           </span>
@@ -438,7 +470,7 @@
   .grow-bar {
     transition: width 0.6s var(--spring);
   }
-  /* Discord's and Snapchat's shares, grown out as the widget arrives, one after the other (lib/growin.ts). */
+  /* Each platform's share, grown out as the widget arrives, one after the other (lib/growin.ts). */
   .pf-bar { transform-origin: left center; }
   .pf-list:not(:global(.is-in)) .pf-bar { transform: scaleX(0); }
   .pf-list:global(.is-in) .pf-bar {
@@ -588,6 +620,14 @@
     box-shadow: 0 0 0 2px var(--color-card);
   }
   .ap-platform.is-snap { color: #141414; background: #fffc00; }
+  .ap-platform.is-tiktok { color: #fff; background: #111; box-shadow: 0 0 0 2px var(--color-card), inset 0 0 0 1px rgb(254 44 85 / 0.55); }
+  .ap-platform.is-insta { color: #f06292; background: #16090f; box-shadow: 0 0 0 2px var(--color-card), inset 0 0 0 1px rgb(225 48 108 / 0.55); }
+  .ap-platform.is-mc { color: #7cbd4a; background: #141b10; box-shadow: 0 0 0 2px var(--color-card), inset 0 0 0 1px rgb(106 168 58 / 0.55); }
+  .ap-platform.is-imsg { color: #fff; background: linear-gradient(180deg, #5df67a, #0cbd2a); box-shadow: 0 0 0 2px var(--color-card); }
+  .ap-platform.is-x { color: #fff; background: #000; box-shadow: 0 0 0 2px var(--color-card), inset 0 0 0 1px rgb(231 233 234 / 0.4); }
+  .ap-platform.is-reddit { color: #fff; background: #ff4500; box-shadow: 0 0 0 2px var(--color-card); }
+  .ap-platform.is-whatsapp { color: #fff; background: #25d366; box-shadow: 0 0 0 2px var(--color-card); }
+  .ap-platform.is-tg { color: #fff; background: #2aabee; box-shadow: 0 0 0 2px var(--color-card); }
   .ap-main { min-width: 0; flex: 1; }
   .ap-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
   .ap-name { min-width: 0; overflow: hidden; font-size: 13px; font-weight: 600; color: var(--color-ink); white-space: nowrap; text-overflow: ellipsis; }

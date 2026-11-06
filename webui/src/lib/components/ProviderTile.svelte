@@ -11,6 +11,7 @@
     "groq", "openai", "anthropic", "openrouter", "xai", "together", "lmstudio",
     "cerebras", "ollama", "gemini", "mistral", "deepseek", "llamacpp", "vllm",
     "jan", "gpt4all", "koboldcpp", "localai", "docker", "sglang", "textgen", "tabbyapi",
+    "elevenlabs", "deepgram", "cartesia", "fish", "rime", "minimax",
   ]);
 </script>
 
@@ -53,24 +54,11 @@
     font-weight: 700;
     letter-spacing: -0.02em;
     color: color-mix(in srgb, var(--tint) 88%, white);
-    background:
-      radial-gradient(120% 120% at 0% 0%, color-mix(in srgb, var(--tint) 34%, transparent), transparent 70%),
-      color-mix(in srgb, var(--tint) 14%, rgb(255 255 255 / 0.02));
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tint) 30%, transparent);
+    background: color-mix(in srgb, var(--tint) 16%, transparent);
   }
   .ptile.is-logo {
     overflow: hidden;
-    background: rgb(255 255 255 / 0.06);
-    box-shadow: 0 2px 8px -3px rgb(0 0 0 / 0.5);
-  }
-  /* A hairline over the logo, so a white icon keeps an edge on a light card. */
-  .ptile.is-logo::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    border-radius: inherit;
-    box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.1);
-    pointer-events: none;
+    background: rgb(255 255 255 / 0.07);
   }
   .ptile.is-logo img {
     display: block;

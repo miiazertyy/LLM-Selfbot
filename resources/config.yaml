@@ -22,7 +22,7 @@ bot:
   groq_small_model: "openai/gpt-oss-20b"
 
   # Model used for image description (must support vision)
-  groq_image_model: "qwen/qwen3.6-27b"
+  groq_image_model: "qwen/qwen3.8-27b"
 
   # Model used for voice transcription
   groq_whisper_model: "whisper-large-v3-turbo"
@@ -73,6 +73,45 @@ bot:
       - "[casual]"
       - "[warm]"
 
+  # Live calls: picking up when someone calls, and talking like a person on the
+  # phone. Off until you switch it on. Each persona can have its own.
+  calls:
+    enabled: false
+    # How it talks. "realtime": a voice model that hears and speaks itself, the
+    # most human (Gemini Live has a free tier; OpenAI Realtime is paid).
+    # "own": its own brain out loud, free on Groq, a second or two slower.
+    engine: realtime
+    realtime_provider: gemini     # gemini / openai / xai
+    realtime_model: ""            # empty: the provider's newest
+    realtime_voice: Kore
+    # The voice when it talks with its own brain: "same" as voice messages,
+    # or "elevenlabs". An empty voice means the voice messages' own.
+    speaker: same
+    voice: ""
+    # On its own brain, what hears, thinks and speaks on a call, as "provider:model". Empty: what voice messages
+    # and replies use (Settings > Models). "local:builtin:whisper-base" is this computer's own voice.
+    hear: ""
+    think: ""
+    speak: ""
+    # Who it picks up for: "known" (people it has talked to), "anyone", "nobody".
+    answer: known
+    max_minutes: 10
+    # How long it lets it ring before picking up, in seconds: [shortest, longest].
+    ring_seconds: [2, 7]
+    # Hours it lets calls ring out, as "23-7". Empty means any hour.
+    quiet_hours: ""
+    per_day: 10
+    # Afterwards: the call in the chat log, and what was said in its memory.
+    remember: true
+    # You can have it call someone from the Chats tab. It never dials on its own.
+    you_can_dial: true
+    # Discord: join the voice channel picked there and talk to the people in it,
+    # on the same rules as the calls above. Discord's DM calls cannot be answered
+    # by any selfbot (they are WebRTC, outside the gateway), so a ringing call
+    # gets a text back instead, pointing at the voice channel when there is one.
+    vc: false
+    reply_ring: true
+
   # Pictures / selfies: when someone asks for a photo, the bot sends one from
   # config/pictures (upload with ,image / Telegram). Used by Discord + Snapchat.
   pictures:
@@ -97,6 +136,27 @@ bot:
       accounts: []
       chance: 0.5
       kinds: [caption, big_text, time, day, emoji, look]
+
+  # Videos people send (a video in a DM, a video snap, a Spotlight, a TikTok):
+  # watched like a person would, frames from across each one and what is said
+  # in it, so the reply is to the video. Each one is watched once.
+  videos:
+    enabled: true
+    listen: true
+    max_seconds: 180
+
+  # The web (app/utils/web): looking something up when a message needs it,
+  # reading the links people send, and browsing a little in its own free time
+  # to bring up later. What it searches leaves this computer: Google (in a
+  # browser of its own), DuckDuckGo, or Brave and Tavily with a key in .env.
+  web:
+    enabled: true
+    links: true
+    free_time: true
+    sessions_per_day: 3
+    search_with: auto       # auto | google | duckduckgo | brave | tavily
+    share_links: true
+    per_hour: 12
 
   # Respond to DMs
   allow_dm: true
@@ -252,6 +312,17 @@ bot:
     # What the account shows during those hours: online | idle | dnd | invisible
     status: invisible
 
+  # --- Careful mode ---
+  # For a new or precious account: everything below its usual pace, and nothing
+  # public at all (no likes, comments, posts, follows, statuses, notes, friend
+  # requests or voice calls) until the date passes. Empty until = on until you
+  # switch it off. The platforms' own limits stay as written; this scales them.
+  conservative:
+    enabled: false
+    until: ""            # "2026-12-01" - the morning after, it is off by itself
+    reply_scale: 0.4     # sends-per-hour at this fraction of the settings
+    wait_scale: 1.5      # waits between actions stretched this much
+
   # --- Message style (verbosity) ---
   # short: terse 1-2 sentence replies. balanced (recommended): casual, one
   # idea per message, splits longer thoughts into 2-3 messages. chatty:
@@ -391,7 +462,24 @@ services:
     enabled: true
   snapchat:
     enabled: true
+  tiktok:
+    enabled: true
+  instagram:
+    enabled: true
+  x:
+    enabled: true
+  reddit:
+    enabled: true
+  whatsapp:
+    enabled: true
+  minecraft:
+    enabled: true
+  imessage:
+    enabled: true
   telegram:
+    enabled: true
+  # The persona's own Telegram accounts, which are not the control bot above.
+  telegram_accounts:
     enabled: true
   webui:
     enabled: true
@@ -403,10 +491,27 @@ discord:
   # Set to false to disable the Discord selfbot entirely
   enabled: true
 
+  # Nitro gifts someone sends you in a DM. They expire, so the account can take
+  # one the moment it lands, or leave it and tell you. Either way it shows in
+  # the Chats tab with an Accept button.
+  gifts:
+    # off = leave them alone, notify = tell me, accept = take it as it lands
+    mode: notify
+    # With accept: only take gifts from friends (a link from a stranger is
+    # left for you to look at).
+    only_friends: false
+
 # ── Snapchat Platform ──────────────────────────────────────────────────────────
 snapchat:
   # Set to true to enable the Snapchat platform alongside Discord
   enabled: true
+
+  # Snapchat for Web stopped taking a picture into its camera: the camera there is capture-only now, so a Snap
+  # cannot be made from a file and the account sends no pictures at all. Turned on, a picture goes into the chat
+  # instead - which arrives as an ordinary picture that stays, not a Snap that is tapped once and gone. Off,
+  # because those are not the same thing.
+  pictures:
+    as_chat_picture: false
 
   # How often (ms) the Node runner polls visible chats for new messages
   poll_interval_ms: 8000
@@ -444,3 +549,792 @@ snapchat:
   # a long-lived page and drifts when left for hours: chats stop appearing in
   # the sidebar even though messages are arriving. 0 turns it off.
   reload_interval_ms: 2700000
+
+# ── TikTok Platform ────────────────────────────────────────────────────────────
+# Driven through tiktok.com in each account's own Chrome profile, made when it is
+# signed in from the Accounts page. Shares Snapchat's browser and packages.
+tiktok:
+  enabled: true
+
+  # Keep its Chrome window off the screen. It is still a real window (TikTok
+  # notices a headless one); a check to solve, or a lost login, brings it back.
+  headless: false
+
+  # How often (ms) it looks at the inbox, and how many unread chats it opens a look
+  poll_interval_ms: 10000
+  max_recipients: 15
+  response_timeout_ms: 90000
+
+  # ── Pace ──────────────────────────────────────────────────────────────────
+  # TikTok limits how fast an account may message ("sending messages too fast"),
+  # so these start slower than Snapchat's.
+  min_send_gap_ms: 15000
+  max_send_gap_ms: 45000
+  max_sends_per_hour: 20
+  quiet_hours: ""
+
+  # Accept message requests from people it does not follow, after the same wait
+  # as Discord's friend requests (bot.friend_requests). Off by default.
+  accept_message_requests: false
+  # Follow back new followers, a couple at a time, now and then. TikTok lets
+  # mutual followers message each other, so this opens DMs. Off by default.
+  follow_back: false
+
+  # Hide TikTok's "Activity status" in the night hours (bot.night_invisible.hours).
+  night_activity_status: false
+
+  # Reload the inbox now and then (jittered); a long-lived page drifts. 0 = never.
+  reload_interval_ms: 2700000
+
+  # Answer new comments under the account's own videos, in public, in the
+  # persona's voice. Off by default.
+  comments:
+    enabled: false
+    per_hour: 10
+    videos: 3
+
+  # Co-host the account's LIVE: answer viewers in the chat and out loud (the
+  # app's own voice, played by the LIVE view and its OBS page), thank gifts,
+  # welcome new followers. Off by default. Try it in the practice LIVE under
+  # Settings, TikTok, LIVE: it answers just as a real one does.
+  live:
+    enabled: false
+    chat: true
+    voice: true
+    per_minute: 4
+    # Seconds it waits at least before an answer shows, as a person would.
+    reply_delay: 2
+    # What it answers. answer_mode: all, questions (and lines that name it),
+    # or named (only lines that name it).
+    answer_comments: true
+    answer_mode: all
+    thank_gifts: true
+    # Gifts worth fewer coins than this go unthanked (a Rose is 1).
+    gift_min_coins: 1
+    welcome_follows: true
+    greet_joins: false
+    thank_shares: true
+    thank_likes: false
+    # The same viewer again only after this many seconds, and at most this
+    # many times in one LIVE.
+    viewer_cooldown: 30
+    max_per_viewer: 10
+    skip_emoji_only: true
+    # Comments with any of these words, and these viewers (names or @handles),
+    # are never answered.
+    blocked_words: []
+    ignore_viewers: []
+    # How it comes across. tone: persona (as it is), hype, chill, funny,
+    # sweet. language: viewer (each viewer's own) or persona (always its own).
+    tone: persona
+    topic: ""
+    language: viewer
+    max_words: 15
+    use_names: true
+    emoji: true
+    # Read the comment out loud before the answer.
+    read_comment: false
+    # Say something to everyone when the chat is quiet this many seconds.
+    fill_silence: false
+    silence_seconds: 60
+    # The OBS page (the LIVE view's link): how long each answer stays up, where
+    # (bottom, middle, top), the comment above it, the size (small, medium,
+    # large) and the look (dark, light, tiktok).
+    overlay_seconds: 8
+    overlay_position: bottom
+    overlay_comment: true
+    overlay_size: medium
+    overlay_theme: dark
+
+  # Watch the TikToks people send (in TikTok DMs, and as links on Discord and
+  # Snapchat), with what TikTok says of them: caption, sound, how they are
+  # doing. How it watches is bot.videos. Each one is watched once.
+  watch:
+    enabled: true
+    # Look at the posts of the people it talks to, to know what they are up to.
+    their_posts: true
+
+  # Likes and comments under other people's videos, in public. Off until
+  # switched on, each, and never more than so many a day.
+  engage:
+    like_sent: false
+    like_theirs: false
+    comment_sent: false
+    comment_theirs: false
+    mentions: false
+    likes_per_day: 30
+    comments_per_day: 5
+
+  # Join other people's LIVEs as a viewer: a hello, an answer when someone
+  # there talks to it, now and then a line of its own. Off by default.
+  visits:
+    enabled: false
+    chats: true
+    shared: true
+    following: false
+    stay_minutes: 10
+    lines_per_5min: 3
+    per_day: 4
+    follow_host: false
+
+  # Scroll For You now and then: watch, like some, and remember a few to talk
+  # about. Off by default.
+  foryou:
+    enabled: false
+    sessions_per_day: 3
+    minutes: 5
+    like_percent: 15
+
+  # When someone asks for a TikTok, send one it liked or saw on For You. On
+  # every platform whose persona has a TikTok account.
+  share:
+    enabled: false
+
+  # Post the persona's videos to TikTok, from the Pictures page, by hand only.
+  posting:
+    enabled: true
+    per_day: 3
+    privacy: "everyone"
+# ── Instagram ────────────────────────────────────────────────────────────────
+# The fourth platform, driven through instagram.com in each account's own
+# Chrome, as Snapchat and TikTok are. Instagram is the strictest of the four
+# about automation, so it starts slower than TikTok and everything public is
+# off until it is switched on.
+instagram:
+  enabled: true
+
+  # Keep its Chrome window off the screen. It is still a real window (Instagram
+  # notices a headless one); a check to solve, a code to type, or a lost login
+  # brings it back.
+  headless: false
+
+  # How often (ms) it looks at the inbox, and how many unread chats it opens a look
+  poll_interval_ms: 12000
+  max_recipients: 10
+  response_timeout_ms: 90000
+
+  # ── Pace ──────────────────────────────────────────────────────────────────
+  # Slower than TikTok's: Instagram acts on a new account that sends fast.
+  min_send_gap_ms: 20000
+  max_send_gap_ms: 60000
+  max_sends_per_hour: 20
+  quiet_hours: ""
+
+  # Accept message requests from people it does not follow, after the same wait
+  # as Discord's friend requests (bot.friend_requests). Off by default.
+  accept_message_requests: false
+  # Follow back new followers, a couple at a time, now and then. Off by default.
+  follow_back: false
+  # Accept people asking to follow it, when the account is private.
+  accept_follow_requests: false
+
+  # Hide Instagram's activity status in the night hours (bot.night_invisible.hours).
+  night_activity_status: false
+
+  # Reload the inbox now and then (jittered); a long-lived page drifts. 0 = never.
+  reload_interval_ms: 2700000
+
+  # Watch the reels, posts and stories people send (in Instagram DMs, and as
+  # links on Discord, Snapchat and TikTok). Instagram shows most of this only
+  # to someone signed in, so a signed-in account opens them in its own browser;
+  # how it watches is bot.videos. Each one is watched once.
+  watch:
+    enabled: true
+    # Look at the posts of the people it talks to, to know what they are up to.
+    their_posts: true
+    # Send voice notes, where Instagram's website lets this account (it does
+    # not everywhere; the README says what happens when it cannot).
+    voice_notes: false
+
+  # Stories: the ones the people it talks to put up (they can see that it
+  # watched), answering some, and putting up its own from its pictures.
+  stories:
+    watch: true
+    reply: false
+    replies_per_day: 3
+    post: false
+    post_per_day: 2
+
+  # Scroll Reels now and then: watch, like some, and remember a few to talk
+  # about. Off by default.
+  reels:
+    enabled: false
+    sessions_per_day: 3
+    minutes: 5
+    like_percent: 10
+
+  # Likes and comments under other people's posts, in public. Off until
+  # switched on, each, and never more than so many a day.
+  engage:
+    like_sent: false
+    like_theirs: false
+    comment_sent: false
+    comment_theirs: false
+    likes_per_day: 20
+    comments_per_day: 3
+
+  # Answer new comments under the account's own posts, in public, in the
+  # persona's voice. Off by default.
+  comments:
+    enabled: false
+    per_hour: 8
+    posts: 3
+
+  # The little Note above its name in everyone's inbox, set from its mood now
+  # and then, as Discord's status is. Off by default.
+  notes:
+    enabled: false
+    every_hours: 12
+
+  # When someone asks for a reel, send one it liked or saw on Reels. On every
+  # platform whose persona has an Instagram account.
+  share:
+    enabled: false
+
+  # Post the persona's pictures and videos to Instagram, from the Pictures
+  # page, by hand only: as a post, a reel or a story.
+  posting:
+    enabled: true
+    per_day: 3
+
+# ── X ────────────────────────────────────────────────────────────────────────
+# The fifth platform, driven through x.com in each account's own Chrome, as
+# Snapchat, TikTok and Instagram are, and sharing their browser and packages.
+#
+# Everything here starts lower than Instagram's, and everything public starts
+# off. X minds an account that looks automated sooner than they do, and what it
+# does about it is lock the account rather than slow it down; a lock takes a
+# person, a phone and a code to undo. So an account earns its way up from these
+# numbers instead of being turned down to them after something goes wrong.
+x:
+  enabled: true
+
+  # Keep its Chrome window off the screen. It is still a real window (X notices
+  # a headless one at once); a check to solve, a code to type, or a lost login
+  # brings it back, and it goes out of sight again by itself.
+  headless: false
+
+  # How often (ms) it looks at its messages, and how many unread chats it opens
+  # a look. Slower than the others: x.com draws its lists a few rows at a time,
+  # so looking oftener buys nothing.
+  poll_interval_ms: 20000
+  max_recipients: 8
+  response_timeout_ms: 90000
+
+  # ── Pace ──────────────────────────────────────────────────────────────────
+  # Half Instagram's. X's own limit is far above this; the point is not the
+  # limit, it is that nobody answers five people in a minute.
+  min_send_gap_ms: 30000
+  max_send_gap_ms: 90000
+  max_sends_per_hour: 12
+  quiet_hours: ""
+
+  # Accept message requests from people it does not follow, after the same wait
+  # as Discord's friend requests (bot.friend_requests). Off by default.
+  accept_message_requests: false
+
+  # Reload the messages page now and then (jittered); a long-lived page drifts
+  # and stops showing new chats. 0 = never.
+  reload_interval_ms: 2700000
+
+  # ── What people say to it in public ───────────────────────────────────────
+  # On X most of what is said to it is not a message: it is a reply or an @, and
+  # an account that answers its messages and ignores those reads as a bot. Off
+  # until switched on: a public answer is public, and cannot be taken back
+  # quietly.
+  mentions:
+    enabled: false
+    # The @s on its notifications, and the replies under its own posts.
+    replies: true
+    own_posts: true
+    own_posts_watched: 3
+    # At most this many answers an hour and this many a pass, so a busy hour
+    # does not become a burst. The day's cap is engage.replies_per_day.
+    per_hour: 3
+    per_pass: 3
+    # How far down the page it reads each pass. Each step is a scroll: X takes
+    # rows off the page as they go by, so it is read a window at a time.
+    scrolls: 3
+    # An @ from someone with nothing on their profile, with none of its own
+    # words in it, is usually an argument it was tagged into.
+    skip_strangers: true
+
+  # ── Likes, reposts, follows ───────────────────────────────────────────────
+  # Each off until switched on, and never more than so many a day. A like is the
+  # cheapest thing on X and the easiest to do too much of.
+  engage:
+    # What people send it in its messages.
+    like_sent: false
+    repost_sent: false
+    # What the people it talks to post on their own.
+    like_theirs: false
+    repost_theirs: false
+    # Follow back new followers, a couple at a time, now and then.
+    follow_back: false
+    likes_per_day: 10
+    reposts_per_day: 2
+    follows_per_day: 3
+    # Public answers in one day, whatever mentions.per_hour would allow.
+    replies_per_day: 10
+
+  # ── Posting on its own ────────────────────────────────────────────────────
+  # Posts of its own, in its own voice. Off by default: a posting account is the
+  # one X looks at hardest.
+  posting:
+    enabled: false
+    per_day: 2
+    # Never two posts closer together than this, whatever the day's count says.
+    min_gap_minutes: 180
+    # X allows 280; a little under, so a link it adds still fits.
+    max_chars: 270
+    # Posts in a row as one thread. 1 means it never writes one.
+    thread_max: 1
+    # Put one of its own pictures with a post, where it has one that fits.
+    with_image: false
+    # Where a post comes from. With both, it picks per post, leaning to
+    # whichever has something fresh; with neither, it posts nothing.
+    from:
+      # Something it read in its free time (bot.web), out of its journal.
+      saw_online: true
+      # Whatever is on its mind, from its persona and its memory.
+      on_its_mind: true
+
+  # Watch the posts people send it, with what the page says of them. How it
+  # watches is bot.videos. Each one is watched once.
+  watch:
+    enabled: true
+    # Look at the posts of the people it talks to, to know what they are up to.
+    their_posts: true
+    # Read what is under a post it was sent, not only the post: on X the replies
+    # under a thing are usually the thing being shared.
+    threads: true
+
+# ── Reddit ───────────────────────────────────────────────────────────────────
+# The sixth platform, driven through reddit.com in each account's own Chrome,
+# as Snapchat, TikTok, Instagram and X are, and sharing their browser and
+# packages. Reddit's own API stopped taking new apps on 31 October 2026 and
+# closes altogether in March 2027, so the page is the only way in.
+#
+# Reddit does not lock an account it dislikes, the way X does. It hides it: a
+# shadowbanned account's words stay there for the account itself and for nobody
+# else, and it can go on talking to an empty room for weeks. So it checks its
+# own last comment is really there, signed out, and stops if it is not
+# (check_shadowban).
+#
+# The other thing Reddit does that none of the rest do is refuse a young
+# account outright. Most subreddits want karma or an age it has not got, and
+# trying anyway is what gets an account noticed. So it takes part only where it
+# is told to (subreddits, below), its own profile is where its posts go until
+# told otherwise, and a refusal is remembered rather than tried again.
+reddit:
+  enabled: true
+
+  # Keep its Chrome window off the screen. It is still a real window; a check to
+  # solve, a code to type, or a lost login brings it back, and it goes out of
+  # sight again by itself.
+  headless: false
+
+  # How often (ms) it looks at its chats and its inbox, and how many unread
+  # chats it opens a look.
+  poll_interval_ms: 25000
+  max_recipients: 8
+  response_timeout_ms: 90000
+
+  # Reload the page now and then (jittered); a long-lived one drifts and stops
+  # showing what is new. 0 = never.
+  reload_interval_ms: 2700000
+
+  # ── Pace ──────────────────────────────────────────────────────────────────
+  # The same as X's. Nobody answers five people in a minute.
+  min_send_gap_ms: 30000
+  max_send_gap_ms: 90000
+  max_sends_per_hour: 12
+  quiet_hours: ""
+
+  # Accept chat invitations from people it does not know, after the same wait as
+  # Discord's friend requests (bot.friend_requests). Off by default.
+  accept_chat_invites: false
+
+  # The subreddits it may take part in, by name ("askreddit, cooking"). Nothing
+  # outside this list is commented on or posted to, whatever else is switched
+  # on. Empty means its own profile and the threads it is already in, which is
+  # all a new account can do anyway.
+  subreddits: ""
+
+  # Check it is not being hidden. After it comments in public it looks for that
+  # comment again from a signed-out window of the same browser: there for
+  # everyone, or there for nobody. Gone means shadowbanned, and everything
+  # public stops until a person looks at it.
+  check_shadowban: true
+
+  # ── Its inbox ─────────────────────────────────────────────────────────────
+  # On Reddit most of what is said to it is not a chat message: it is a reply
+  # under something it wrote, or a u/ mention. Answering those is the nearest
+  # thing Reddit has to answering a message, so it is on; where it goes is the
+  # same thread it was said in.
+  inbox:
+    enabled: true
+    # Replies to its own posts and comments.
+    replies: true
+    # Someone writing u/its-name anywhere.
+    mentions: true
+    # At most this many answers an hour and this many a pass, so a busy hour
+    # does not become a burst. The day's cap is engage.replies_per_day.
+    per_hour: 3
+    per_pass: 3
+    # How far down the page it reads each pass. Each step is a scroll: Reddit
+    # takes rows off the page as they go by.
+    scrolls: 3
+    # A reply from someone with nothing on their profile, with none of its own
+    # words in it, is usually an argument it was tagged into.
+    skip_strangers: true
+
+  # ── Commenting where nobody asked it to ───────────────────────────────────
+  # Comments under other people's posts, in the subreddits above. Off until
+  # switched on: this is the one that gets an account noticed, and a new one
+  # cannot do it at all in most places.
+  comments:
+    enabled: false
+    per_day: 6
+    # Reddit allows 10,000; a comment that long is not a comment.
+    max_chars: 1200
+    # Only posts from the last day or so. A comment on a week-old thread is read
+    # by nobody and looks like what it is.
+    fresh_only: true
+    # Leave the posts nobody is reading alone.
+    min_score: 5
+    # A locked or archived thread takes no comments, and an edited one can be
+    # removed under it.
+    skip_locked: true
+
+  # ── Posting on its own ────────────────────────────────────────────────────
+  # Posts of its own, in its own voice. Off by default.
+  posting:
+    enabled: false
+    # Where they go. "profile" is its own page, which always takes a post; "the
+    # subreddits above" may refuse a young account, and that refusal is
+    # remembered for that subreddit rather than tried again.
+    where: "profile"
+    per_day: 1
+    # Never two posts closer together than this, whatever the day's count says.
+    min_gap_minutes: 240
+    max_chars: 1500
+    # Put one of its own pictures with a post, where it has one that fits.
+    with_image: false
+    # Many subreddits refuse a post with no flair on it. Pick the nearest one
+    # the subreddit offers.
+    flair: true
+    # Where a post comes from. With both, it picks per post, leaning to
+    # whichever has something fresh; with neither, it posts nothing.
+    from:
+      # Something it read in its free time (bot.web), out of its journal.
+      saw_online: true
+      # Whatever is on its mind, from its persona and its memory.
+      on_its_mind: true
+
+  # ── Votes, saves, joins, follows ──────────────────────────────────────────
+  # Each off until switched on, and never more than so many a day. An upvote is
+  # the cheapest thing on Reddit and the easiest to do too much of; Reddit calls
+  # doing too much of it vote manipulation.
+  engage:
+    # What people send it in a chat.
+    upvote_sent: false
+    # What the people it talks to post on their own.
+    upvote_theirs: false
+    # Keep a post it liked.
+    save: false
+    # Join a subreddit it keeps reading.
+    join_subs: false
+    # Follow someone whose posts it keeps reading.
+    follow_users: false
+    upvotes_per_day: 15
+    joins_per_day: 2
+    follows_per_day: 3
+    # Public answers in one day, whatever inbox.per_hour would allow. Comments
+    # it was not asked for are counted here too.
+    replies_per_day: 10
+
+  # Watch the posts people send it, with what the page says of them. How it
+  # watches is bot.videos. Each one is watched once.
+  watch:
+    enabled: true
+    # Look at the posts of the people it talks to, to know what they are up to.
+    their_posts: true
+    # Read the comments under a post it was sent, not only the post: on Reddit
+    # the comments under a thing are usually the thing being shared.
+    threads: true
+    # A reddit.com link in a chat becomes a card, with the post's title, who
+    # wrote it and where.
+    links: true
+
+# ── WhatsApp ─────────────────────────────────────────────────────────────────
+# The tenth platform, and the first that needs no browser at all: it speaks
+# WhatsApp's own protocol over a WebSocket (the baileys package), the way the
+# WhatsApp app on a second device does.
+#
+# An account here is a phone number, linked once from the Accounts page by
+# typing an eight-digit code into WhatsApp on the phone, or by scanning a QR
+# code with it. What that leaves behind - config/whatsapp-<number>-auth - IS
+# the login, the way a browser profile is for the others. Nothing secret is
+# kept beside it.
+#
+# WhatsApp does not like automated clients and bans the numbers it finds, and a
+# ban takes that number's WhatsApp with it. So this is paced like texting
+# rather than like a social site, it answers only people who wrote first, and
+# everything that would reach anybody else starts off.
+whatsapp:
+  enabled: true
+
+  # How often (ms) it checks in while the connection is down. With it up,
+  # messages arrive the moment WhatsApp has them: there is nothing to poll.
+  poll_interval_ms: 20000
+  response_timeout_ms: 120000
+
+  # Someone sending several messages in a row is answered once, after they
+  # stop for this long (ms). They arrive instantly here, so without this it
+  # would answer each line of a thought separately.
+  burst_ms: 4000
+
+  # Answer a number that is not in its contacts. Off: on WhatsApp a stranger
+  # writing first is usually a stranger writing to everybody.
+  accept_unknown: false
+
+  # ── Pace ──────────────────────────────────────────────────────────────────
+  # Texting is quicker than a social site's DMs: closer gaps, more an hour.
+  # The same numbers as iMessage's.
+  min_send_gap_ms: 4000
+  max_send_gap_ms: 20000
+  max_sends_per_hour: 60
+  quiet_hours: ""
+
+  # ── What it shows of itself ───────────────────────────────────────────────
+  presence:
+    # Appear online while it is connected. Off: a number that is online all day
+    # and all night is the plainest sign there is that nobody is holding it.
+    online: false
+    # The typing dots while it writes.
+    typing: true
+    # Send the blue ticks. Off by default: reading without answering at once is
+    # ordinary, and a read receipt makes a late reply look like a snub.
+    read_receipts: false
+
+  # ── Groups ────────────────────────────────────────────────────────────────
+  groups:
+    enabled: true
+    # Answer only when it is named or replied to (bot.trigger), which is how
+    # the Instagram and Discord groups already work. A bot that answers every
+    # line in a group is the fastest way out of one.
+    only_when_named: true
+    # Groups it opens in one pass.
+    max_per_pass: 4
+    # Leave a group when somebody asks it to.
+    leave_on_request: false
+
+  # ── Status ────────────────────────────────────────────────────────────────
+  status:
+    # Look at the statuses of the people it talks to, as it watches their posts
+    # on the other platforms. How it watches is bot.videos.
+    watch: true
+    # Put up statuses of its own. Off by default.
+    post: false
+    per_day: 1
+
+  # ── Calls ─────────────────────────────────────────────────────────────────
+  # It cannot take a call, so an incoming one is declined rather than left to
+  # ring out, which is what an unanswered phone looks like to the other person.
+  calls:
+    decline: true
+    # Say why, in a message, straight after.
+    say_why: true
+    # What it says. Empty means the persona writes the line itself.
+    text: ""
+
+  # ── What it sends ─────────────────────────────────────────────────────────
+  media:
+    # Voice notes, where bot.tts is on. WhatsApp's own are what everybody uses.
+    voice_notes: true
+    pictures: true
+
+  # Watch what people send it, with what the page says of it. How it watches is
+  # bot.videos. Each one is watched once.
+  watch:
+    enabled: true
+    # Look at the statuses of the people it talks to, to know what they are up
+    # to.
+    their_status: true
+
+# ── Minecraft ────────────────────────────────────────────────────────────────
+# The fifth platform: the persona plays Minecraft as a player of its own,
+# through mindcraft-ce, which Settings, Minecraft installs when asked. It walks,
+# mines and builds, and talks with the people it plays with, in its own voice.
+minecraft:
+  enabled: true
+
+  # The world it joins when its account names none. A LAN world shows its
+  # port when it is opened to LAN.
+  host: "localhost"
+  port: 25565
+  # "auto" asks the server which version it runs.
+  version: "auto"
+  # offline: a LAN world, or a server with online mode off. microsoft: a real
+  # server; the first time, its card shows a code to type at microsoft.com/link.
+  auth: "offline"
+
+  # Only these players are listened to, and answered in a whisper. Empty: it
+  # talks with everyone, in the public chat.
+  only_chat_with: []
+  # Say a few words when it comes into the world.
+  greet: true
+
+  # Every line it says and every result of what it does is a call to the
+  # model. These keep a free model tier from running out in minutes.
+  max_brain_calls_per_hour: 120
+  brain_timeout_s: 45
+  # brief: a short telling of the persona, written once, which fits a free
+  # tier's limits. full: the whole persona on every line.
+  persona: "brief"
+
+  # Its own memory of the world (where its base is, what it was doing), kept
+  # between runs.
+  remember_world: true
+  # What it does by itself, without being asked.
+  modes:
+    self_defense: true
+    hunting: true
+    item_collecting: true
+    torch_placing: true
+    cowardice: false
+  # Lines of the game kept in each prompt, and the shortest gap between two
+  # of its actions, in ms.
+  max_messages: 15
+  cooldown_ms: 2000
+
+  # Another server, when someone asks it to come play there: in the game, or
+  # on any platform its persona talks on. It tells you on Telegram where it
+  # went, and comes back by itself from a server that will not let it in.
+  # Big networks (Hypixel and the like) ban bots, and let in Microsoft
+  # accounts only: never_join keeps it off the ones you name.
+  join_when_asked: true
+  never_join: []
+  # ViaProxy between it and a server, so a server of any version can be
+  # joined: auto (a server not on 1.21), always, or off. Needs installing
+  # from Settings, Minecraft, and only for servers it joins without Microsoft.
+  translate_versions: "auto"
+  # Sign itself in where a server asks in the chat (/register, /login), with a
+  # password the app makes for it and keeps in .env, one per server.
+  auto_login: true
+  # How far its live view shows, in chunks.
+  view_distance: 6
+  # Open a window with what it sees as soon as it is in a world (the app on a
+  # computer). Off, it plays unseen; its card's Watch shows it any time.
+  show_window: false
+
+# ── iMessage ───────────────────────────────────────────────────────────────────
+# iMessage only runs on Apple's own machines, so an iMessage account reads and
+# sends through BlueBubbles Server (bluebubbles.app, free) on a Mac signed in
+# to iMessage. Add one on the Accounts page with that server's address and
+# password; nothing of the Apple account itself is kept here.
+imessage:
+  enabled: true
+
+  # ── Pace ──────────────────────────────────────────────────────────────────
+  # Texting is quicker than a social site's DMs: closer gaps, more an hour.
+  min_send_gap_ms: 4000
+  max_send_gap_ms: 20000
+  max_sends_per_hour: 60
+  quiet_hours: ""
+  # Someone sending several messages in a row is answered once, after they
+  # stop for this long (ms).
+  burst_ms: 4000
+  # How often (ms) it looks for new messages while BlueBubbles' live feed is
+  # down. With it up, they arrive the moment the Mac has them.
+  poll_interval_ms: 15000
+  response_timeout_ms: 120000
+
+  # ── As a person on an iPhone ──────────────────────────────────────────────
+  # These three need BlueBubbles' Private API on the Mac; its card says when
+  # it is off. Mark their message read before answering:
+  read_receipts: true
+  # Show the typing dots while it writes each message:
+  typing_indicator: true
+  # Tap back (❤️ 👍 👎 😂 ‼️ ❓) now and then, as the persona would. How often is
+  # the persona's reaction chance, as on Discord.
+  tapbacks: true
+  # Answer in a thread (iMessage's Reply): never, late (when others wrote
+  # since the message it answers), or always.
+  thread_replies: "late"
+  # Now and then, for a big moment, send with an effect (Slam, Confetti,
+  # Balloons...), as the persona would. Rarely.
+  effects: true
+  # When its message went with a typo, edit it a moment later to fix it, as
+  # people do on an iPhone (macOS 13 or newer on the Mac).
+  fix_typos: true
+
+  # ── Who and what ──────────────────────────────────────────────────────────
+  # Group chats: answered when they call it by name (the persona's names), or
+  # reply to one of its messages.
+  groups: true
+  # Green bubble texts (SMS) too, when the Mac's iPhone passes them on.
+  answer_sms: true
+  # Answer with a voice message when they ask for one (needs ffmpeg, System).
+  voice_notes: true
+  # A FaceTime call it cannot take, answered with a text.
+  facetime_text: true
+  # How the Mac sends: auto (the Private API when it is connected, else
+  # AppleScript), private-api, or apple-script.
+  send_method: "auto"
+  # Read, and write its replies to the log, without sending anything.
+  dry_run: false
+
+# ── Telegram ───────────────────────────────────────────────────────────────────
+# The persona on a Telegram account of its own, through Telethon. Not the bot
+# that controls the app, which is services.telegram.
+telegram:
+  enabled: true
+
+  # ── Pace ──────────────────────────────────────────────────────────────────
+  # A fresh number is the one Telegram limits, so this starts gentler than the
+  # other platforms and can be opened up once the account has settled in.
+  min_send_gap_ms: 8000
+  max_send_gap_ms: 30000
+  max_sends_per_hour: 30
+  # Several messages in a row from one person, answered once: how long to wait
+  # for the rest of them.
+  burst_ms: 4000
+  # Local 24h window to stay quiet in ("1-8" = silent 1am-8am; empty = always on)
+  quiet_hours: ""
+
+  # ── Texting ───────────────────────────────────────────────────────────────
+  # Mark their message read before answering.
+  read_receipts: true
+  # Show the typing dots while it writes.
+  typing_indicator: true
+  # React to a message now and then, as the persona chooses.
+  reactions: true
+  # Send a voice message when someone asks it to.
+  voice_notes: true
+  # Fix a typo of its own by editing what it sent, a moment later.
+  fix_typos: true
+  # Keep what people send (photos, videos, voice) so it can see and hear them.
+  keep_media: true
+
+  # ── Who it answers ────────────────────────────────────────────────────────
+  # Answer in groups, when it is named or someone replies to it.
+  groups: false
+  # Read the channels it follows, for context. It never posts in them.
+  channels: false
+  # Write to someone who has never written to it, when the panel asks.
+  answer_first: false
+  # Text back after a call it cannot take.
+  call_text: true
+
+  # ── Itself ────────────────────────────────────────────────────────────────
+  # Go offline during the quiet hours, as its Discord status does at night.
+  night_offline: true
+  # Post stories from the Pictures page.
+  stories: false
+  # A Telegram Premium gift sent in a chat: off, notify, or accept.
+  gifts: "notify"
+
+  # Read, and write its replies to the log, without sending anything.
+  dry_run: false

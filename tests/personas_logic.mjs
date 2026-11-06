@@ -84,5 +84,12 @@ check("a table by its size", L.shortValue({ a: 1 }) === "1 item" && L.shortValue
 const long = L.shortValue("x".repeat(60));
 check("a long one cut short, with an ellipsis", long.length === 28 && long.endsWith("…"), long);
 
+const hues = L.byHue([{ hex: "#94a3b8" }, { hex: "#3b82f6" }, { hex: "#f87171" }, { hex: "#e2e8f0" }, { hex: "#4ade80" }, { hex: "#fbbf24" }]).map((c) => c.hex);
+check("colours in the rainbow's order, the pale ones last and lightest first",
+      hues.join() === "#f87171,#fbbf24,#4ade80,#3b82f6,#e2e8f0,#94a3b8", hues.join());
+const before = [{ hex: "#3b82f6" }, { hex: "#f87171" }];
+L.byHue(before);
+check("and the list it was given as it was", before[0].hex === "#3b82f6");
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exitCode = fail ? 1 : 0;

@@ -314,16 +314,16 @@ check("the models folder is not committed", "/models/" in (ROOT / ".gitignore").
 
 print("\n== the panel ==")
 ui = read("lib/components/LocalAI.svelte")
-check("the download box takes a Hugging Face repo for llama.cpp", 'pullKind === "file"' in ui and "SUGGESTED_FILES" in ui)
+check("the search gets a model from Hugging Face for llama.cpp", "<ModelSearch kind={pullKind}" in ui and 's.id === "llamacpp" ? "file"' in ui)
 check("starting a server while the saved address has nothing there moves the app to it, saved",
       'await api.configField("bot.local.base_url", s.base_url);' in ui and "(!baseUrl || !reachable) && s.base_url !== stored" in ui)
 check("the setting says it starts the server above, any of them", "The server above starts when the app opens." in ui)
 check("the models are asked again while it is open, so ones removed elsewhere go",
       "visiblePoll(() => refreshModels(), 10_000)" in ui)
-check("every other server says where its models come from, in the download box's place",
+check("every other server says where its models come from, in the search's place",
       all(k["get"] for k in localai.KNOWN_SERVERS if k["id"] not in ("ollama", "llamacpp"))
       and not any(k["get"] for k in localai.KNOWN_SERVERS if k["id"] in ("ollama", "llamacpp"))
-      and "{:else if hero?.get}" in ui and "{@render said(hero.get)}" in ui)
+      and "{#if hero?.get}" in ui and "{@render said(hero.get)}" in ui)
 system = (ROOT / "app" / "web" / "routes" / "system_routes.py").read_text(encoding="utf-8")
 check("the checklist says any server it can start is started with the app", '"autostart"' not in system
       and "whenever the app opens." in system)

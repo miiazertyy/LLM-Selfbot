@@ -57,7 +57,7 @@ panel = read("lib/components/PicturesPanel.svelte")
 models = read("lib/components/ModelsPanel.svelte")
 providers = read("lib/providers.ts")
 api = read("lib/api.ts")
-bp = read("lib/bigpicture/BigPicture.svelte")
+bp = read("lib/bigpicture/world.svelte.ts")
 search = read("lib/search.ts")
 palette = read("lib/components/CommandPalette.svelte")
 modal = read("lib/components/Modal.svelte")
@@ -68,7 +68,7 @@ check("in the sidebar under Run, after the Dashboard, with an icon of its own",
       re.search(r'dashboard: \{[^\n]*\n\s*// [^\n]*\n\s*profiles:\s+\{ title: "Profiles",\s+icon: "layers"', app) is not None
       and "layers:" in icon)
 check("and Persona is one profile's persona again", 'persona:   { title: "Persona",' in app)
-check("a card each, in its colour", "{#each cards as c (c.p.id)}" in profiles and 'style="--pc: {colorOf(p)}"' in profiles)
+check("a card each, in its colour", "{#each cards as c (c.p.id)}" in profiles and 'style="--pc: {colorOf(p)};' in profiles)
 check("whether it is running, from what its accounts are doing", "runningLine(accts.length, live, other)" in profiles
       and 'class="pr-state is-{c.state.tone}"' in profiles and "export function runningLine(" in logic)
 check("its face breathes in its colour while one of its accounts is up, amber while one starts",
@@ -124,25 +124,26 @@ check("giving it an account: a zip as it flies, the seat as it lands", 'play("zi
 check("taking one back: a drop", 'play("drop");' in profiles)
 check("a new face: it pops as it lands", 'play("land", { delay: 200 })' in profiles and "@keyframes pr-pop" in profiles)
 print("\n== Profiles, opening ==")
-check("the hero first: a light sweeps across it, with a whoosh once it has landed",
-      '<section class="pr-hero glass" use:chime={{ sound: "wind", delay: 140 }}>' in profiles
-      and "animation: pr-sheen 1.25s" in profiles and "@keyframes pr-sheen" in profiles)
-check("its ring winds in round the orb, then turns slowly",
-      "animation: pr-ring-in 1s cubic-bezier(0.2, 0.9, 0.25, 1) 0.1s backwards, pr-turn 7s linear 1.1s infinite;" in profiles)
+check("the hero first: a light sweeps across it at once, with a whoosh as it lands",
+      '<section class="pr-hero glass" use:chime={{ sound: "wind", delay: 40 }}>' in profiles
+      and "animation: pr-sheen 0.9s cubic-bezier(0.35, 0.1, 0.2, 1) 0.04s both;" in profiles
+      and "@keyframes pr-sheen" in profiles)
+check("its ring winds in round the orb straight away, then turns slowly",
+      "animation: pr-ring-in 0.75s cubic-bezier(0.2, 0.9, 0.25, 1) backwards, pr-turn 7s linear 0.75s infinite;" in profiles)
 check("the title's letters rise one after another, never breaking a word",
-      'class="pr-l" style="--c: {w * 5 + i}"' in profiles and "animation-delay: calc(0.12s + var(--c) * 26ms);" in profiles
+      'class="pr-l" style="--c: {w * 5 + i}"' in profiles and "animation-delay: calc(0.03s + var(--c) * 17ms);" in profiles
       and ".pr-word { display: inline-block; white-space: nowrap; }" in profiles and 'aria-label="Your profiles"' in profiles)
 check("the stats tick in", 'use:domino={{ step: 80, sound: "key", level: 0.45 }}' in profiles)
-check("the cards are dealt in, one after another, each tipping up into place",
-      '<div class="pr-grid" use:deal>' in profiles and "const DEAL_STEP = 130;" in profiles
+check("the cards are dealt in, one after another, each tipping up into place, close behind each other",
+      '<div class="pr-grid" use:deal data-no-rise>' in profiles and "const DEAL_STEP = 75;" in profiles
       and "@keyframes pr-deal" in profiles and "rotateX(18deg)" in profiles)
 check("then what is on each arrives in turn: colour, face, name, accounts, parts, buttons",
       all(f"@keyframes {k}" in profiles for k in ("pr-wash", "pr-face-in", "pr-plug", "pr-tile", "pr-rise"))
-      and "calc(var(--at) + 400ms + var(--j, 0) * 70ms)" in profiles and "calc(var(--at) + 520ms + var(--k, 0) * 55ms)" in profiles
+      and "calc(var(--at) + 210ms + var(--j, 0) * 45ms)" in profiles and "calc(var(--at) + 270ms + var(--k, 0) * 35ms)" in profiles
       and 'style="--j: {j}"' in profiles and 'style="--k: {k}"' in profiles)
 check("each step heard in time with it, booked from the frame the cards start in",
       "const base = frame - performance.now();" in profiles and 'play("pluck", {' in profiles
-      and 'play("glint", { level: 0.26, delay: t + 300 })' in profiles and 'play("tick", { level: 0.2' in profiles
+      and 'play("glint", { level: 0.26, delay: t + 130 })' in profiles and 'play("tick", { level: 0.2' in profiles
       and 'play("seat", { level: 0.28' in profiles)
 check("held until the page lands, and cards off screen are simply there",
       "whenShown(node).then(() => afterLanding(node, () => onScreen(node)" in profiles and 'c.dataset.there = ""' in profiles)
@@ -190,7 +191,7 @@ check("another profile's text stays up, dimmed, until the picked one's arrives, 
 print("\n== nothing lost or misplaced ==")
 check("New profile is not a form: Cancel never makes one", not re.search(r"<form\s", newp)
       and 'if (e.key === "Enter") submit();' in newp)
-check("its wording", all(s in newp for s in ('title="New profile"', "Start from", "Copy its memory too", ">Create</Button>")))
+check("its wording", all(s in newp for s in ('aria-label="New profile"', "Start from", "Copy its memory too", ">Create</Button>")))
 check("the delete question says what goes and where its accounts go",
       "Its persona, pictures and memory go." in profiles and "joinAnd(deleteFor.accounts.map(accountLabel))" in profiles
       and "back to {defaultName}." in profiles)
@@ -273,7 +274,7 @@ check("every picture and memory call can name its persona", "function scoped(pat
       and "memory: (persona = \"\") => request(scoped(\"/api/memory\", persona))" in api)
 check("Big Picture shows the persona of the account on show",
       "api.personaText(pid)" in bp and "loadMoods(false, pid)" in bp and "api.instructions()" not in bp)
-check("and only marks a picture sent as the gallery's own persona's", "const mine = (sender === \"default\" ? \"\" : sender) === picturesOf;" in bp)
+check("and only marks a picture sent as the gallery's own persona's", "const mine = (sender === \"default\" ? \"\" : sender) === this.picturesOf;" in bp)
 check("search finds profiles, and opens on the one found",
       'group: "Profiles", kind: "persona"' in search and '{ id: "Profiles", icon: "layers" }' in palette
       and 'if (h.kind === "persona") { if (h.section) viewPersona.set(h.section); }' in palette)

@@ -51,9 +51,12 @@ check("an open conversation gets the whole narrow window",
       "class:narrow-hide={showDetail && !!selected}" in chats
       and ".ch-top.narrow-hide, .ch-friends.narrow-hide { display: none; }" in chats)
 check("with a way back to the list", 'class="cd-back"' in chats)
-m = re.search(r"Math\.max\((\d+), scroller\.clientHeight", chats)
+# The sizing is shared with Memory's people now (lib/fillheight.ts); Chats takes its floor as it comes.
+fill = (WEB / "lib" / "fillheight.ts").read_text(encoding="utf-8")
+m = re.search(r"export function fillHeight\(node: HTMLElement, min = (\d+)\)", fill)
 check("the height floor fits the pocket window, so Reply stays on screen",
-      bool(m) and int(m.group(1)) <= 320, m.group(1) if m else "no floor found")
+      bool(m) and int(m.group(1)) <= 320 and "Math.max(floor, scroller.clientHeight - top - 16)" in fill
+      and chats.count("use:fillHeight>") == 2, m.group(1) if m else "no floor found")
 
 print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
 sys.exit(1 if FAIL else 0)

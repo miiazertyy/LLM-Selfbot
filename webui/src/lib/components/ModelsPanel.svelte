@@ -316,7 +316,7 @@
          in, a beam of light runs across it, its light comes on, and it is heard landing, a step higher down the chain
          (lib/domino.ts). Only then: a model added later, or a reorder, is not a show. -->
     <ol class="mp-chain domino" onpointermove={onDrag} onpointerup={endDrag} onpointercancel={endDrag}
-        use:domino={{ step: 45, variant: "plug", sound: "seat", soundAt: 120, level: 0.85, once: true }}>
+        use:domino={{ step: 30, variant: "plug", sound: "seat", soundAt: 150, level: 0.85, once: true }}>
       {#each chain as e, i (key(e))}
         {@const st = status(e)}
         {@const t = tried[key(e)]}
@@ -401,7 +401,7 @@
     </header>
 
     <!-- Each job comes in after the one above it, and its model plugs into it from the right, a tock as it seats. -->
-    <div class="mp-jobs domino" use:domino={{ step: 35, variant: "plug", sound: "seat", soundAt: 150, level: 0.65, once: true }}>
+    <div class="mp-jobs domino" use:domino={{ step: 24, variant: "plug", sound: "seat", soundAt: 180, level: 0.65, once: true }}>
       {#each JOB_KEYS as k (k)}
         {@const eff = effective(k)}
         {@const used = eff ? $lastUse[usageKey(eff.provider, eff.model)] : 0}
@@ -664,25 +664,25 @@
     opacity: 0;
     background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--color-accent) 26%, transparent), transparent) no-repeat;
     background-size: 45% 100%;
-    animation: mp-beam 0.36s cubic-bezier(0.3, 0.1, 0.3, 1) backwards;
-    animation-delay: calc(var(--i, 0) * var(--domino-step, 45ms) + 60ms);
+    animation: mp-beam 0.55s cubic-bezier(0.3, 0.1, 0.3, 1) backwards;
+    animation-delay: calc(var(--i, 0) * var(--domino-step, 30ms) + 40ms);
   }
   @keyframes mp-beam { from { opacity: 1; background-position: -60% 0; } to { opacity: 1; background-position: 160% 0; } }
   .mp-chain:global(.is-in) > .mp-row:not([data-there]) .mp-dot {
-    animation: mp-light 0.32s var(--jelly) backwards;
-    animation-delay: calc(var(--i, 0) * var(--domino-step, 45ms) + 190ms);
+    animation: mp-light 0.42s cubic-bezier(0.3, 1.25, 0.5, 1) backwards;
+    animation-delay: calc(var(--i, 0) * var(--domino-step, 30ms) + 150ms);
   }
   @keyframes mp-light { from { transform: scale(0); } 50% { transform: scale(1.8); box-shadow: 0 0 10px currentColor; } }
   .mp-jobs:global(.is-in) > :not([data-there]) .mp-choice {
-    animation: mp-plug 0.32s cubic-bezier(0.3, 1.4, 0.5, 1) backwards;
-    animation-delay: calc(var(--i, 0) * var(--domino-step, 35ms) + 40ms);
+    animation: mp-plug 0.46s cubic-bezier(0.3, 1.15, 0.5, 1) backwards;
+    animation-delay: calc(var(--i, 0) * var(--domino-step, 24ms) + 30ms);
   }
   @keyframes mp-plug { from { opacity: 0; transform: translateX(22px); } 40% { opacity: 1; } }
   .mp-jobs:global(.is-in) > :not([data-there]) .mp-job-icon {
-    animation: mp-icon 0.36s var(--jelly) backwards;
-    animation-delay: calc(var(--i, 0) * var(--domino-step, 35ms) + 20ms);
+    animation: mp-icon 0.48s cubic-bezier(0.3, 1.2, 0.5, 1) backwards;
+    animation-delay: calc(var(--i, 0) * var(--domino-step, 24ms) + 10ms);
   }
-  .mp-head-icon { animation: mp-icon 0.4s var(--jelly) backwards; }
+  .mp-head-icon { animation: mp-icon 0.5s cubic-bezier(0.3, 1.2, 0.5, 1) backwards; }
   @keyframes mp-icon { from { opacity: 0; transform: scale(0.4) rotate(-20deg); } }
   :global(:root[data-motion="off"]) .mp-row::after,
   :global(:root[data-motion="off"]) .mp-dot,

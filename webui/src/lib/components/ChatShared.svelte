@@ -284,7 +284,7 @@
                   {kind === "links" ? it.title || prettyUrl(it.url) : it.name || "File"}
                 </a>
                 <span class="sh-meta">
-                  {#if kind === "links"}{domainOf(it.url)} · {:else if it.size}{size(it.size)} · {/if}{who(it)} · {day(it.ts)}{#if it.deleted} · <span class="text-bad">deleted</span>{/if}
+                  {#if kind === "links"}{domainOf(it.url)}{" · "}{:else if it.size}{size(it.size)}{" · "}{/if}{who(it)} · {day(it.ts)}{#if it.deleted}{" · "}<span class="text-bad">deleted</span>{/if}
                 </span>
                 {#if it.kind === "sound"}<span class="sh-voice"><VoiceNote src={it.url} name={it.name ?? ""} /></span>{/if}
               </span>

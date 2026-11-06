@@ -269,7 +269,7 @@
                 {#if (m.capabilities ?? []).includes("vision") && need !== "vision"}
                   · reads images
                 {/if}
-                {#if !m.active} · retired{/if}
+                {#if !m.active}{" · "}retired{/if}
               </span>
             </span>
             {#if chosen.includes(m.id)}

@@ -161,7 +161,7 @@ check("adding promotes it to the numbered form",
       env().get("GROQ_API_KEY_1") == "gsk_legacy" and env().get("GROQ_API_KEY_2") == "gsk_second",
       str({k: v for k, v in env().items() if "GROQ" in k}))
 check("and drops the legacy key so it is not counted twice",
-      "GROQ_API_KEY" not in env(), str({k: v for k, v in env().items() if "GROQ" in k}))
+      not env().get("GROQ_API_KEY"), str({k: v for k, v in env().items() if "GROQ" in k}))
 
 print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
 shutil.rmtree(SANDBOX, ignore_errors=True)

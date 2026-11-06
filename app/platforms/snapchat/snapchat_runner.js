@@ -7,6 +7,7 @@
  */
 
 import SnapBot from "./snapbot.js";
+import { SiteWatch } from "./sitewatch.js";
 import dotenv from "dotenv";
 import fs from "fs";
 import net from "net";
@@ -37,6 +38,9 @@ const CONFIG_DIR = path.resolve(__dirname, "../../config");
 // Writable data dir (cookies/profile/temp media). Set by the Python bridge;
 // falls back to the repo layout when run standalone from source.
 const DATA_DIR = process.env.SNAP_DATA_DIR || path.resolve(__dirname, "../../");
+// What has gone missing from the page (sitewatch.js), said along with every state until it comes back. Its selectors
+// are written out where each is used, so there is no table here for a fix to go in.
+let siteMissing = [];
 
 // Message IPC files live in a top-level ipc/ folder, created on startup.
 const IPC_DIR = path.join(DATA_DIR, "ipc");
@@ -72,14 +76,17 @@ let lastState = "";
 let lastDetail = "";
 let lastWrite = 0;
 function setState(state, detail = "") {
-  if (state === lastState && !detail) return;
+  // Skipped only when nothing changed: "no new words" used to be enough, so the warning from a moment Snapchat
+  // was signed out stayed on the card after it had signed back in.
+  if (state === lastState && detail === lastDetail) return;
   lastState = state;
   lastDetail = detail;
   lastWrite = Date.now();
   try {
     fs.writeFileSync(
       STATE_FILE,
-      JSON.stringify({ state, detail, at: Date.now() / 1000, account: ACCOUNT_INDEX }, null, 2),
+      JSON.stringify({ state, detail, at: Date.now() / 1000, account: ACCOUNT_INDEX,
+                       ...(siteMissing.length ? { site: { missing: siteMissing } } : {}) }, null, 2),
       "utf-8",
     );
   } catch {
@@ -736,6 +743,9 @@ async function openChat(bot, chatId) {
   }
 }
 
+// The calls the chat list showed on its last look, by chat: told to Python when one starts, changes or ends.
+let callsSeen = new Map();
+
 // The friend requests last read, and when: the Chats tab and Big Picture both ask, and each look opens Snapchat's
 // requests panel on the bot's page, so an answer up to three minutes old is given instead of opening it again.
 let friendRequestsSeen = [];
@@ -750,6 +760,7 @@ async function panelRequest(bot, req) {
     }
     return { ok: true, requests: friendRequestsSeen };
   }
+  if (req.op === "add_friend") return await bot.addFriendByUsername(String(req.username || ""));
   if (req.op === "friend") {
     const done = await bot.answerFriendRequest(String(req.name || ""), req.accept !== false);
     friendRequestsAt = 0;                   // read again next time
@@ -799,7 +810,14 @@ async function panelAct(bot, req, chatId, shownAs, wasUnread) {
       recordSend();
       await openChat(bot, shownAs);
     }
+    let replied = false;
     if (text) {
+      // A reply to one message: Snapchat's own Reply on it first, so what is typed goes as its answer.
+      if (req.reply_to) {
+        await delay(400);
+        const index = (await transcript(bot, chatId, shownAs)).findIndex((m) => m.key === String(req.reply_to));
+        if (index >= 0) replied = await bot.startReply(shownAs, index, ownName).catch(() => false);
+      }
       const sent = await bot.typeInOpenChat(shownAs, text);
       if (!sent) return { ok: false, reason: "Snapchat did not take the message; try again" };
       recordSend();
@@ -813,7 +831,7 @@ async function panelAct(bot, req, chatId, shownAs, wasUnread) {
         break;
       }
     }
-    return { ok: true, messages, sent: key };
+    return { ok: true, messages, sent: key, replied: req.reply_to ? replied : undefined };
   }
   if (req.op === "react") return await reactTo(bot, chatId, shownAs, req);
   return { ok: false, reason: `unknown request ${req.op}` };
@@ -920,19 +938,17 @@ async function drainReadyResponses(bot) {
     if (now - meta.ts > PENDING_TTL_MS) pendingReplies.delete(id);
   }
 
-  const responses = readJson(RESPONSES_FILE, {});
-  const ids = Object.keys(responses);
+  const waiting = readJson(RESPONSES_FILE, {});
+  const ids = Object.keys(waiting && typeof waiting === "object" ? waiting : {});
   if (ids.length === 0) return;
 
-  let changed = false;
   for (const msgId of ids) {
     // Governor: one reply per allowed slot (gap / hourly cap / quiet hours).
     if (!sendAllowed()) break;
 
-    const val = responses[msgId];
-    // Always consume the entry so RESPONSES_FILE doesn't grow unbounded.
-    delete responses[msgId];
-    changed = true;
+    // Taken off the file one at a time (consumed, so RESPONSES_FILE doesn't grow unbounded).
+    const val = takeResponse(msgId);
+    if (val === null) continue;
 
     // Route the reply. Newer entries embed { text, chat, name } so they survive
     // a Node restart; older string entries fall back to the in-memory map.
@@ -983,10 +999,31 @@ async function drainReadyResponses(bot) {
     } else if (attempts >= MAX_SEND_ATTEMPTS) {
       console.warn(`[Snap] Giving up on reply to ${name} after ${attempts} tries (chat unreachable).`);
     } else {
-      responses[msgId] = { text, chat: chatId, name, _attempts: attempts };
+      putBackResponse(msgId, { text, chat: chatId, name, _attempts: attempts });
     }
   }
-  if (changed) writeJson(RESPONSES_FILE, responses);
+}
+
+/**
+ * One reply taken off RESPONSES_FILE, read and written back at once with nothing awaited between: a copy read before
+ * a send and written after it (seconds of typing) dropped whatever the bridge added meanwhile, and that reply was
+ * never sent. null when it is gone.
+ */
+function takeResponse(id) {
+  const now = readJson(RESPONSES_FILE, {});
+  if (!now || typeof now !== "object" || Array.isArray(now) || !(id in now)) return null;
+  const val = now[id];
+  delete now[id];
+  writeJson(RESPONSES_FILE, now);
+  return val;
+}
+
+/** A reply put back to be tried again, beside whatever else is waiting now. */
+function putBackResponse(id, val) {
+  const now = readJson(RESPONSES_FILE, {});
+  const out = now && typeof now === "object" && !Array.isArray(now) ? now : {};
+  out[id] = val;
+  writeJson(RESPONSES_FILE, out);
 }
 
 // caller name -> last-declined timestamp, so we don't spam decline chats.
@@ -1105,6 +1142,9 @@ async function reportSelectorHealth(bot) {
   if (h.missing.length) {
     const names = h.missing.map((m) => m.replace(/\s*\(.*\)$/, "")).join(", ");
     setState("ready", `Running, but Snapchat changed its page: ${names} no longer found. Replies may fail.`);
+  } else if (lastState === "ready") {
+    // Everything found again: the warning comes off the card.
+    setState("ready");
   }
 }
 
@@ -1358,6 +1398,23 @@ async function readChat(bot, chatId, chatName) {
     }
   }
 
+  // A video they sent (or the video snap just opened): the video itself, or frames across it when the page would
+  // not give the file, for Python to watch (app/utils/videowatch.py). And Spotlights shared, by their links.
+  let videoFilePath = null;
+  let framePaths = [];
+  let spotlights = [];
+  if (CAPTURE_SNAPS) {
+    let got = bot.lastSnapVideo;
+    bot.lastSnapVideo = null;
+    if (!got) {
+      try { got = await bot.extractInlineVideo(chatId, chatName); } catch { got = null; }
+    }
+    if (got && got.video) videoFilePath = got.video;
+    else if (got && got.frames && got.frames.length) framePaths = got.frames;
+    if (videoFilePath || framePaths.length) console.log(`[Snap] 🎬 Captured a video in ${chatName}${videoFilePath ? "" : " (as frames)"}`);
+    try { spotlights = await bot.extractSpotlightLinks(chatId); } catch { spotlights = []; }
+  }
+
   // Grab a voice message (transcribed to text on the Python side).
   let audioFilePath = null;
   if (CAPTURE_VOICE) {
@@ -1372,10 +1429,12 @@ async function readChat(bot, chatId, chatName) {
     }
   }
 
-  // Nothing new, no text, no snap, no voice to react to.
-  if (newMessages.length === 0 && !snapImagePath && !sawSnap && !audioFilePath) return;
+  // Nothing new, no text, no snap, no voice, no video to react to.
+  const sawVideo = !!videoFilePath || framePaths.length > 0;
+  if (newMessages.length === 0 && !snapImagePath && !sawSnap && !audioFilePath && !sawVideo && !spotlights.length) return;
 
-  const combinedContent = newMessages.map((m) => m.text).join("\n");
+  // A Spotlight's link goes in with their words, where Python watches it.
+  const combinedContent = [...newMessages.map((m) => m.text), ...spotlights].filter(Boolean).join("\n");
   const senderName = newMessages.length
     ? (newMessages[0].from !== "Unknown" ? newMessages[0].from : chatName)
     : chatName;
@@ -1388,9 +1447,11 @@ async function readChat(bot, chatId, chatName) {
     user_id: chatId,
     user_name: senderName,
     channel_id: chatId,
-    content: combinedContent || (audioFilePath ? "" : "📸 sent a snap"),
+    content: combinedContent || (audioFilePath ? "" : sawVideo ? "🎬 sent a video" : "📸 sent a snap"),
     image_url: snapImagePath ? `file://${snapImagePath}` : undefined,
     audio_url: audioFilePath ? `file://${audioFilePath}` : undefined,
+    video_url: videoFilePath ? `file://${videoFilePath}` : undefined,
+    frames: framePaths.length ? framePaths.map((p) => `file://${p}`) : undefined,
     ts: Date.now() / 1000,
   });
   writeJson(INCOMING_FILE, incoming);
@@ -1492,6 +1553,9 @@ async function main() {
   }
 
   const bot = new SnapBot();
+  // Snapchat for Web no longer takes a picture into its camera, so a picture can only arrive as an ordinary chat
+  // picture - which does not disappear the way a Snap does. Off unless it is asked for.
+  bot.allowChatPicture = process.env.SNAP_AS_CHAT_PICTURE === "true";
 
   setState("starting", "launching the browser");
   console.log(`[Snap] Launching Snapchat (account #${ACCOUNT_INDEX}: ${CREDENTIALS.username})...`);
@@ -1609,10 +1673,12 @@ async function main() {
         console.error("[Snap] Finish it there, then stop and start the account from the panel.");
         return;
       }
-      setState("logged-out", "Login failed. Check the credentials.");
+      setState("logged-out", "Login failed. Sign it in again from Accounts.");
       console.error("[Snap] Login failed. Check credentials / 2FA.");
       await bot.closeBrowser();
-      process.exit(1);
+      // 4: signed out, a person has to sign it in. Not a crash: started again by itself it would log in again every
+      // two minutes, each one a login Snapchat counts, which is how an account gets locked.
+      process.exit(4);
     }
     console.log("[Snap] Logged in successfully. Saving cookies...");
     await bot.saveCookies(CREDENTIALS.username);
@@ -1664,6 +1730,12 @@ async function main() {
   // Reading and replying are deliberately separated across cycles so the bot
   // never sits inside a chat waiting on the model.
   let listFailures = 0; // consecutive "couldn't list recipients", triggers re-login check
+  // The saved cookies, kept as fresh as the session they are of. They are laid over the profile at every start
+  // (snapbot.js launch), which is what keeps it signed in, since Chrome drops Snapchat's session cookies when it
+  // closes; written only at a login, the file was days old, and a restart put back a session Snapchat had since
+  // moved on from: it signed the account out a minute after (2026-10-20). Saved at the first good read, then every
+  // half hour.
+  let cookiesSavedAt = 0;
   // Snapchat puts its onboarding and announcement dialogs up whenever it feels
   // like it, not only at login - and one of those sitting over the app makes
   // every chat unclickable, so the bot goes quiet with nothing in the log to
@@ -1676,8 +1748,21 @@ async function main() {
     console.log(`[Snap] Refreshing the page roughly every ${Math.round(RELOAD_INTERVAL_MS / 60000)} min.`);
   }
 
+  // Only ever on the tab it already has: nothing here is a new session, which Snapchat notices (it locks on them).
+  const siteWatch = new SiteWatch({
+    core: [{ name: "the list of chats", on: /web\.snapchat\.com/,
+             sel: ['#left-sidebar-header', 'div[data-testid="sidebar"]'] }],
+    pages: () => bot?.browser?.pages(),
+    report: (missing) => {
+      siteMissing = missing;
+      const s = lastState;
+      lastState = "";
+      setState(s, lastDetail);
+    },
+  });
   while (true) {
     heartbeatState();
+    await siteWatch.tick().catch(() => {});
     try {
       await processPanel(bot);
       // 0. A long-lived page stops listing some chats. Refresh before reading,
@@ -1705,6 +1790,18 @@ async function main() {
         } catch (dlgErr) {
           console.warn("[Snap] Dialog check error:", dlgErr.message);
         }
+      }
+
+      // 0a. Snapchat allows one web session: when another tab takes it, this one is left on "Too many tabs" and
+      // its chat list renders empty - which reads exactly like nobody waiting. Checked every pass, before anything
+      // believes the list, because while it is up nothing on the page works at all.
+      try {
+        if (await bot.takeSessionBack()) {
+          console.log("[Snap] Another tab had Snapchat open; the session is back in this one.");
+          setState("running", "another tab had Snapchat open; taken back");
+        }
+      } catch (tabErr) {
+        console.warn("[Snap] Session check error:", tabErr.message);
       }
 
       // 0. Decline any incoming call first (time-sensitive).
@@ -1741,11 +1838,21 @@ async function main() {
           ? await bot.listRecipientsWithUnread()
           : await bot.listRecipients();
         listFailures = 0; // got the list, session is healthy
+        if (Date.now() - cookiesSavedAt > 30 * 60 * 1000) {
+          cookiesSavedAt = Date.now();
+          try { await bot.saveCookies(COOKIE_FILE, { quiet: true }); } catch { /* the next half hour, then */ }
+        }
         try { await rememberContacts(recipients); } catch { /* names and pictures wait for the next pass */ }
         // Someone writing to the account right now, as the list says: the panel shows the same dots as for Discord.
         for (const r of recipients || []) {
           if (r.typing && !SYSTEM_CHATS.includes(String(r.name || "").toLowerCase().trim())) tellPython({ kind: "typing", chat: r.id });
         }
+        // A call ringing or going on, and one that is over: said when it changes, as the list shows it.
+        const callsNow = new Map();
+        for (const r of recipients || []) if (r.call) callsNow.set(r.id, r.call);
+        for (const [chat, state] of callsNow) if (callsSeen.get(chat) !== state) tellPython({ kind: "call", chat, state });
+        for (const chat of callsSeen.keys()) if (!callsNow.has(chat)) tellPython({ kind: "call", chat, state: "" });
+        callsSeen = callsNow;
       } catch (err) {
         console.warn("[Snap] Could not list recipients:", err.message);
         // The chat list only goes missing when the app isn't open, usually a

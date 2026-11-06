@@ -8,6 +8,7 @@
   import Avatar from "../components/Avatar.svelte";
   import Icon from "../components/Icon.svelte";
   import { accountLabel, colorOf, personaOf, type PersonaList } from "./logic";
+  import { platformOf } from "../platforms";
   import { play } from "../uisound";
 
   type Face = { name: string; avatar: string; platform: string };
@@ -84,11 +85,11 @@
         {@const now = personaOf(data, a)}
         <button type="button" role="option" aria-selected="false" class="am-row" style="--i: {i}" onclick={() => pick(a)}>
           <Avatar src={f?.avatar ?? ""} name={f?.name || accountLabel(a)} size={28} zoom={false}
-                  silhouette={f?.platform === "snapchat" && !f?.avatar} />
+                  silhouette={platformOf(a).silhouette && !f?.avatar} />
           <span class="am-text">
             <b>{f?.name || accountLabel(a)}</b>
             <small>
-              <Icon name={a.startsWith("snapchat") ? "snapchat" : "discord"} size={10} /> {accountLabel(a)}
+              <Icon name={platformOf(a).icon} size={10} /> {accountLabel(a)}
               {#if now}· now <i style="color: {colorOf(now)}">{now.name}</i>{/if}
             </small>
           </span>

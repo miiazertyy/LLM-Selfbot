@@ -9,10 +9,14 @@ from app.utils.paths import DATA_DIR
 ENV_PATH = DATA_DIR / "config" / ".env"
 
 SECRET_KEYS = re.compile(
-    r"^(DISCORD_TOKEN(?:_\d+)?|DISCORD_PROXY(?:_\d+)?|GROQ_API_KEY(?:_\d+)?|"
+    r"^(DISCORD_TOKEN(?:_\d+)?|(?:DISCORD|SNAP|TIKTOK|INSTAGRAM|X|REDDIT|WHATSAPP|TELEGRAM|MINECRAFT)_PROXY(?:_\d+)?|GROQ_API_KEY(?:_\d+)?|"
     # every provider on the Models tab keeps its key as <NAME>_API_KEY
     r"[A-Z][A-Z0-9]*_API_KEY(?:_\d+)?|"
-    r"TELEGRAM_BOT_TOKEN|SNAP_PASSWORD(?:_\d+)?)$"
+    r"TELEGRAM_BOT_TOKEN|TELEGRAM_SESSION(?:_\d+)?|TELEGRAM_API_HASH(?:_\d+)?|SNAP_PASSWORD(?:_\d+)?|"
+    # Anything named as a secret is one, whoever added it: Instagram's password and 2FA key were shown in full on
+    # the Keys page until this line, and a Minecraft account's server passwords (MINECRAFT_PASSWORD_<NAME>__<SERVER>)
+    # would have been too.
+    r"[A-Z0-9_]*(?:PASSWORD|TOTP|SECRET|TOKEN)[A-Z0-9_]*)$"
 )
 
 

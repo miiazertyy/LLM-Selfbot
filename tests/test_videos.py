@@ -253,7 +253,7 @@ check("the drop zone says it converts, then watches", "Converting <b" in page an
 check("the ring fills with the conversion, and turns while it watches", "ringPct" in page and "ringSpin" in page)
 check("a click as it is converted, a glint as it lands", 'play("slot"' in page and 'play("glint"' in lib)
 check("one made smaller says so", "made smaller to" in lib)
-check("Big Picture and search show a video's still", "pictureThumb" in read("webui/src/lib/bigpicture/BigPicture.svelte")
+check("Big Picture and search show a video's still", "pictureThumb" in read("webui/src/lib/bigpicture/world.svelte.ts")
       and "pictureThumb" in read("webui/src/lib/search.ts"))
 check("the face picker and the filter samples leave videos out", "!x.moving" in read("webui/src/lib/personas/FacePicker.svelte")
       and "!p.moving" in read("webui/src/lib/components/PicturesPanel.svelte"))

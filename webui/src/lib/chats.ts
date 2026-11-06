@@ -14,11 +14,13 @@
  * Every account is kept, not just the one on screen, so switching accounts is
  * instant too.
  */
-import { get, writable } from "svelte/store";
+import { derived, get, writable } from "svelte/store";
 import { mentionNames } from "./mentions";
 import { api } from "./api";
 import { begin } from "./busy";
 import { subscribeEvents } from "./logsocket";
+import { play } from "./uisound";
+import { platformOn, socialsOn } from "./socials";
 
 export type ChatUser = {
   id: string;
@@ -54,6 +56,8 @@ export type ChatUser = {
   /** A Lottie sticker (`format` "lottie") has no url; the panel plays it from its id. */
   stickers?: { name: string; url?: string; id?: string; format?: string }[];
   embeds?: { title?: string; url?: string; image?: string; provider?: string }[];
+  /** A Nitro gift in their last message (Discord DMs). */
+  gift?: Gift;
 };
 
 /** A live update pushed by a runner (see emit_chat_event in the runner). */
@@ -94,6 +98,30 @@ export const chatAccounts = writable<ChatAccount[]>([]);
  * card. Chats picks it up when it opens and clears it.
  */
 export const chatsFocus = writable<string>("");
+
+/** The Chats picker's "All chats": every account's waiting list in one. Not an account id. */
+export const ALL_CHATS = "all";
+
+/**
+ * What the Chats list was last showing, an account or ALL_CHATS. The page is rebuilt on every visit, so without this
+ * choosing All chats only lasted until you looked at another tab.
+ */
+export const chatsView = writable<string>("");
+
+/**
+ * How many people are waiting on a reply, per account, from what is already cached. The prefetch keeps every running
+ * account's list warm whatever page is open, so this counts the accounts nobody is looking at too, which is the
+ * point of it: the picker and the sidebar say where else someone is waiting without anyone switching to look.
+ * Ignored people are not waiting, and an account since removed counts nothing.
+ */
+export const waitingByAccount = derived([chatCache, chatAccounts], ([cache, accounts]) => {
+  const out: Record<string, number> = {};
+  for (const a of accounts) out[a.id] = (cache[a.id]?.users ?? []).filter((u) => !u.ignored).length;
+  return out;
+});
+
+/** Everyone waiting, on every account. */
+export const waitingTotal = derived(waitingByAccount, (w) => Object.values(w).reduce((n, x) => n + x, 0));
 
 /**
  * Set while a reply is being sent.
@@ -317,6 +345,7 @@ export function refreshChats(
       for (const r of recent.get(target) ?? []) {
         if (r.at >= started) users = applyToUsers(users, r.evt);
       }
+      setCallsFor(target, data.calls);
       patch(target, {
         users,
         fetched: Date.now(),
@@ -349,7 +378,7 @@ export function refreshChats(
 /** The last few events per account, so a refresh in flight can replay them. */
 const recent = new Map<string, { at: number; evt: ChatEvent }[]>();
 
-const MSG_KEYS = ["text", "mid", "attachments", "stickers", "embeds"] as const;
+const MSG_KEYS = ["text", "mid", "attachments", "stickers", "embeds", "gift"] as const;
 
 /**
  * One event applied to a waiting list, returning a new list. Mirrors
@@ -376,7 +405,8 @@ export function applyToUsers(users: ChatUser[], evt: ChatEvent): ChatUser[] {
       return users.map((u, j) => (j === i ? { ...u, ...fresh } : u));
     }
     case "msg": {
-      const fresh: Partial<ChatUser> = { attachments: [], stickers: [], embeds: [] };
+      // gift undefined as well: one that is not a gift must not leave the last one's on the row.
+      const fresh: Partial<ChatUser> = { attachments: [], stickers: [], embeds: [], gift: undefined };
       for (const k of MSG_KEYS) if (k in evt) (fresh as any)[k] = evt[k];
       fresh.snippet = evt.snippet ?? "";
       fresh.ts = evt.ts || 0;
@@ -432,7 +462,14 @@ export type ConvMessage = {
   approx?: boolean;
   /** What a Snapchat message was when it was not words: "snap", "image", "voice message", "call" ... */
   kind?: string;
+  /** The message it answers, when it is a reply: its id where the platform gives one, its words, who wrote it. */
+  reply_to?: ReplyTo;
+  /** A Nitro gift link in it (Discord DMs): what it is for, and where it stands. */
+  gift?: Gift;
 };
+/** `waiting` can still be taken, `accepted` was, `taken`/`expired`/`gone` cannot be. */
+export type Gift = { code: string; what?: string; state?: string; reason?: string };
+export type ReplyTo = { mid?: string; text?: string; name?: string };
 /**
  * `done`: asked for earlier messages and there were none, so there is no asking again. `start`: and that is
  * because the very first message is already shown.
@@ -639,7 +676,8 @@ export async function sendOwnMessage(
   uid: string,
   text: string,
   files: { name: string; data: string; preview?: string; type?: string }[] = [],
-): Promise<{ ok: boolean; dropped?: boolean; error?: string }> {
+  replyTo: ReplyTo | null = null,
+): Promise<{ ok: boolean; dropped?: boolean; error?: string; notReply?: boolean }> {
   const k = convKey(target, uid);
   const local = `local-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
   conversations.update((c) => {
@@ -649,11 +687,13 @@ export async function sendOwnMessage(
       // Shown from the local copy while it uploads, so a pasted picture appears
       // in the conversation straight away rather than after the round trip.
       attachments: files.map((f) => ({ url: f.preview ?? "", name: f.name, type: f.type ?? "image/png" })),
+      ...(replyTo ? { reply_to: replyTo } : {}),
     };
     return { ...c, [k]: { ...cur, messages: [...cur.messages, mine].slice(-KEEP_DRAWN) } };
   });
   try {
-    const r: any = await api.chatsSend(uid, text, target, files.map((f) => ({ name: f.name, data: f.data })));
+    const r: any = await api.chatsSend(uid, text, target, files.map((f) => ({ name: f.name, data: f.data })),
+                                       replyTo?.mid ?? "");
     conversations.update((c) => {
       const cur = c[k];
       if (!cur) return c;
@@ -668,7 +708,8 @@ export async function sendOwnMessage(
             : m));
       return { ...c, [k]: { ...cur, messages } };
     });
-    return { ok: true, dropped: !!r?.dropped_reply };
+    // Asked as a reply, and the page offered no Reply on that message: it went as a plain one.
+    return { ok: true, dropped: !!r?.dropped_reply, notReply: !!replyTo && r?.replied === false };
   } catch (e: any) {
     conversations.update((c) => {
       const cur = c[k];
@@ -686,6 +727,50 @@ export async function sendOwnMessage(
  * draw the same dots for them as for the bot.
  */
 export const typingNow = writable<Record<string, true>>({});
+
+// ── Calls ────────────────────────────────────────────────────────────────────
+
+/** Someone calling the account in a DM ("ringing"), in a call there ("in_call"), or in one with it ("together").
+ *  A live voice call adds `live` and the last line said, as it is said. */
+export type CallInfo = { uid: string; target: string; state: "ringing" | "in_call" | "together"; name?: string;
+                         avatar?: string; since?: number; live?: boolean; last?: string };
+
+/**
+ * The calls going on now, by conversation (convKey), as the runners say them: Discord's from its call events,
+ * Snapchat's off its chat list. Filled from the list as it is fetched, then kept live; a call starting is heard.
+ */
+export const callsNow = writable<Record<string, CallInfo>>({});
+function setCall(target: string, uid: string, call: Omit<CallInfo, "uid" | "target"> | null) {
+  const k = convKey(target, uid);
+  const was = get(callsNow)[k];
+  callsNow.update((c) => {
+    if (!call) {
+      if (!(k in c)) return c;
+      const next = { ...c };
+      delete next[k];
+      return next;
+    }
+    return { ...c, [k]: { ...call, uid, target } };
+  });
+  // Ringing: a chime as it starts. One already going on: a soft note as it shows; answered: a woody tock. Over: a soft off.
+  if (call?.state === "ringing" && was?.state !== "ringing") play("receive", { level: 0.75 });
+  else if (call && !was) play("glint", { level: 0.4 });
+  else if (call && was && call.state !== was.state) play("seat", { level: 0.4 });
+  else if (!call && was) play("off", { level: 0.4 });
+}
+function setCallsFor(target: string, list: unknown) {
+  callsNow.update((c) => {
+    const next: Record<string, CallInfo> = {};
+    for (const [k, v] of Object.entries(c)) if (v.target !== target) next[k] = v;
+    for (const x of Array.isArray(list) ? list : []) {
+      if (x && typeof x === "object" && (x as CallInfo).uid) {
+        const uid = String((x as CallInfo).uid);
+        next[convKey(target, uid)] = { ...(x as CallInfo), uid, target };
+      }
+    }
+    return next;
+  });
+}
 const typingTimers = new Map<string, ReturnType<typeof setTimeout>>();
 function setTyping(k: string, on: boolean) {
   clearTimeout(typingTimers.get(k));
@@ -769,6 +854,18 @@ export async function reactTo(target: string, uid: string, mid: string, emoji: {
 function appendToConversation(target: string, evt: ChatEvent) {
   const k = convKey(target, String(evt.uid ?? ""));
   if (evt.t === "typing") return setTyping(k, true);
+  if (evt.t === "call") return setCall(target, String(evt.uid ?? ""), evt.call ?? null);
+  if (evt.t === "call_line") {
+    // A live voice call, word by word: kept on the call's strip so the tab reads like a call screen.
+    const line = String(evt.text ?? "").trim();
+    if (!line) return;
+    const call = get(callsNow)[k];
+    if (call) setCall(target, String(evt.uid ?? ""), {
+      state: call.state, name: call.name, avatar: call.avatar, since: call.since,
+      live: true, last: evt.who === "them" ? line : `“${line}”`,
+    });
+    return;
+  }
   if (evt.t === "msg") setTyping(k, false);
   const cur = get(conversations)[k];
   if (!cur) return;                               // never opened: nothing to keep live
@@ -777,6 +874,15 @@ function appendToConversation(target: string, evt: ChatEvent) {
     if (evt.mid && cur.messages.some((m) => String(m.mid) === String(evt.mid))) {
       setReactions(k, String(evt.mid), Array.isArray(evt.reactions) ? evt.reactions : []);
     }
+    return;
+  }
+  // Where a Nitro gift stands now: looked up when it landed, or taken since, here or in Discord.
+  if (evt.t === "gift") {
+    if (!evt.mid || !cur.messages.some((m) => m.mid === evt.mid)) return;
+    conversations.update((c) => ({
+      ...c,
+      [k]: { ...cur, messages: cur.messages.map((m) => (m.mid === evt.mid ? { ...m, gift: evt.gift } : m)) },
+    }));
     return;
   }
   if (evt.t === "deleted" || evt.t === "edited") {
@@ -867,7 +973,9 @@ export function forget(target: string, userId: string) {
 
 export async function loadChatAccounts(): Promise<ChatAccount[]> {
   const data = await api.accounts();
-  const list = (data.accounts || []).filter((a: ChatAccount) => a.platform !== "telegram");
+  // Not the control bot, and not an account of a social switched off in Settings (lib/socials.ts).
+  const on = get(socialsOn);
+  const list = (data.accounts || []).filter((a: ChatAccount) => a.platform !== "controller" && platformOn(on, a.platform));
   chatAccounts.set(list);
   // A server message pinging one of your accounts says its name rather than "@user": nobody's profile is
   // stored for the account itself, so the lookup mentions do would never find it.

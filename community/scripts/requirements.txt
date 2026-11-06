@@ -1,0 +1,4 @@
+# Pictures are made again from their pixels (no EXIF, no GPS). Pinned with hashes: the runner installs exactly this.
+pillow==11.2.1 \
+    --hash=sha256:0c7b29dbd4281923a2bfe562acb734cee96bbb129e96e6972d315ed9f232bef4 \
+    --hash=sha256:b2dbea1012ccb784a65349f57bbc93730b96e85b42e9bf7b01ef40443db720b4

@@ -73,12 +73,26 @@ async def webhook_log(ctx, error, is_ratelimit=False):
 
 # telegram error relay: the discord runner drops a "send_error_notification" entry into its own IPC command file and the telegram controller polls that file and DMs the owner
 
+def notify_telegram_info(title: str, detail: str):
+    """A word to the owner about something the account did, not something that went wrong (a Nitro gift in a DM).
+    Queued like an error; the controller tells these apart by their kind and shows them whenever alerts are on."""
+    _queue_notice(title, detail, kind="info")
+
+
 def notify_telegram_error(title: str, detail: str):
     """Queue an error for the Telegram controller (no-op when disabled)."""
     try:
         cfg = load_config()
         if not cfg.get("notifications", {}).get("telegram_error_notifications", False):
             return
+    except Exception:
+        return
+    _queue_notice(title, detail)
+
+
+def _queue_notice(title: str, detail: str, kind: str = "") -> None:
+    """One notice in this account's own command file, which the Telegram controller drains."""
+    try:
         # One command file per Discord account; the runner pins the index.
         index = os.environ.get("DISCORD_ACCOUNT_INDEX", "1")
         cmd_file = Path(resource_path(f"config/tg_commands_{index}.json"))
@@ -92,9 +106,9 @@ def notify_telegram_error(title: str, detail: str):
             except Exception:
                 pass
         entries.append({
-            "id": f"err_{time.time()}",
+            "id": f"{kind or 'err'}_{time.time()}",
             "cmd": "send_error_notification",
-            "payload": {"title": title, "detail": str(detail)[:1500]},
+            "payload": {"title": title, "detail": str(detail)[:1500], **({"kind": kind} if kind else {})},
             "ts": time.time(),
         })
         from app.utils.atomic import write_json_atomic

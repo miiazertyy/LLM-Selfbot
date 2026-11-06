@@ -12,7 +12,8 @@ phone app is made of, then fills in what Briefcase cannot get by itself:
   * the version, from the release tag: into pyproject.toml, which becomes the
     APK's versionName and code and the IPA's version, and into app/_build.py,
     which the app itself reports (app/version.py)
-  * wheels/: the stand-ins for jiter and audioop-lts (mobile/shims); with
+  * wheels/: the stand-ins for jiter and audioop-lts (mobile/shims); pyaes as a wheel (Telethon needs it, and it publishes
+    only its source, which Briefcase will not install for iOS); with
     --android, curl_cffi's own Android build asking for the cffi Android has
     (see relaxed_curl_cffi) and discord_protos as a wheel; with --ios, PyYAML as plain Python (it publishes
     no iOS build, and Briefcase installs only built wheels for iOS)
@@ -86,6 +87,8 @@ def build_wheels(android: bool, ios: bool):
     for shim in ("jiter", "audioop-lts"):
         subprocess.run([sys.executable, "-m", "pip", "wheel", "--no-deps", "-w", str(wheels),
                         str(MOBILE / "shims" / shim)], check=True)
+    # Telegram's encryption: plain Python, published only as source.
+    subprocess.run([sys.executable, "-m", "pip", "wheel", "--no-deps", "-w", str(wheels), "pyaes==1.6.1"], check=True)
     if android:
         relaxed_curl_cffi(wheels)
         # discord.py-self wants discord_protos below 1.0, published only as

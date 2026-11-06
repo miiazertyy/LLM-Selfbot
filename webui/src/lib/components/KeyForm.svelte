@@ -25,10 +25,10 @@
     if (!k) return;
     saving = true;
     try {
-      await api.providerKey(provider.id, k);
+      const r: any = await api.providerKey(provider.id, k);
       key = "";
       await loadProviders();
-      toast(`${provider.name} is connected.`, "ok");
+      toast(r?.keys > 1 ? `${provider.name} has ${r.keys} keys now.` : `${provider.name} is connected.`, "ok");
       onsaved?.();
     } catch (e: any) {
       toast(e?.message || "Could not save the key", "err");

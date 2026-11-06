@@ -29,7 +29,7 @@
    * every other provider.
    */
   import { onMount, onDestroy, tick } from "svelte";
-  import { fly, slide } from "svelte/transition";
+  import { fade, fly, slide } from "svelte/transition";
   import { flip } from "svelte/animate";
   import { cubicOut } from "svelte/easing";
   import { api } from "../api";
@@ -42,6 +42,7 @@
   import Toggle from "./Toggle.svelte";
   import Segmented from "./Segmented.svelte";
   import ProviderTile from "./ProviderTile.svelte";
+  import ModelSearch from "./ModelSearch.svelte";
   import NotHere from "./NotHere.svelte";
   import { settingsSection } from "../stores";
   import { loadModels, loadProviders, savedPlan } from "../providers";
@@ -92,10 +93,6 @@
   type Page = { url: string; site: string };
   /** The mark beside a model, for where its page is. Hugging Face for the rest. */
   const SITE_LOGO: Record<string, string> = { Ollama: "/providers/ollama.png", "Docker Hub": "/providers/docker.png" };
-  /** Something to type, for someone who has never fetched a model. */
-  const SUGGESTED = ["llama3.1:8b", "openai/gpt-oss-20b"];
-  /** For llama.cpp, which the app gives a model file from Hugging Face (localai._start_file_pull). */
-  const SUGGESTED_FILES = ["bartowski/Llama-3.2-3B-Instruct-GGUF", "Qwen/Qwen2.5-7B-Instruct-GGUF"];
   /** How a model is got here: "ollama", "file" (the app downloads it, for llama.cpp), or "". */
   let pullKind = $state("");
 
@@ -117,9 +114,10 @@
   let pull = $state<Pull | null>(null);
   /** A model that would not load, and what is being done about it (app/utils/localfix.py). */
   let fix = $state<{ model: string; state: string; why: string; to: string;
-                     alt?: { model: string; label: string; tag: string; size: number } | null } | null>(null);
+                     alt?: { model: string; label: string; tag: string; size: number; by?: string } | null } | null>(null);
   let switching = $state(false);
-  /** Switch to the smaller one by the same maker that fits: it is downloaded where downloads show, below. */
+  /** Switch to the smaller one that fits (the same maker's, or a copy of the model by someone else): it is downloaded
+   * where downloads show, below. */
   async function useAlt() {
     switching = true;
     try {
@@ -151,6 +149,9 @@
   let contextLength = $state(16384);
   let savedContext = $state(16384);
   let restarting = $state(false);
+  /** The server the list comes from is being started again: it has not gone anywhere, and neither have its models. */
+  let serverBack = $state(false);
+  let serverBackTimer = 0;
   const CONTEXTS = [4096, 8192, 16384, 32768, 65536];
   /** Tokens, and roughly how many words that is (three quarters of a token each). */
   const wordsFor = (c: number) => `About ${(Math.round((c * 0.75) / 500) * 500).toLocaleString()} words`;
@@ -159,7 +160,6 @@
   let loading = $state(true);
   let saving = $state(false);
   let checking = $state(false);
-  let pullName = $state("");
   let stored = $state("");
 
   const dirty = $derived(!loading && (baseUrl !== stored || apiKey.trim() !== storedKey));
@@ -199,6 +199,7 @@
     const s = hero;
     if (!s) return { tone: "idle", word: "Not found" };
     if (startingId === s.id) return { tone: "warn", word: s.start === "app" ? "Opening" : "Starting" };
+    if (serverBack || restarting) return { tone: "warn", word: "Restarting" };
     if (s.locked) return { tone: "warn", word: "Needs a key" };
     if (s.running) return { tone: "good", word: "Running" };
     return { tone: "idle", word: s.installed ? "Not running" : "Not installed" };
@@ -240,7 +241,9 @@
   onDestroy(() => {
     clearInterval(timer);
     clearTimeout(sureTimer);
+    clearTimeout(serverBackTimer);
     stopWatch();
+    stopAdding(true);
   });
 
   function apply(s: any) {
@@ -250,10 +253,9 @@
     serverId = s.server || "";
     autostart = s.settings.autostart !== false;
     contextLength = savedContext = s.settings.context_length || 16384;
-    reachable = s.reachable;
     locked = !!s.locked;
     probeError = s.error || "";
-    models = s.models || [];
+    takeList(s);
     pages = { ...pages, ...(s.pages || {}) };
     sizes = s.sizes || {};
     details = s.details || {};
@@ -292,13 +294,39 @@
     try {
       const s = await statusRes.refresh({ force: true });
       if (!s || s.settings.base_url !== baseUrl) return;
-      models = s.models || [];
+      takeList(s);
       pages = { ...pages, ...(s.pages || {}) };
       sizes = s.sizes || {};
       details = s.details || {};
       loaded = s.loaded || {};
-      reachable = s.reachable;
     } catch {}
+  }
+
+  /** Removed a moment ago: off the list whatever an answer that was already on its way says. */
+  const gone = new Map<string, number>();
+  function goneFor(m: string) {
+    gone.set(m, Date.now());
+    models = models.filter((x) => x !== m);
+    // The answer held for next time too, or leaving and coming back would show it for a moment.
+    statusRes.update((s: any) => (s ? { ...s, models: (s.models || []).filter((x: string) => x !== m) } : s));
+  }
+
+  /** What the server says it has. Not while it is being started again: it says nothing then, and the list stays. */
+  function takeList(s: any) {
+    const was = serverBack;
+    serverBack = !!s.restarting;
+    clearTimeout(serverBackTimer);
+    if (serverBack) serverBackTimer = window.setTimeout(refreshModels, 1500);
+    else if (was) {
+      // Back. What depended on it answering looks again.
+      refresh(true).catch(() => {});
+      loadModels("local", true).catch(() => {});
+    }
+    if (serverBack && !s.reachable) return;
+    const now = Date.now();
+    for (const [m, at] of gone) if (now - at > 20_000) gone.delete(m);
+    models = (s.models || []).filter((m: string) => !gone.has(m));
+    reachable = s.reachable;
   }
 
   /** Look for servers that are running, so nothing has to be typed. */
@@ -390,7 +418,7 @@
     }
   }
 
-  /** Save the context length and restart Ollama so it takes effect. */
+  /** Save the context length, and start every local server again so it takes effect. */
   async function applyContext() {
     restarting = true;
     try {
@@ -399,11 +427,10 @@
         savedContext = contextLength;
       }
       const r = await api.localRestart();
-      toast(r?.ok && !r.already ? `Ollama restarted with room for ${contextLength.toLocaleString()} tokens.`
-                                : r?.reason || "Could not restart Ollama", r?.ok && !r.already ? "ok" : "err");
+      toast(r?.said || "Could not restart them", r?.ok ? "ok" : r?.results?.length ? "err" : "info");
       await Promise.all([refresh(true), load(true)]);
     } catch (e: any) {
-      toast(e?.message || "Could not restart Ollama", "err");
+      toast(e?.message || "Could not restart them", "err");
     } finally {
       restarting = false;
     }
@@ -440,18 +467,12 @@
   }
 
   // ── Getting a model ──────────────────────────────────────────────────────
-  /** Between the press and the download starting: the server asks Hugging Face which file is the model, which can
-   * take ten seconds, and the button sat there as if nothing had been pressed. */
-  let asking = $state(false);
-  async function startPull() {
-    const name = pullName.trim();
-    if (!name || asking) return;
-    asking = true;
-    // Typed while one downloads: it goes in the queue, and starts when its turn comes.
+  /** Asked for from the search: a repo, the size picked by the server, or a repo and a size. While one downloads it
+   * goes in the queue, and starts when its turn comes. */
+  async function startPull(name: string) {
     const busy = !!pull?.active;
     try {
       const r = await api.localPull(name, baseUrl);
-      pullName = "";
       if (r.queued) {
         toast(r.queued === 1 ? `${r.model} is next.` : `${r.model} is in line, number ${r.queued}.`, "info");
         pull = await api.localPullStatus();
@@ -474,8 +495,6 @@
       }
     } catch (e: any) {
       toast(e?.message || "Could not start the download", "err");
-    } finally {
-      asking = false;
     }
   }
 
@@ -598,8 +617,9 @@
     removing = m;
     const freed = gb(sizes[m] || 0);
     try {
-      const r: any = await api.localDelete(m, baseUrl);
-      models = models.filter((x) => x !== m);
+      // Long enough to read: a file goes in a blink, and the row would only seem to flicker.
+      const [r]: any[] = await Promise.all([api.localDelete(m, baseUrl), new Promise((done) => setTimeout(done, 600))]);
+      goneFor(m);
       // The settings that used it no longer do (app/utils/localfix.py drop): said, and the Models tab told.
       const unused: string[] = r?.unused ?? [];
       const what = unused.includes("replies") ? " Replies used it, so they're on Groq again until you pick another."
@@ -611,7 +631,7 @@
     } catch (e: any) {
       // Removed some other way already (Ollama's own app): the row goes, and the settings that named it let go of it.
       if (/does not have/i.test(e?.message || "")) {
-        models = models.filter((x) => x !== m);
+        goneFor(m);
         api.localForget([m]).then((r: any) => { if (r?.unused?.length) loadProviders().catch(() => {}); }).catch(() => {});
         toast("It was already gone from the server.", "info");
         loadModels("local", true).catch(() => {});
@@ -633,6 +653,91 @@
     } finally {
       revealing = "";
     }
+  }
+
+  /** Open the folder the server keeps its models in, whether it has any yet or not. */
+  async function openFolder() {
+    try {
+      await api.localOpenFolder(baseUrl);
+    } catch (e: any) {
+      toast(e?.message || "Could not open the folder", "err");
+    }
+  }
+
+  // ── A model file brought in by hand ───────────────────────────────────────
+  /** Files waiting behind the one going in. */
+  let addQueue = $state<File[]>([]);
+  let adding = $state<{ name: string; done: number; total: number } | null>(null);
+  let addStop: (() => void) | null = null;
+  /** A file is being held over the tab. */
+  let fileOver = $state(false);
+  let filePicker = $state<HTMLInputElement | null>(null);
+  const addPercent = $derived(adding?.total ? Math.floor((adding.done / adding.total) * 100) : 0);
+  /** Every byte across, and the server is reading the file to be sure of it. */
+  const addChecking = $derived(!!adding?.total && adding.done >= adding.total);
+
+  const holdingFile = (e: DragEvent) => !!e.dataTransfer?.types?.includes("Files");
+
+  function addFiles(list: FileList | File[] | null | undefined) {
+    const files = Array.from(list ?? []);
+    if (!files.length) return;
+    const fit = files.filter((f) => /\.gguf$/i.test(f.name));
+    if (fit.length < files.length) {
+      toast(files.length === 1 ? `${files[0].name} is not a model file. Models end in .gguf.` : "Only .gguf files can be added.", "err");
+    }
+    addQueue = [...addQueue, ...fit];
+    if (!adding) nextFile();
+  }
+
+  async function nextFile() {
+    const file = addQueue[0];
+    if (!file) return;
+    addQueue = addQueue.slice(1);
+    adding = { name: file.name, done: 0, total: file.size };
+    const job = api.localImport(file, (done, total) => {
+      if (adding) adding = { ...adding, done, total };
+    });
+    addStop = job.abort;
+    try {
+      const r: any = await job.done;
+      play("done");
+      toast(r?.note ? `Added ${file.name}. ${r.note}` : `Added ${file.name}.`, "ok");
+      loadModels("local", true).catch(() => {});
+      await refreshModels();
+    } catch (e: any) {
+      if (e?.status !== 0) toast(e?.message || `Could not add ${file.name}`, "err");
+    } finally {
+      addStop = null;
+      adding = null;
+    }
+    // A stop clears the line as well, so this only moves on when there is still something waiting.
+    if (addQueue.length) nextFile();
+  }
+
+  function stopAdding(quietly = false) {
+    addQueue = [];
+    addStop?.();
+    if (!quietly) play("tick");
+  }
+
+  /** A file dropped anywhere on the tab is meant for it: left to the window, it would open in place of the app. */
+  function fileHeld(e: DragEvent) {
+    if (!holdingFile(e)) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+    if (!fileOver) play("lift");
+    fileOver = true;
+  }
+  function fileLeft(e: DragEvent) {
+    // Only leaving the window itself has nowhere to go to.
+    if (!e.relatedTarget) fileOver = false;
+  }
+  function fileDropped(e: DragEvent) {
+    if (!holdingFile(e)) return;
+    e.preventDefault();
+    fileOver = false;
+    play("drop");
+    addFiles(e.dataTransfer?.files);
   }
 
   /** A model's facts in a line, each once: its tag often is its size or its quant ("8b" and "8.0B", "Q4_K_M" twice). */
@@ -673,6 +778,92 @@
   {#each text.split("`") as part, i}{#if i % 2}<code class="ls-code">{part}</code>{:else}{part}{/if}{/each}
 {/snippet}
 
+<!-- What is going on just now: a download and the line behind it, a file going in, a model that would not load. -->
+{#snippet underway()}
+  {#if pull?.active}
+    {@const pn = nameParts(pull.model)}
+    <div class="lc-pull" transition:slide={{ duration: 260, easing: cubicOut }}>
+      <div class="lc-pull-top">
+        <span class="lc-pull-icon"><Icon name="download" size={14} /></span>
+        <span class="min-w-0 flex-1">
+          <span class="lc-pull-name">{pn.title}<em>{pn.sub ? ` · ${pn.sub}` : ""}</em></span>
+          <span class="lc-pull-sub">{pullLine}</span>
+        </span>
+        <span class="lc-pull-pct">{pull.percent}<small>%</small></span>
+        <button type="button" class="lc-btn is-quiet" onclick={stopPull} disabled={stopping}>{stopping ? "Stopping" : "Stop"}</button>
+      </div>
+      <div class="lc-bar"><div class="lc-bar-fill" style="width: {pull.percent}%"></div></div>
+      <!-- The ones waiting their turn, in order, each a click from leaving the line. -->
+      {#if pull.queue?.length}
+        <ol class="lc-queue">
+          {#each pull.queue as q, i (q.model)}
+            {@const qn = nameParts(q.model)}
+            <li class="lc-queue-row" in:fly={{ y: -6, duration: 260, easing: cubicOut }} out:slide={{ duration: 200 }}
+                animate:flip={{ duration: 260 }}>
+              <span class="lc-queue-n">{i + 1}</span>
+              <span class="min-w-0 flex-1 truncate">{qn.title}<em>{qn.sub ? ` · ${qn.sub}` : ""}</em></span>
+              <span class="lc-queue-when">{i === 0 ? "Next" : "Waiting"}</span>
+              <button type="button" class="lc-queue-x" aria-label="Take {qn.title} out of the line" title="Take it out"
+                      onclick={() => unqueue(q.model)}><Icon name="close" size={11} /></button>
+            </li>
+          {/each}
+        </ol>
+      {/if}
+    </div>
+  {:else if pull?.error}
+    <p class="lc-err">{pull.error}</p>
+  {/if}
+
+  {#if adding}
+    <div class="lc-pull" transition:slide={{ duration: 260, easing: cubicOut }}>
+      <div class="lc-pull-top">
+        <span class="lc-pull-icon"><Icon name="upload" size={14} /></span>
+        <span class="min-w-0 flex-1">
+          <span class="lc-pull-name">{adding.name}</span>
+          <span class="lc-pull-sub">
+            {addChecking ? "Checking it" : `${gb(adding.done) || "0 GB"} of ${gb(adding.total)}`}{addQueue.length ? ` · ${addQueue.length} more after this` : ""}
+          </span>
+        </span>
+        <span class="lc-pull-pct">{addPercent}<small>%</small></span>
+        <button type="button" class="lc-btn is-quiet" onclick={() => stopAdding()} data-sound="self">Stop</button>
+      </div>
+      <div class="lc-bar"><div class="lc-bar-fill" style="width: {addPercent}%"></div></div>
+    </div>
+  {/if}
+
+  <!-- A model that would not load: what is wrong with it, and what the app is doing about it. -->
+  {#if fix && fix.state !== "checking"}
+    <p class="lc-fix" class:is-bad={fix.state === "stuck"} class:is-good={fix.state === "fixed"}>
+      <Icon name={fix.state === "stuck" ? "alertCircle" : fix.state === "fixed" ? "check" : "download"} size={13} />
+      <span>
+        {#if fix.state === "fixed"}
+          Fixed: {nameParts(fix.model).title} is swapped for {nameParts(fix.to).title}.
+        {:else if fix.state === "fixing"}
+          {nameParts(fix.model).title}: {fix.why}.
+        {:else if fix.why?.startsWith("it is too big")}
+          <!-- It loads, just too slowly to be of use: not "will not load". -->
+          {nameParts(fix.model).title} {fix.why.slice(3)}.
+        {:else}
+          {nameParts(fix.model).title} will not load: {fix.why}.
+        {/if}
+      </span>
+    </p>
+    <!-- Something smaller that fits, by the same maker or a copy of the model by someone else: one click, never
+         switched to unasked. -->
+    {#if fix.state === "stuck" && fix.alt}
+      <div class="lc-alt">
+        <span class="lc-alt-text">
+          <b>{fix.alt.label}</b>
+          <span>{fix.alt.by ? `Same model, a smaller copy by ${fix.alt.by}` : "Same maker, smaller"}: {gb(fix.alt.size)}, fits this computer.</span>
+        </span>
+        <Button size="sm" loading={switching} onclick={useAlt}>Use it instead</Button>
+      </div>
+    {/if}
+  {/if}
+{/snippet}
+
+<svelte:window ondragenter={fileHeld} ondragover={fileHeld} ondragleave={fileLeft} ondrop={fileDropped} />
+
 {#if loading}
   <div class="lc-skel" aria-hidden="true">
     <div class="lc-skel-hero"></div>
@@ -683,6 +874,16 @@
   <NotHere feature="local_start" />
 
   <!-- ── The server ───────────────────────────────────────────────────────── -->
+  {#if fileOver}
+    <!-- Over everything but in nobody's way: the drag goes on being the window's, right through it. -->
+    <div class="lm-dropsheet" aria-hidden="true" transition:fade={{ duration: 140 }}>
+      <div class="lm-dropcard">
+        <Icon name="upload" size={22} />
+        <b>Drop it to add it</b>
+        <span>A .gguf model file</span>
+      </div>
+    </div>
+  {/if}
   {#if hero}
     {@const s = hero}
     <section class="lc-hero is-{heroState.tone}" class:is-busy={atWork && s.running}
@@ -819,103 +1020,28 @@
       {#if models.length}
         <span class="lc-count">{models.length}{totalSize ? ` · ${gb(totalSize)}` : ""}</span>
       {/if}
+      <span class="lc-head-tools">
+        <input bind:this={filePicker} type="file" accept=".gguf" multiple hidden
+               onchange={(e) => { addFiles(e.currentTarget.files); e.currentTarget.value = ""; }} />
+        <button type="button" class="lc-btn is-quiet" onclick={() => filePicker?.click()} title="Or drop a .gguf file anywhere here">
+          <Icon name="upload" size={12} />Add a file
+        </button>
+        <button type="button" class="lc-btn is-quiet" onclick={openFolder} title="Where this server keeps its model files">
+          <Icon name="folder" size={12} />Open folder
+        </button>
+      </span>
     </header>
 
     {#if canPull}
-      <!-- An Ollama name, or a Hugging Face repo, which Ollama fetches straight from there. -->
-      <form class="lc-get" class:is-asking={asking} onsubmit={(e) => { e.preventDefault(); startPull(); }}>
-        <span class="lc-get-icon"><Icon name="download" size={14} /></span>
-        <input
-          bind:value={pullName}
-          placeholder={pullKind === "file" ? "Get a model: a Hugging Face repo, like user/model or user/model:Q4_K_M"
-                                           : "Get a model: an Ollama name or a Hugging Face repo"}
-          spellcheck="false"
-          disabled={asking}
-          aria-label="Model to download"
-        />
-        <!-- Typed while one downloads, it waits its turn: the box stays open for the next. -->
-        <button type="submit" class="lc-get-go" class:is-asking={asking} disabled={!pullName.trim() || asking}
-                aria-busy={asking}>
-          {#if asking}<span class="lc-get-spin" aria-hidden="true"></span>Looking it up{:else}{pull?.active ? "Queue" : "Download"}{/if}
-        </button>
-      </form>
-      {#if !pull?.active && !models.length}
-        <div class="lc-try">
-          <span>Try</span>
-          {#each pullKind === "file" ? SUGGESTED_FILES : SUGGESTED as t (t)}
-            <button type="button" onclick={() => (pullName = t)}>{t}</button>
-          {/each}
-          <span class="lc-try-note">
-            {pullKind === "file" ? "The size that fits this computer is picked for you." : "A 7-8B model suits most computers and is a few gigabytes."}
-          </span>
-        </div>
+      <!-- A search of Hugging Face, which both ways of getting a model can fetch from; what is going on goes between
+           the box and what it found. -->
+      <ModelSearch kind={pullKind} {pull} {models} {pages} starts={!models.length} onget={startPull} between={underway} />
+    {:else}
+      {#if hero?.get}
+        <!-- One the app cannot give a model to: where its models do come from, in the box's place. -->
+        <p class="lc-get-else"><span class="lc-get-icon"><Icon name="download" size={13} /></span><span>{@render said(hero.get)}</span></p>
       {/if}
-    {:else if hero?.get}
-      <!-- One the app cannot give a model to: where its models do come from, in the box's place. -->
-      <p class="lc-get-else"><span class="lc-get-icon"><Icon name="download" size={13} /></span><span>{@render said(hero.get)}</span></p>
-    {/if}
-
-    {#if pull?.active}
-      {@const pn = nameParts(pull.model)}
-      <div class="lc-pull" transition:slide={{ duration: 260, easing: cubicOut }}>
-        <div class="lc-pull-top">
-          <span class="lc-pull-icon"><Icon name="download" size={14} /></span>
-          <span class="min-w-0 flex-1">
-            <span class="lc-pull-name">{pn.title}<em>{pn.sub ? ` · ${pn.sub}` : ""}</em></span>
-            <span class="lc-pull-sub">{pullLine}</span>
-          </span>
-          <span class="lc-pull-pct">{pull.percent}<small>%</small></span>
-          <button type="button" class="lc-btn is-quiet" onclick={stopPull} disabled={stopping}>{stopping ? "Stopping" : "Stop"}</button>
-        </div>
-        <div class="lc-bar"><div class="lc-bar-fill" style="width: {pull.percent}%"></div></div>
-        <!-- The ones waiting their turn, in order, each a click from leaving the line. -->
-        {#if pull.queue?.length}
-          <ol class="lc-queue">
-            {#each pull.queue as q, i (q.model)}
-              {@const qn = nameParts(q.model)}
-              <li class="lc-queue-row" in:fly={{ y: -6, duration: 260, easing: cubicOut }} out:slide={{ duration: 200 }}
-                  animate:flip={{ duration: 260 }}>
-                <span class="lc-queue-n">{i + 1}</span>
-                <span class="min-w-0 flex-1 truncate">{qn.title}<em>{qn.sub ? ` · ${qn.sub}` : ""}</em></span>
-                <span class="lc-queue-when">{i === 0 ? "Next" : "Waiting"}</span>
-                <button type="button" class="lc-queue-x" aria-label="Take {qn.title} out of the line" title="Take it out"
-                        onclick={() => unqueue(q.model)}><Icon name="close" size={11} /></button>
-              </li>
-            {/each}
-          </ol>
-        {/if}
-      </div>
-    {:else if pull?.error}
-      <p class="lc-err">{pull.error}</p>
-    {/if}
-
-    <!-- A model that would not load: what is wrong with it, and what the app is doing about it. -->
-    {#if fix && fix.state !== "checking"}
-      <p class="lc-fix" class:is-bad={fix.state === "stuck"} class:is-good={fix.state === "fixed"}>
-        <Icon name={fix.state === "stuck" ? "alertCircle" : fix.state === "fixed" ? "check" : "download"} size={13} />
-        <span>
-          {#if fix.state === "fixed"}
-            Fixed: {nameParts(fix.model).title} is swapped for {nameParts(fix.to).title}.
-          {:else if fix.state === "fixing"}
-            {nameParts(fix.model).title}: {fix.why}.
-          {:else if fix.why?.startsWith("it is too big")}
-            <!-- It loads, just too slowly to be of use: not "will not load". -->
-            {nameParts(fix.model).title} {fix.why.slice(3)}.
-          {:else}
-            {nameParts(fix.model).title} will not load: {fix.why}.
-          {/if}
-        </span>
-      </p>
-      <!-- Something smaller by the same maker that fits: one click, never switched to unasked. -->
-      {#if fix.state === "stuck" && fix.alt}
-        <div class="lc-alt">
-          <span class="lc-alt-text">
-            <b>{fix.alt.label}</b>
-            <span>Same maker, smaller: {gb(fix.alt.size)}, fits this computer.</span>
-          </span>
-          <Button size="sm" loading={switching} onclick={useAlt}>Use it instead</Button>
-        </div>
-      {/if}
+      {@render underway()}
     {/if}
 
     {#if models.length}
@@ -951,27 +1077,31 @@
               <span class="lm-mem" title="Loaded{loaded[m] ? `, ${gb(loaded[m])} of memory` : ''}: it answers at once"><i></i>In memory</span>
             {/if}
             {#if inUse.has(m)}<span class="lm-used">In use</span>{/if}
-            <button class="lm-folder" onclick={() => reveal(m)} disabled={revealing === m}
-                    title="Show it on this computer" aria-label="Show {n.title} on this computer">
-              <Icon name="folder" size={15} />
-            </button>
-            {#if canPull}
-              {#if sure === m}
-                <button class="lm-sure" onclick={() => removeModel(m)}>
-                  <Icon name="trash" size={12} />Remove{#if sizes[m]} {gb(sizes[m])}{/if}
-                </button>
-              {:else}
-                <button class="lm-folder is-bin" onclick={() => askRemove(m)} disabled={!!removing}
-                        title="Remove it from this computer" aria-label="Remove {n.title}">
-                  <Icon name="trash" size={14} />
-                </button>
+            {#if removing === m}
+              <span class="lm-removing" role="status">Removing</span>
+            {:else}
+              <button class="lm-folder" onclick={() => reveal(m)} disabled={revealing === m}
+                      title="Show it on this computer" aria-label="Show {n.title} on this computer">
+                <Icon name="folder" size={15} />
+              </button>
+              {#if canPull}
+                {#if sure === m}
+                  <button class="lm-sure" onclick={() => removeModel(m)}>
+                    <Icon name="trash" size={12} />Remove{#if sizes[m]} {gb(sizes[m])}{/if}
+                  </button>
+                {:else}
+                  <button class="lm-folder is-bin" onclick={() => askRemove(m)} disabled={!!removing}
+                          title="Remove it from this computer" aria-label="Remove {n.title}">
+                    <Icon name="trash" size={14} />
+                  </button>
+                {/if}
               {/if}
             {/if}
           </div>
         {/each}
       </div>
     {:else if reachable}
-      <p class="lc-empty">No models yet.{#if canPull} Type a name above to get one.{/if}</p>
+      <p class="lc-empty">{canPull ? "No models yet. Search for one above, or drop a model file here." : "No models yet. Drop a model file here."}</p>
     {:else}
       <p class="lc-empty">Its models show here once it is running.</p>
     {/if}
@@ -1005,7 +1135,7 @@
           <div class="lc-ctx-foot">
             <span>{contextLength.toLocaleString()} tokens · {wordsFor(contextLength).toLowerCase()}</span>
             <Button size="sm" kind={contextLength !== savedContext ? "primary" : "ghost"} loading={restarting} onclick={applyContext}>
-              {#if !restarting}<Icon name="refresh" size={11} />{/if}{contextLength !== savedContext ? "Apply and restart Ollama" : "Restart Ollama"}
+              {#if !restarting}<Icon name="refresh" size={11} />{/if}{contextLength !== savedContext ? "Apply and restart" : "Restart local servers"}
             </Button>
           </div>
         </div>
@@ -1290,6 +1420,34 @@
   }
   .lc-count { font-size: 11.5px; color: var(--color-faint); }
   .lc-empty { padding: 14px 4px; font-size: 12.5px; color: var(--color-faint); }
+  .lc-head-tools { display: inline-flex; align-items: center; gap: 2px; margin-left: auto; align-self: center; }
+  .lc-head-tools .lc-btn { padding: 4px 8px; font-size: 11.5px; }
+
+  /* A file held over the tab. Flat, and nothing under it is blurred: this is on screen for as long as they hold it. */
+  .lm-dropsheet {
+    position: fixed;
+    inset: 0;
+    z-index: 9000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: color-mix(in srgb, var(--color-bg) 78%, transparent);
+    pointer-events: none;
+  }
+  .lm-dropcard {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    padding: 24px 34px;
+    border-radius: 18px;
+    color: var(--color-accent);
+    background: color-mix(in srgb, var(--color-accent) 16%, var(--color-bg));
+    animation: lm-dropcard 0.2s var(--swift) both;
+  }
+  .lm-dropcard b { margin-top: 2px; font-size: 14px; font-weight: 650; color: var(--color-ink); }
+  .lm-dropcard span { font-size: 12px; color: var(--color-muted); }
+  @keyframes lm-dropcard { from { transform: translateY(8px); } to { transform: none; } }
   .lc-err { margin: 2px 2px 10px; font-size: 12px; color: var(--color-bad); }
   /* The line behind the download: numbered, quieter than it, each one a click from leaving. */
   .lc-queue { display: flex; flex-direction: column; gap: 4px; margin: 10px 0 0; padding: 0; list-style: none; }
@@ -1364,89 +1522,7 @@
   :global(:root[data-motion="off"]) .lc-alt { animation: none; }
 
   /* ── Getting a model ─────────────────────────────────────────────────── */
-  .lc-get {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 8px;
-    padding: 4px 4px 4px 12px;
-    border-radius: 13px;
-    border: 1px solid var(--color-edge);
-    background: rgb(0 0 0 / 0.22);
-    transition: border-color 0.15s var(--swift), box-shadow 0.15s var(--swift);
-  }
-  .lc-get:focus-within {
-    border-color: color-mix(in srgb, var(--color-accent) 60%, transparent);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 16%, transparent);
-  }
   .lc-get-icon { display: grid; flex-shrink: 0; color: var(--color-faint); }
-  .lc-get:focus-within .lc-get-icon { color: var(--color-accent); }
-  .lc-get input {
-    min-width: 0;
-    flex: 1;
-    padding: 6px 0;
-    background: transparent;
-    font-family: ui-monospace, monospace;
-    font-size: 12.5px;
-    color: var(--color-ink);
-    outline: none;
-  }
-  .lc-get input::placeholder { font-family: inherit; color: var(--color-faint); }
-  .lc-get-go {
-    flex-shrink: 0;
-    padding: 6px 14px;
-    border-radius: 10px;
-    font-size: 12px;
-    font-weight: 650;
-    color: var(--color-bg, #0b0d12);
-    background: var(--color-accent);
-    transition: opacity 0.15s ease, transform 0.3s var(--jelly), filter 0.15s ease;
-  }
-  .lc-get-go:hover:not(:disabled) { filter: brightness(1.08); }
-  .lc-get-go:active:not(:disabled) { transform: scale(0.95); }
-  .lc-get-go:disabled { opacity: 0.35; cursor: default; }
-  /* Looking it up: the button stays lit with a spinner in it, and a light runs along the field, so a pause of ten
-     seconds before the download reads as work, not a dead button. */
-  .lc-get-go.is-asking { display: inline-flex; align-items: center; gap: 7px; opacity: 1; cursor: progress;
-    animation: lc-ask-in 0.35s var(--jelly); }
-  @keyframes lc-ask-in { from { transform: scale(0.9); } }
-  .lc-get-spin {
-    width: 12px;
-    height: 12px;
-    border-radius: 999px;
-    border: 2px solid color-mix(in srgb, var(--color-bg, #0b0d12) 30%, transparent);
-    border-top-color: var(--color-bg, #0b0d12);
-    animation: lc-spin 0.7s linear infinite;
-  }
-  @keyframes lc-spin { to { transform: rotate(360deg); } }
-  .lc-get { position: relative; overflow: hidden; }
-  .lc-get.is-asking { border-color: color-mix(in srgb, var(--color-accent) 45%, transparent); }
-  .lc-get.is-asking::after {
-    content: "";
-    position: absolute;
-    inset: auto 0 0 0;
-    height: 2px;
-    background: linear-gradient(90deg, transparent, var(--color-accent), transparent) no-repeat;
-    background-size: 40% 100%;
-    animation: lc-ask-run 1.1s cubic-bezier(0.45, 0, 0.25, 1) infinite;
-  }
-  @keyframes lc-ask-run { from { background-position: -60% 0; } to { background-position: 160% 0; } }
-  :global(:root[data-motion="off"]) .lc-get-go.is-asking,
-  :global(:root[data-motion="off"]) .lc-get.is-asking::after { animation: none; }
-  .lc-try { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 2px 12px; font-size: 11.5px; color: var(--color-faint); }
-  .lc-try button {
-    padding: 2px 9px;
-    border-radius: 999px;
-    font-family: ui-monospace, monospace;
-    font-size: 11px;
-    color: var(--color-muted);
-    background: rgb(255 255 255 / 0.05);
-    box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.06);
-    transition: color 0.15s ease, background-color 0.15s ease;
-  }
-  .lc-try button:hover { color: var(--color-ink); background: rgb(255 255 255 / 0.09); }
-  .lc-try-note { flex-basis: 100%; }
-  /* Where the box would be, for a server that gets its models some other way: the same shape, quieter. */
   .lc-get-else {
     display: flex;
     align-items: center;
@@ -1537,7 +1613,22 @@
     box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.04);
     transition: opacity 0.2s ease;
   }
-  .lm-row.is-going { opacity: 0.5; }
+  .lm-row.is-going { position: relative; overflow: hidden; }
+  .lm-row.is-going .lm-main { opacity: 0.45; }
+  /* Say what is happening, with a light running along the foot of the row: nobody can tell how long a file takes. */
+  .lm-row.is-going::after {
+    content: "";
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 34%;
+    height: 2px;
+    border-radius: 999px;
+    background: var(--color-accent);
+    animation: lm-going 1s ease-in-out infinite alternate;
+  }
+  @keyframes lm-going { from { transform: translateX(-10%); } to { transform: translateX(205%); } }
+  .lm-removing { padding: 0 12px 0 8px; font-size: 11.5px; font-weight: 600; color: var(--color-muted); white-space: nowrap; }
   .lm-main {
     display: flex;
     min-width: 0;
@@ -1752,6 +1843,8 @@
   :global(:root[data-motion="off"]) .ls-tile,
   :global(:root[data-motion="off"]) .ls-card,
   :global(:root[data-motion="off"]) .lc-logo::after,
+  :global(:root[data-motion="off"]) .lm-row.is-going::after,
+  :global(:root[data-motion="off"]) .lm-dropcard,
   :global(:root[data-motion="off"]) .lc-pull-icon,
   :global(:root[data-motion="off"]) .lc-bar-fill::after,
   :global(:root[data-motion="off"]) .lm-mem i,

@@ -28,12 +28,16 @@ import { play } from "./uisound";
 /** How long after opening new blocks still come in with the wave. */
 const WINDOW_MS = 900;
 /** Delay per pixel down the page: the wave's speed. */
-const PER_PX = 0.42;
-const MAX_DELAY = 380;
-const DURATION = 520;
-/** A page that is a tool, opened to be read at once (data-cascade="quick": Settings' Models tabs): the same wave,
- * in under half the time, so what is on it is there before you have to wait for it. */
-const QUICK = { perPx: 0.16, maxDelay: 140, duration: 340 };
+const PER_PX = 0.3;
+const MAX_DELAY = 240;
+const DURATION = 440;
+/** A page that is a tool, opened to be read at once (data-cascade="quick": Settings' Models tabs): its blocks barely
+ * apart, each easing in more slowly and with no overshoot, so it is calm and still over as soon as it was. */
+const QUICK = { perPx: 0.05, maxDelay: 50, duration: 440 };
+const QUICK_EASING = "cubic-bezier(0.22, 0.75, 0.25, 1)";
+/** How long into its drop a block lets what it holds start moving: with it, not after it (it used to wait for the
+ * landing, and a page sat still for most of a second before anything on it moved). */
+const RELEASE_MS = 40;
 const MAX_BLOCKS = 48;
 const DEPTH = 3;
 /** Entrances of their own that the wave replaces: Card's rise, a staggered list's, a pop. */
@@ -62,10 +66,11 @@ export function whenShown(node: Element | null): Promise<void> {
 }
 
 /**
- * Runs `fn` once the block this element is in has landed (straight away when
- * it is in none). What a block animates is held until it lands (app.css), and
- * a sound that goes with one of those animations waits with it: an animation
- * with no delay can say it has started while it is still held.
+ * Runs `fn` once the block this element is in lets what it holds move (a
+ * moment into its drop; straight away when it is in none). What a block
+ * animates is held until then (app.css), and a sound that goes with one of
+ * those animations waits with it: an animation with no delay can say it has
+ * started while it is still held.
  */
 export function afterLanding(node: Element | null, fn: () => void): void {
   const block = node?.closest("[data-arriving]");
@@ -164,19 +169,21 @@ export function cascade(node: HTMLElement, key?: unknown) {
       for (const x of [el, ...el.querySelectorAll<HTMLElement>(DOUBLES)]) {
         if (x.matches(DOUBLES)) x.style.animation = "none";
       }
-      // Everything else it animates waits for it to land (app.css pauses the
-      // animations inside [data-arriving]), so the tab opens first and what
-      // is in it moves after, not both at once. The clocks are the exception:
-      // they sweep in with it (whenShown).
+      // Everything else it animates is held (app.css pauses the animations
+      // inside [data-arriving]) until a moment into its drop: what is in it
+      // moves with it, never before it shows and never after a still pause.
+      // The clocks sweep in with it too (whenShown).
       el.dataset.arriving = "";
       const anim = el.animate(
         [
           { opacity: 0, transform: "translate3d(0, -12px, 0) scale(0.975)" },
           { opacity: 1, transform: "none" },
         ],
-        { duration, delay, easing, fill: "backwards" },
+        { duration, delay, easing: quick ? QUICK_EASING : easing, fill: "backwards" },
       );
       showing.set(el, new Promise((r) => setTimeout(r, delay)));
+      // What it holds starts moving as it starts to drop.
+      setTimeout(() => delete el.dataset.arriving, delay + RELEASE_MS);
       // A block that asks to be heard (data-land-sound: the Dashboard's widgets) is set down with a soft
       // thup as it lands, so a page of them is a patter down the page. Not one taken away mid drop.
       const heard = "landSound" in el.dataset;
@@ -184,7 +191,6 @@ export function cascade(node: HTMLElement, key?: unknown) {
         () => heard,
         () => false,
       ).then((landed) => {
-        delete el.dataset.arriving;
         if (landed) play("settle");
       });
     }

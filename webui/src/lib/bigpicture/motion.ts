@@ -42,6 +42,34 @@ export function sendFace(node: Element) {
   return sendAvatar(node, { key: (node as HTMLElement).dataset.flight ?? "" });
 }
 
+/**
+ * A page arriving: in from the way it was gone to, a tab to the right from the
+ * right, settling on a spring. Transform and opacity only, so it composites.
+ */
+export function pageIn(_node: Element, { dir = 1 }: { dir?: number } = {}) {
+  if (bigPictureExit.on) return instant;
+  if (!moving()) return fade(200);
+  return {
+    duration: 560,
+    css: (t: number) => {
+      const e = backOut(t);
+      return `transform: translate3d(${(1 - e) * dir * 64}px, 0, 0) scale(${0.985 + 0.015 * e}); opacity: ${Math.min(1, t * 2.4)}`;
+    },
+  };
+}
+
+/** A page leaving, the other way, quickly: marked, so the arrow keys no longer land on what is in it. */
+export function pageOut(node: Element, { dir = 1 }: { dir?: number } = {}) {
+  (node as HTMLElement).dataset.leaving = "";
+  if (bigPictureExit.on) return instant;
+  if (!moving()) return fade(120);
+  return {
+    duration: 240,
+    easing: cubicIn,
+    css: (t: number, u: number) => `transform: translate3d(${-u * dir * 44}px, 0, 0) scale(${1 - 0.012 * u}); opacity: ${t}`,
+  };
+}
+
 /** The stage arriving: up from below, overshooting a touch.
  *
  * Transform and opacity only. These two used to animate `filter: blur()` as

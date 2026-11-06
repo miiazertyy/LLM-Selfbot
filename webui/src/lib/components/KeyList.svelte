@@ -10,14 +10,21 @@
    * Values are write-only, like account tokens: a key is shown masked and can
    * be replaced but not read back.
    */
-  import { onMount } from "svelte";
   import { api } from "../api";
   import { toast } from "../stores";
   import Button from "./Button.svelte";
   import Icon from "./Icon.svelte";
   import FootNote from "./FootNote.svelte";
 
-  let { name, hint = "" } = $props<{ name: string; hint?: string }>();
+  let { name, hint = "", accounts = true, stamp = 0, onchange } = $props<{
+    name: string;
+    hint?: string;
+    /** Each one a separate account, rather than a key to the same place. */
+    accounts?: boolean;
+    /** Something that changes when the list has changed elsewhere, and it has to read it again. */
+    stamp?: number;
+    onchange?: () => void;
+  }>();
 
   type Extra = { prefix: string; label: string; secret: boolean; placeholder?: string };
   type Key = {
@@ -41,7 +48,10 @@
 
   const extraKey = (i: number, prefix: string) => `${i}:${prefix}`;
 
-  onMount(load);
+  $effect(() => {
+    void stamp;
+    load();
+  });
 
   async function load() {
     try {
@@ -62,6 +72,7 @@
     try {
       keys = (await fn()).keys || keys;
       toast(ok, "ok");
+      onchange?.();
     } catch (e: any) {
       toast(e.message || "That did not work", "err");
     } finally {
@@ -209,9 +220,11 @@
         {/each}
       </div>
     {/if}
-    <FootNote class="mt-2">
-      Stored as numbered entries and always renumbered to stay consecutive,
-      because the loader stops at the first gap. Each one runs as its own account.
-    </FootNote>
+    {#if accounts}
+      <FootNote class="mt-2">
+        Stored as numbered entries and always renumbered to stay consecutive,
+        because the loader stops at the first gap. Each one runs as its own account.
+      </FootNote>
+    {/if}
   {/if}
 </section>

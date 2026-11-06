@@ -39,7 +39,7 @@ EXTS = {".py", ".svelte", ".ts", ".js", ".md", ".txt", ".yaml", ".yml", ".json",
 # swept up the persona and mood files someone writes for their own bot, which
 # are their words, not ours, and not something this test has any business
 # reformatting.
-SOURCE_ROOTS = ("app", "webui/src", "tests", "scripts", "packaging", "resources", ".github")
+SOURCE_ROOTS = ("app", "webui/src", "tests", "scripts", "packaging", "resources", ".github", "community")
 SOURCE_FILES = ("README.md", "main.py", "requirements.txt", "requirements-dev.txt", ".gitignore")
 
 

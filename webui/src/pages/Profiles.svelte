@@ -44,9 +44,16 @@
   import FacePicker from "../lib/personas/FacePicker.svelte";
   import { personasRes, reloadPersonas } from "../lib/personas/store";
   import { accountLabel, colorOf, joinAnd, runningLine, withAccount, type Persona } from "../lib/personas/logic";
+  import { platformOf } from "../lib/platforms";
   import { accountDetails, accountsRes, refreshDetails, slotsRes } from "../lib/accounts/state";
   import { condition, presenceOf, type Runtime, type Slot } from "../lib/accounts/condition";
   import { get } from "svelte/store";
+  import CommunitySwitch from "../lib/community/CommunitySwitch.svelte";
+  import CommunityView from "../lib/community/CommunityView.svelte";
+  import ShareSheet from "../lib/community/ShareSheet.svelte";
+  import UpdateSheet from "../lib/community/UpdateSheet.svelte";
+  import { communityRes, profilesView } from "../lib/community/store";
+  import { updateFor } from "../lib/community/logic";
 
   const data = $derived($personasRes.data);
   const list = $derived(data.personas);
@@ -66,7 +73,7 @@
     const rt = runtime.find((r) => r.id === id);
     const d = $accountDetails[id];
     const cond = slot ? condition(slot, rt, d) : null;
-    const platform = id.startsWith("snapchat") ? "snapchat" : "discord";
+    const platform = platformOf(id).id;
     return {
       id, platform,
       name: rt?.display_name || rt?.username || slot?.username || accountLabel(id),
@@ -77,7 +84,7 @@
       live: !!cond?.live,
       canStart: !!cond?.canStart,
       presence: slot ? presenceOf(slot, rt, d) : "offline",
-      silhouette: platform === "snapchat" && !rt?.avatar && !!rt?.username,
+      silhouette: platformOf(id).silhouette && !rt?.avatar && !!rt?.username,
     };
   }
   /** Each profile with its accounts and whether it is running now. */
@@ -100,7 +107,7 @@
     accounts: Object.keys(data.accounts).length,
   });
   /** The accounts' faces, for the menu that gives one to a profile. */
-  const faces = $derived(Object.fromEntries(runtime.filter((r) => r.platform !== "telegram").map((r) => [
+  const faces = $derived(Object.fromEntries(runtime.filter((r) => r.platform !== "controller").map((r) => [
     r.id, { name: r.display_name || r.username || "", avatar: r.avatar || "", platform: r.platform },
   ])));
 
@@ -110,6 +117,7 @@
     accountsRes.refresh({ maxAge: 3_000 }).then(refreshAllDetails);
     // What the accounts are doing changes by itself: asked again every few seconds while the page is in view.
     return visiblePoll(() => {
+      if (get(profilesView) === "community") return;
       accountsRes.refresh({ force: true, quiet: true }).then(refreshAllDetails);
       reloadPersonas();
     }, 5000);
@@ -120,7 +128,7 @@
 
   // ── The cards dealt in as the page opens ───────────────────────────────────
   /** Between one card and the next. */
-  const DEAL_STEP = 130;
+  const DEAL_STEP = 75;
   /**
    * Each card on screen tips up into place in turn, and what is on it follows (the CSS under .pr-grid.is-dealing,
    * timed off --i). Every step has its note, booked from the frame the cards start in: a note up the scale as each
@@ -134,6 +142,7 @@
     node.classList.add("is-waiting");
     let gone = false;
     let done = 0;
+    // Not held for the page's opening wave (data-no-rise on the grid): the deal starts on the next frame.
     whenShown(node).then(() => afterLanding(node, () => onScreen(node).then((seen) => {
       if (gone) return;
       const kids = Array.from(node.children) as HTMLElement[];
@@ -150,19 +159,19 @@
       node.classList.remove("is-waiting");
       if (!k) return;
       node.classList.add("is-dealing");
-      done = window.setTimeout(() => node.classList.remove("is-dealing"), (k - 1) * DEAL_STEP + 1600);
+      done = window.setTimeout(() => node.classList.remove("is-dealing"), (k - 1) * DEAL_STEP + 1100);
       const dealt = kids.filter((c) => !("there" in c.dataset));
       requestAnimationFrame((frame) => {
         if (gone || !get(motionEnabled)) return;
         const base = frame - performance.now();
         dealt.forEach((c, i) => {
           const t = base + i * DEAL_STEP;
-          play("pluck", { p: dealt.length > 1 ? 0.15 + (0.7 * i) / (dealt.length - 1) : 0.5, level: 0.55, delay: t + 60 });
+          play("pluck", { p: dealt.length > 1 ? 0.15 + (0.7 * i) / (dealt.length - 1) : 0.5, level: 0.55, delay: t + 40 });
           if (!c.classList.contains("pr-card")) return;
-          play("glint", { level: 0.26, delay: t + 300 });
+          play("glint", { level: 0.26, delay: t + 130 });
           const rows = Math.min(4, c.querySelectorAll(".pr-acct").length);
-          for (let j = 0; j < rows; j++) play("tick", { level: 0.2, p: 0.35 + j * 0.12, delay: t + 400 + j * 70 });
-          play("seat", { level: 0.28, delay: t + 700 + rows * 20 });
+          for (let j = 0; j < rows; j++) play("tick", { level: 0.2, p: 0.35 + j * 0.12, delay: t + 220 + j * 45 });
+          play("seat", { level: 0.28, delay: t + 420 + rows * 15 });
         });
       });
     })));
@@ -233,17 +242,23 @@
   let newOpen = $state(false);
   let copyOf = $state("");
   let creating = $state(false);
+  /** Where the tile was when it was pressed: the card grows out of there. */
+  let newFrom = $state<DOMRect | null>(null);
   /** One just made: its card pops into the grid with a burst of its colours. */
   let born = $state("");
   function openNew(from = "") {
     copyOf = from;
     play("open");
+    if (!newOpen) newFrom = document.querySelector<HTMLElement>(".pr-new")?.getBoundingClientRect() ?? null;
     newOpen = true;
   }
-  async function create(body: { name: string; color: string; copy_from?: string; copy_memory?: boolean }) {
+  async function create(body: { name: string; color: string; color2?: string; copy_from?: string; copy_memory?: boolean; face?: File | null }) {
     creating = true;
     try {
-      const r = await api.createPersona(body);
+      const { face, ...asked } = body;
+      const r = await api.createPersona(asked);
+      // Its picture once it exists. One that will not do is no reason to lose the profile.
+      if (face) await api.uploadPersonaAvatar(r.persona.id, face).catch((e: any) => toast(e?.message || "Could not use that picture", "err"));
       newOpen = false;
       born = r.persona.id;
       await reloadPersonas();
@@ -256,6 +271,17 @@
     } finally {
       creating = false;
     }
+  }
+  // Made from your own chats (FromExports.svelte, in the same card): it arrives the same way.
+  async function madeFromChats(made: { id: string; name?: string } | null, face: File | null) {
+    if (made?.id && face) await api.uploadPersonaAvatar(made.id, face).catch((e: any) => toast(e?.message || "Could not use that picture", "err"));
+    newOpen = false;
+    born = made?.id ?? "";
+    await reloadPersonas();
+    setTimeout(() => (born = ""), 1500);
+    play("done");
+    play("glint", { delay: 180, strong: true });
+    toast(`${made?.name ?? "It"} is ready. No account has it until you give it one.`, "ok");
   }
   function arrived(node: HTMLElement, pid: string) {
     if (pid !== born) return;
@@ -288,10 +314,10 @@
     }
     reloadPersonas();
   }
-  async function recolor(p: Persona, hex: string) {
-    personasRes.update((d) => ({ ...d, personas: d.personas.map((x) => (x.id === p.id ? { ...x, color: hex } : x)) }));
+  async function recolor(p: Persona, hex: string, second = "") {
+    personasRes.update((d) => ({ ...d, personas: d.personas.map((x) => (x.id === p.id ? { ...x, color: hex, color2: second } : x)) }));
     try {
-      await api.updatePersona(p.id, { color: hex });
+      await api.updatePersona(p.id, { color: hex, color2: second });
     } catch (e: any) {
       toast(e?.message || "Could not change it", "err");
       reloadPersonas();
@@ -414,6 +440,31 @@
     }
   }
 
+  // ── The community ──────────────────────────────────────────────────────────
+  // Profiles of yours that came from the community are checked for a newer version, now and then, quietly.
+  $effect(() => {
+    if (list.some((p) => p.community)) communityRes.refresh({ maxAge: 6 * 3600_000, quiet: true });
+  });
+  const newer = $derived(Object.fromEntries(list.map((p) => [p.id, updateFor(p, $communityRes.data.index.profiles ?? [])])));
+  const updates = $derived(Object.values(newer).filter(Boolean).length);
+  let glinted = false;
+  $effect(() => {
+    if (updates && !glinted) {
+      glinted = true;
+      play("glint", { level: 0.35, delay: 400 });
+    }
+  });
+  let shareFor = $state("");
+  let updateFor_ = $state("");
+  function openShare(pid: string) {
+    play("open");
+    shareFor = pid;
+  }
+  function openUpdate(pid: string) {
+    play("open");
+    updateFor_ = pid;
+  }
+
   const PARTS = [
     { route: "/persona", icon: "persona", label: "Persona", of: (p: Persona) => p.words, unit: (n: number) => (n === 1 ? "word" : "words") },
     { route: "/pictures", icon: "pictures", label: "Pictures", of: (p: Persona) => p.pictures,
@@ -426,7 +477,7 @@
 <ErrorNote text={loadError} onretry={() => { loadError = ""; reloadPersonas(); }} />
 
 <!-- ── What is here, at a glance ──────────────────────────────────────────── -->
-<section class="pr-hero glass" use:chime={{ sound: "wind", delay: 140 }}>
+<section class="pr-hero glass" use:chime={{ sound: "wind", delay: 40 }}>
   <span class="pr-orb" use:chime={"land"}>
     <span class="pr-orb-ring" aria-hidden="true"></span>
     <span class="pr-orb-icon"><Icon name="layers" size={26} /></span>
@@ -438,7 +489,11 @@
       {#each ["Your", "profiles"] as word, w}<span class="pr-word" aria-hidden="true">{#each Array.from(word) as ch, i}<span
         class="pr-l" style="--c: {w * 5 + i}">{ch}</span>{/each}</span>{#if w === 0}{" "}{/if}{/each}
     </h2>
-    <p class="pr-sub">Each one is its own bot, with its own persona, pictures, memory and settings, on the accounts you give it.</p>
+    {#if $profilesView === "community"}
+      <p class="pr-sub">Profiles people made and shared. Look inside any of them before you add one.</p>
+    {:else}
+      <p class="pr-sub">Each one is its own bot, with its own persona, pictures, memory and settings, on the accounts you give it.</p>
+    {/if}
   </div>
   <div class="pr-stats domino" use:domino={{ step: 80, sound: "key", level: 0.45 }}>
     {#each [{ label: "Profiles", n: totals.profiles, icon: "layers" }, { label: "Running", n: totals.running, icon: "play" },
@@ -452,18 +507,23 @@
   </div>
 </section>
 
+<CommunitySwitch {updates} />
+
+{#if $profilesView === "community"}
+  <CommunityView personas={list} onshare={openShare} onupdate={openUpdate} />
+{:else}
 {#if loading}
   <div class="pr-grid">
     {#each Array(2) as _}<div class="glass h-72 animate-pulse rounded-[22px]"></div>{/each}
   </div>
 {:else}
   <!-- ── One card each, and a way to make another: dealt in one after another as the page opens ── -->
-  <div class="pr-grid" use:deal>
+  <div class="pr-grid" use:deal data-no-rise>
     {#each cards as c (c.p.id)}
       {@const p = c.p}
       <article class="pr-card glass" class:is-live={c.live > 0} class:is-born={p.id === born} class:is-raised={menuFor === p.id}
                class:is-powering={acting === `${p.id}:start`} class:is-lit={lit === p.id}
-               style="--pc: {colorOf(p)}" use:arrived={p.id} use:tilt={2.5}
+               style="--pc: {colorOf(p)}; --pc2: {p.color2 || colorOf(p)}; --pc2-share: {p.color2 ? '30%' : '16%'}" use:arrived={p.id} use:tilt={2.5}
                animate:flip={{ duration: 380, easing: cubicOut }} out:scale={{ start: 0.86, duration: 300, easing: cubicOut }}>
         <div class="pr-banner" aria-hidden="true"></div>
 
@@ -489,13 +549,24 @@
             {/key}
           </div>
           {#if p.is_default}<span class="pr-badge" title="New accounts start on it">Default</span>{/if}
+          {#if newer[p.id]}
+            <button type="button" class="pr-badge pr-update" title="A newer version is in the community"
+                    onclick={() => openUpdate(p.id)} data-sound="self">Update to v{newer[p.id]?.to}</button>
+          {:else if p.community}
+            <span class="pr-badge pr-from" title="Added from the community: version {p.community.version}, the newest">Community v{p.community.version}</span>
+          {:else if p.shared}
+            <span class="pr-badge pr-from" title="You shared it, as {p.shared.slug}: version {p.shared.version} is live">Shared v{p.shared.version}</span>
+          {/if}
           <span class="pr-more" data-menu={p.id}>
             {#if menuFor === p.id}
               <div class="pr-menu" role="menu" tabindex="-1">
-                <div class="pr-menu-dots"><ColorDots palette={data.palette} value={p.color} onpick={(hex) => recolor(p, hex)} /></div>
+                <div class="pr-menu-dots"><ColorDots palette={data.palette} themes={data.themes} value={p.color} second={p.color2 ?? ""} onpick={(hex, second) => recolor(p, hex, second)} /></div>
                 <button type="button" role="menuitem" onclick={() => fromMenu(() => startRename(p))}><Icon name="edit" size={13} /> Rename</button>
                 <button type="button" role="menuitem" onclick={() => fromMenu(() => openFace(p))}><Icon name="persona" size={13} /> Change its face</button>
                 <button type="button" role="menuitem" onclick={() => fromMenu(() => openNew(p.id))}><Icon name="copy" size={13} /> Duplicate</button>
+                {#if !p.community}
+                  <button type="button" role="menuitem" onclick={() => fromMenu(() => openShare(p.id))}><Icon name="upload" size={13} /> {p.shared ? "Update in the community" : "Share to community"}</button>
+                {/if}
                 {#if !p.is_default}
                   <button type="button" role="menuitem" class="is-danger"
                           onclick={() => fromMenu(() => { play("open"); deleteFor = p; })}><Icon name="trash" size={13} /> Delete</button>
@@ -560,16 +631,25 @@
       </article>
     {/each}
 
-    <button type="button" class="pr-new" onclick={() => openNew()}>
-      <span class="pr-new-orb"><Icon name="plus" size={22} /></span>
-      <b>New profile</b>
-      <small>Its own persona, pictures, memory and settings</small>
-    </button>
+    {#if newOpen}
+      <NewPersona bind:open={newOpen} {list} palette={data.palette} themes={data.themes} {copyOf} busy={creating} from={newFrom}
+                  oncreate={create} oncreated={madeFromChats} />
+    {:else}
+      <button type="button" class="pr-new" onclick={() => openNew()} in:scale={{ start: 0.94, duration: $motionEnabled ? 220 : 0, easing: cubicOut }}>
+        <span class="pr-new-orb"><Icon name="plus" size={22} /></span>
+        <b>New profile</b>
+        <small>Its own persona, pictures, memory and settings</small>
+      </button>
+    {/if}
   </div>
 {/if}
+{/if}
 
-<NewPersona bind:open={newOpen} {list} palette={data.palette} {copyOf} busy={creating} oncreate={create} />
 <AccountMenu bind:open={giveOpen} anchor={giveBtn} {data} {faces} persona={giveFor} onpick={give} />
+
+<!-- Sharing one to the community, and updating one that came from it. -->
+<ShareSheet bind:pid={shareFor} personas={list} onsent={() => reloadPersonas()} />
+<UpdateSheet bind:pid={updateFor_} onupdated={() => { reloadPersonas(); communityRes.refresh({ force: true, quiet: true }); }} />
 
 <!-- Its face: a small panel beside it, not a box over the page. -->
 <FacePicker persona={faceFor} anchor={faceAt} onclose={() => (faceId = "")} onchanged={afterFace} />
@@ -618,7 +698,7 @@
     pointer-events: none;
     background: linear-gradient(100deg, transparent, color-mix(in srgb, var(--color-accent) 22%, rgb(255 255 255 / 0.08)), transparent);
     transform: translateX(-120%) skewX(-12deg);
-    animation: pr-sheen 1.25s cubic-bezier(0.35, 0.1, 0.2, 1) 0.14s both;
+    animation: pr-sheen 0.9s cubic-bezier(0.35, 0.1, 0.2, 1) 0.04s both;
   }
   @keyframes pr-sheen {
     from { transform: translateX(-120%) skewX(-12deg); opacity: 0; }
@@ -646,7 +726,7 @@
     -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2px));
     mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2px));
     /* Wound in fast round the orb as it pops, then turning slowly. */
-    animation: pr-ring-in 1s cubic-bezier(0.2, 0.9, 0.25, 1) 0.1s backwards, pr-turn 7s linear 1.1s infinite;
+    animation: pr-ring-in 0.75s cubic-bezier(0.2, 0.9, 0.25, 1) backwards, pr-turn 7s linear 0.75s infinite;
   }
   @keyframes pr-turn { to { transform: rotate(360deg); } }
   @keyframes pr-ring-in { from { opacity: 0; transform: rotate(-300deg) scale(0.55); } 50% { opacity: 1; } }
@@ -658,24 +738,24 @@
     border-radius: 999px;
     color: var(--color-accent);
     background: radial-gradient(circle at 35% 30%, color-mix(in srgb, var(--color-accent) 30%, var(--color-card)), var(--color-card));
-    animation: pr-icon-in 0.7s var(--jelly) 0.2s backwards, pr-stack 3.4s ease-in-out 0.9s infinite;
+    animation: pr-icon-in 0.55s var(--jelly) 0.06s backwards, pr-stack 3.4s ease-in-out 0.7s infinite;
   }
   @keyframes pr-icon-in { from { opacity: 0; transform: scale(0.3) translateY(8px); } }
   @keyframes pr-stack { 50% { transform: translateY(-2px) scale(1.04); box-shadow: 0 0 24px -4px color-mix(in srgb, var(--color-accent) 60%, transparent); } }
   .pr-who { display: flex; min-width: 0; flex: 1 1 260px; flex-direction: column; gap: 2px; }
   .pr-kicker { font-size: 10.5px; font-weight: 650; letter-spacing: 0.16em; text-transform: uppercase; color: var(--color-faint);
-               animation: pr-fade-x 0.5s var(--swift) 0.06s backwards; }
+               animation: pr-fade-x 0.4s var(--swift) backwards; }
   .pr-title { font-size: 26px; font-weight: 700; line-height: 1.15; letter-spacing: -0.02em; color: var(--color-ink); }
   /* The title's letters, rising in one after another with a little tip; a word never breaks between them. */
   .pr-word { display: inline-block; white-space: nowrap; }
   .pr-l {
     display: inline-block;
     white-space: pre;
-    animation: pr-letter 0.6s cubic-bezier(0.25, 1.4, 0.45, 1) backwards;
-    animation-delay: calc(0.12s + var(--c) * 26ms);
+    animation: pr-letter 0.5s cubic-bezier(0.25, 1.4, 0.45, 1) backwards;
+    animation-delay: calc(0.03s + var(--c) * 17ms);
   }
   @keyframes pr-letter { from { opacity: 0; transform: translateY(0.55em) rotate(8deg) scale(0.8); } 55% { opacity: 1; } }
-  .pr-sub { margin-top: 3px; font-size: 12.5px; color: var(--color-muted); animation: pr-fade-x 0.6s var(--swift) 0.42s backwards; }
+  .pr-sub { margin-top: 3px; font-size: 12.5px; color: var(--color-muted); animation: pr-fade-x 0.5s var(--swift) 0.2s backwards; }
   @keyframes pr-fade-x { from { opacity: 0; transform: translateX(-10px); } }
   .pr-stats { display: flex; gap: 8px; }
   .pr-stat {
@@ -749,9 +829,9 @@
   /* ── Dealt in as the page opens (deal): each card tips up into place in turn, then what is on it arrives ── */
   .pr-grid:global(.is-waiting) > * { opacity: 0; }
   .pr-grid:global(.is-dealing) > :global(:not([data-there])) {
-    --at: calc(var(--i, 0) * var(--deal-step, 130ms));
+    --at: calc(var(--i, 0) * var(--deal-step, 75ms));
     transform-origin: 50% 100%;
-    animation: pr-deal 0.8s cubic-bezier(0.22, 1.2, 0.36, 1) backwards;
+    animation: pr-deal 0.6s cubic-bezier(0.22, 1.2, 0.36, 1) backwards;
     animation-delay: var(--at);
   }
   @keyframes pr-deal {
@@ -760,53 +840,53 @@
   }
   /* Its colour washes in from the left. */
   .pr-grid:global(.is-dealing) > .pr-card:global(:not([data-there])) .pr-banner {
-    animation: pr-wash 1s cubic-bezier(0.3, 0.7, 0.2, 1) backwards;
-    animation-delay: calc(var(--at) + 140ms);
+    animation: pr-wash 0.75s cubic-bezier(0.3, 0.7, 0.2, 1) backwards;
+    animation-delay: calc(var(--at) + 60ms);
   }
   @keyframes pr-wash { from { opacity: 0; clip-path: inset(0 100% 0 0); } }
   /* Its face pops, spinning in. */
   .pr-grid:global(.is-dealing) > .pr-card:global(:not([data-there])) .pr-face {
-    animation: pr-face-in 0.7s var(--jelly) backwards;
-    animation-delay: calc(var(--at) + 240ms);
+    animation: pr-face-in 0.55s var(--jelly) backwards;
+    animation-delay: calc(var(--at) + 110ms);
   }
   @keyframes pr-face-in { from { opacity: 0; transform: scale(0.2) rotate(-50deg); } }
   /* Its name, then what it is doing, then its badge and menu. */
   .pr-grid:global(.is-dealing) > .pr-card:global(:not([data-there])) .pr-who-card > :first-child {
-    animation: pr-fade-x 0.5s var(--swift) backwards;
-    animation-delay: calc(var(--at) + 300ms);
+    animation: pr-fade-x 0.4s var(--swift) backwards;
+    animation-delay: calc(var(--at) + 150ms);
   }
   .pr-grid:global(.is-dealing) > .pr-card:global(:not([data-there])) .pr-who-card .pr-state {
-    animation: pr-fade-x 0.5s var(--swift) backwards;
-    animation-delay: calc(var(--at) + 370ms);
+    animation: pr-fade-x 0.4s var(--swift) backwards;
+    animation-delay: calc(var(--at) + 190ms);
   }
   .pr-grid:global(.is-dealing) > .pr-card:global(:not([data-there])) .pr-badge,
   .pr-grid:global(.is-dealing) > .pr-card:global(:not([data-there])) .pr-more {
-    animation: pr-fade 0.5s ease backwards;
-    animation-delay: calc(var(--at) + 380ms);
+    animation: pr-fade 0.4s ease backwards;
+    animation-delay: calc(var(--at) + 200ms);
   }
   @keyframes pr-fade { from { opacity: 0; } }
   /* Its accounts plugging in, one after another, a touch past their place and back. */
   .pr-grid:global(.is-dealing) > .pr-card:global(:not([data-there])) .pr-acct,
   .pr-grid:global(.is-dealing) > .pr-card:global(:not([data-there])) .pr-give {
-    animation: pr-plug 0.55s cubic-bezier(0.3, 1.4, 0.5, 1) backwards;
-    animation-delay: calc(var(--at) + 400ms + var(--j, 0) * 70ms);
+    animation: pr-plug 0.45s cubic-bezier(0.3, 1.4, 0.5, 1) backwards;
+    animation-delay: calc(var(--at) + 210ms + var(--j, 0) * 45ms);
   }
   @keyframes pr-plug { from { opacity: 0; transform: translateX(-18px) scale(0.97); } 50% { opacity: 1; } }
   /* Its parts coming up, left to right. */
   .pr-grid:global(.is-dealing) > .pr-card:global(:not([data-there])) .pr-part {
-    animation: pr-tile 0.6s var(--jelly) backwards;
-    animation-delay: calc(var(--at) + 520ms + var(--k, 0) * 55ms);
+    animation: pr-tile 0.5s var(--jelly) backwards;
+    animation-delay: calc(var(--at) + 270ms + var(--k, 0) * 35ms);
   }
   @keyframes pr-tile { from { opacity: 0; transform: translateY(14px) scale(0.88); } }
   .pr-grid:global(.is-dealing) > .pr-card:global(:not([data-there])) .pr-foot {
-    animation: pr-rise 0.5s var(--swift) backwards;
-    animation-delay: calc(var(--at) + 720ms);
+    animation: pr-rise 0.4s var(--swift) backwards;
+    animation-delay: calc(var(--at) + 380ms);
   }
   @keyframes pr-rise { from { opacity: 0; transform: translateY(8px); } }
   /* The way to make another: its plus spins in after it lands. */
   .pr-grid:global(.is-dealing) > .pr-new:global(:not([data-there])) .pr-new-orb {
-    animation: pr-face-in 0.7s var(--jelly) backwards;
-    animation-delay: calc(var(--at) + 220ms);
+    animation: pr-face-in 0.55s var(--jelly) backwards;
+    animation-delay: calc(var(--at) + 110ms);
   }
   .pr-card.is-live { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--pc) 24%, transparent); }
   .pr-card.is-raised { z-index: 20; }
@@ -822,7 +902,7 @@
     pointer-events: none;
     background:
       radial-gradient(80% 140% at 8% 0%, color-mix(in srgb, var(--pc) 34%, transparent), transparent 70%),
-      radial-gradient(60% 120% at 96% 0%, color-mix(in srgb, var(--pc) 16%, transparent), transparent 72%);
+      radial-gradient(60% 120% at 96% 0%, color-mix(in srgb, var(--pc2) var(--pc2-share), transparent), transparent 72%);
     -webkit-mask-image: linear-gradient(to bottom, #000 30%, transparent);
     mask-image: linear-gradient(to bottom, #000 30%, transparent);
     transition: opacity 0.4s ease;
@@ -923,6 +1003,17 @@
     color: var(--color-faint);
     background: rgb(255 255 255 / 0.06);
   }
+  /* From the community, shared by you, or a newer version waiting: in its colour, the last one softly lit. */
+  .pr-from { color: color-mix(in srgb, var(--pc) 70%, var(--color-ink)); background: color-mix(in srgb, var(--pc) 14%, transparent); }
+  .pr-update {
+    color: var(--color-ink);
+    background: color-mix(in srgb, var(--pc) 26%, transparent);
+    box-shadow: 0 0 14px -4px color-mix(in srgb, var(--pc) 80%, transparent);
+    animation: pr-update-glow 2.4s ease-in-out infinite;
+    transition: transform 0.2s var(--spring);
+  }
+  .pr-update:hover { transform: translateY(-1px); }
+  @keyframes pr-update-glow { 50% { box-shadow: 0 0 20px -2px color-mix(in srgb, var(--pc) 95%, transparent); } }
   .pr-more { position: relative; align-self: flex-start; }
   .pr-more-btn {
     display: grid;
@@ -970,6 +1061,7 @@
   .pr-menu > :nth-child(3) { animation-delay: 60ms; }
   .pr-menu > :nth-child(4) { animation-delay: 90ms; }
   .pr-menu > :nth-child(5) { animation-delay: 120ms; }
+  .pr-menu > :nth-child(6) { animation-delay: 150ms; }
   @keyframes pr-item { from { opacity: 0; transform: translateY(-5px); } }
   .pr-menu button.is-danger { color: var(--color-bad); }
 
@@ -1044,8 +1136,8 @@
     padding: 9px 10px 8px;
     border-radius: 14px;
     text-align: left;
-    background: rgb(255 255 255 / 0.03);
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-edge) 65%, transparent);
+    /* Tinted with the theme like every button (app.css, "Buttons with depth"): no outline of its own at rest. */
+    box-shadow: 0 0 0 0 transparent;
     transition: transform 0.4s var(--jelly), background-color 0.2s ease, box-shadow 0.2s ease;
   }
   .pr-part:hover { transform: translateY(-2px); background: color-mix(in srgb, var(--pc) 10%, transparent);
@@ -1121,6 +1213,7 @@
   :global(:root[data-motion="off"]) .pr-face.is-pop,
   :global(:root[data-motion="off"]) .pr-state-dot::after,
   :global(:root[data-motion="off"]) .pr-menu { animation: none; }
+  :global(:root[data-motion="off"]) .pr-update { animation: none; transition: none; }
   :global(:root[data-motion="off"]) .pr-card,
   :global(:root[data-motion="off"]) .pr-card::after,
   :global(:root[data-motion="off"]) .pr-acct,

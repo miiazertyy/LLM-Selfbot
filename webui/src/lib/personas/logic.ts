@@ -7,11 +7,14 @@
  * is one, Default unless it is given another.
  */
 
+
 export type Persona = {
   id: string;
   name: string;
   /** Its own colour, "#rrggbb", or "" for the theme's accent. */
   color: string;
+  /** A second one, when it has a theme of two: its face and its card run from one to the other. */
+  color2?: string;
   is_default: boolean;
   /** Its face for the app's pages, or "". Never put on the account itself. */
   avatar: string;
@@ -24,30 +27,43 @@ export type Persona = {
   changed: number;
   /** The accounts that speak as it, by web id ("discord_1"). */
   accounts: string[];
+  /** Added from the community: which one, and which version. */
+  community?: { slug: string; version: number } | null;
+  /** Shared to the community by you: as which, and its version there. */
+  shared?: { slug: string; version: number } | null;
 };
+
+/** Two colours that go together. */
+export type PersonaTheme = { id: string; name: string; a: string; b: string };
 
 export type PersonaList = {
   personas: Persona[];
   /** web id -> persona id, for every account set up. */
   accounts: Record<string, string>;
   palette: { id: string; name: string; hex: string }[];
+  themes: PersonaTheme[];
 };
 
-export const EMPTY: PersonaList = { personas: [], accounts: {}, palette: [] };
+export const EMPTY: PersonaList = { personas: [], accounts: {}, palette: [], themes: [] };
 
 /** The colour a persona is drawn in: its own, else the theme's accent. */
 export function colorOf(p?: { color?: string } | null): string {
   return p?.color || "var(--color-accent)";
 }
 
-/** An account as people say it: "Discord #1", "Snapchat #2". */
+/** An account as people say it: "Discord #1", "Snapchat #2", "Instagram #1". */
 export function accountLabel(webId: string): string {
-  const m = /^(discord|snapchat)_(\d+)$/.exec(webId || "");
+  const m = /^(discord|snapchat|tiktok|instagram|x|reddit|whatsapp|minecraft|imessage|telegram)_(\d+)$/.exec(webId || "");
   if (!m) return webId;
-  return `${m[1] === "discord" ? "Discord" : "Snapchat"} #${m[2]}`;
+  // Named here rather than taken from platforms.ts: this file is the plain parts, and nothing else is imported.
+  const NAMES: Record<string, string> = { discord: "Discord", snapchat: "Snapchat", tiktok: "TikTok",
+                                          instagram: "Instagram", x: "X", reddit: "Reddit",
+                                          whatsapp: "WhatsApp", minecraft: "Minecraft", imessage: "iMessage",
+                                          telegram: "Telegram" };
+  return `${NAMES[m[1]]} #${m[2]}`;
 }
 
-/** Accounts in the order people count them: Discord's, then Snapchat's, each by number (10 after 9, not after 1). */
+/** Accounts in the order people count them: one platform at a time, each by number (10 after 9, not after 1). */
 export function byAccount(a: string, b: string): number {
   const x = /^(\w+?)_(\d+)$/.exec(a), y = /^(\w+?)_(\d+)$/.exec(b);
   if (!x || !y) return a.localeCompare(b);
@@ -115,6 +131,24 @@ export function changedLine(n: number): string {
 export function nextColor(list: Persona[], palette: { hex: string }[]): string {
   const used = new Set(list.map((p) => p.color));
   return (palette.find((c) => !used.has(c.hex)) ?? palette[list.length % Math.max(1, palette.length)])?.hex ?? "";
+}
+
+/** Colours in the order of the rainbow, the ones with next to no colour in them at the end, lightest first. */
+export function byHue<T extends { hex: string }>(palette: T[]): T[] {
+  const hsl = (hex: string) => {
+    const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
+    const hi = Math.max(r, g, b), lo = Math.min(r, g, b), d = hi - lo;
+    const l = (hi + lo) / 2;
+    if (!d) return { h: 0, s: 0, l };
+    const h = hi === r ? ((g - b) / d + 6) % 6 : hi === g ? (b - r) / d + 2 : (r - g) / d + 4;
+    return { h: h * 60, s: d / (1 - Math.abs(2 * l - 1)), l };
+  };
+  const pale = (c: { s: number }) => c.s < 0.33;
+  return [...palette].sort((a, b) => {
+    const x = hsl(a.hex), y = hsl(b.hex);
+    if (pale(x) !== pale(y)) return pale(x) ? 1 : -1;
+    return pale(x) ? y.l - x.l : x.h - y.h;
+  });
 }
 
 /** A value for people: a list as its items, a table as its size, a switch as On or Off. */

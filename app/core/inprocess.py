@@ -235,13 +235,32 @@ def _telegram():
     return target
 
 
+def _telegram_account(account):
+    def target():
+        # Telethon is asyncio, like discord.py: its own loop on this thread, and the bridge runs on it.
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        role = _current.get()
+        if role is not None:
+            role.adopt_loop(loop)
+        _fresh()
+        os.environ["BRIDGE_PLATFORM"] = "telegram"
+        os.environ["TELEGRAM_ACCOUNT_INDEX"] = str(account or 1)
+        os.environ["LLMSELFBOT_ACCOUNT"] = f"telegram_{account or 1}"
+        from app.platforms.snapchat_bridge import run
+        run()
+    return target
+
+
 def start(role: str, account=None) -> ThreadRole:
     """Start `role` on a thread. Snapchat drives Chrome through Node, which a
     phone has neither of, so it is refused rather than attempted."""
     if role == "discord":
         return ThreadRole(role, account, _discord(account))
     if role == "telegram":
-        return ThreadRole(role, account, _telegram())
+        # With a number it is the persona's own Telegram account (Telethon, pure Python, so a phone can);
+        # without, the bot that controls the app.
+        return ThreadRole(role, account, _telegram_account(account) if account else _telegram())
     raise RuntimeError(f"{role} can't run inside the app on this device")
 
 

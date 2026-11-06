@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from app.utils.ai import (
+    IMAGE_SEEN,
     generate_response,
     generate_response_image,
     extract_memory,
@@ -14,7 +15,8 @@ from app.utils.ai import (
     summarize_history,
     detect_language,
 )
-from app.utils.db import record_user_message, record_user_message_snap
+from app.platforms import registry
+from app.utils.db import record_user_message, record_user_message_snap, record_user_message_web
 from app.utils.memory import (
     get_memory, set_memory, delete_memory,
     format_memory_for_prompt, get_persona,
@@ -451,10 +453,79 @@ def reaction_rules() -> str:
     )
 
 
+# iMessage's message effects, by the names its own menu gives them, and the ids BlueBubbles sends them with.
+IMESSAGE_EFFECTS = {
+    "slam": "com.apple.MobileSMS.expressivesend.impact", "loud": "com.apple.MobileSMS.expressivesend.loud",
+    "gentle": "com.apple.MobileSMS.expressivesend.gentle",
+    "invisible ink": "com.apple.MobileSMS.expressivesend.invisibleink",
+    "confetti": "com.apple.messages.effect.CKConfettiEffect", "balloons": "com.apple.messages.effect.CKHappyBirthdayEffect",
+    "fireworks": "com.apple.messages.effect.CKFireworksEffect", "lasers": "com.apple.messages.effect.CKLasersEffect",
+    "love": "com.apple.messages.effect.CKHeartEffect", "celebration": "com.apple.messages.effect.CKSparklesEffect",
+    "echo": "com.apple.messages.effect.CKEchoEffect", "spotlight": "com.apple.messages.effect.CKSpotlightEffect",
+}
+_EFFECT_RE = re.compile(r"\[\[\s*EFFECT\s*:\s*([^\]]{0,40})\]\]|\[\[\s*EFFECT[^\]]*$", re.I)
+
+
+def take_effect(text: str) -> tuple[str, str]:
+    """(the reply without its [[EFFECT:name]], the effect's id or "" for none or one iMessage does not have). Every
+    tag comes out, wherever it is: one must never be sent as words."""
+    found = ""
+    for m in _EFFECT_RE.finditer(text or ""):
+        name = re.sub(r"\s+", " ", (m.group(1) or "").strip().lower())
+        if not found and name in IMESSAGE_EFFECTS:
+            found = IMESSAGE_EFFECTS[name]
+    cleaned = _EFFECT_RE.sub("", text or "")
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+    return re.sub(r"[ \t]+(\n|$)", r"\1", cleaned).strip(), found
+
+
+def effect_rules() -> str:
+    """iMessage's message effects, for the rare big moment: the tag the bridge sends the message with."""
+    return (
+        "\n\n[EFFECTS: For a big moment only (big news, a birthday, a surprise, something to shout about), you may "
+        "send your message with an iMessage effect: put [[EFFECT:name]] on the last line, one of: slam, loud, gentle, "
+        "invisible ink, confetti, balloons, fireworks, lasers, love, celebration, echo, spotlight. Almost never; never "
+        "on an ordinary message. The tag is invisible to them and is removed automatically.]"
+    )
+
+
+def tapback_rules(emojis) -> str:
+    """iMessage's tapbacks, taught the way Discord's reactions are (reaction_rules): its six and only those, there
+    being no others to tap. The bridge taps the one chosen on the message being answered."""
+    marks = " ".join(emojis)
+    return (
+        "\n\n[TAPBACKS: You are texting on iMessage, where you can tap back on their message with one of: "
+        f"{marks}. Tapping back is rare. Most replies carry no tag at all: you just answer. Only add one when "
+        "you would genuinely have tapped it, before saying the rest.\n"
+        "- If you do, put [[REACT:emoji]] on the VERY LAST line of your whole reply, after every message you are "
+        f"sending. Use one of: {marks}. One tag per reply at most. The tag is invisible to them and is removed "
+        "automatically.\n"
+        "- VERY rarely - only when a subject naturally ends, or you just want to laugh at something without words - "
+        "reply with ONLY [[REACT_ONLY:emoji]] and no other text. Never for questions, new topics, or anything that "
+        "expects an answer.]"
+    )
+
+
+def action_rules() -> str:
+    """For a platform where the reply can DO things (Minecraft, through mindcraft's !commands): the output rules every
+    other platform gets, with the one sentence that would forbid it to act replaced. Elsewhere "never describe an
+    action instead of doing it" means there is no way to do it; here the commands documented in the context are the
+    way, and narrating one in words instead of writing it is exactly the mistake to avoid."""
+    return (
+        "\n\n[OUTPUT RULES: Reply with ONLY what you say and the commands you run, nothing else. "
+        "Never add translations, your reasoning, explanations, notes, labels, or alternate "
+        "versions (no '(translation: ...)', no 'changed to', no 'in English:'). "
+        "You act by writing the commands documented above, exactly as documented, in the same reply: "
+        "never narrate an action in words or between asterisks instead of writing its command "
+        "(not '*follows you*' but the command that follows them). When there is nothing to say and "
+        "nothing to do, reply with nothing at all. Output the raw reply only.]"
+    )
+
+
 @dataclass
 class IncomingMessage:
     """Normalised message object passed to the engine from any platform adapter."""
-    platform: str            # "discord" | "snapchat"
+    platform: str            # one of app/platforms/registry.py's ids
     user_id: str             # platform-specific user identifier (string for portability)
     user_name: str           # display name for logging
     channel_id: str          # conversation/chat identifier
@@ -537,7 +608,10 @@ async def generate_ai_response(msg: IncomingMessage) -> Optional[str]:
     )
 
     # ── Build enriched instructions ──────────────────────────────────────────
-    base_instructions = load_instructions()
+    # A platform can hand in its own telling of the same character (Minecraft's brief persona: the whole one, with
+    # the game's own context on top, is more than a free model tier takes in a minute). Everything else, mood,
+    # memory, language, still comes from here.
+    base_instructions = (msg.extra or {}).get("instructions") or load_instructions()
     enriched = base_instructions + mood_block + memory_block
 
     # Per-user persona override. Stored in user_memory under __persona__, so the get_memory() above already fetched it; get_persona() opened a second sqlite connection for a value already sitting in `memory`.
@@ -562,32 +636,59 @@ async def generate_ai_response(msg: IncomingMessage) -> Optional[str]:
         )
 
     # Platform hint
-    enriched += f"\n\n[PLATFORM: You are chatting on {msg.platform.title()}.]"
+    enriched += f"\n\n[PLATFORM: You are chatting on {registry.name_of(msg.platform)}.]"
+
+    # What this is, when it is more than a message to them: a public comment under a video, a line in a LIVE (the
+    # browser bridge says so, app/platforms/snapchat_bridge.py).
+    _context = (msg.extra or {}).get("context")
+    if _context:
+        enriched += f"\n\n[{_context}]"
 
     # Verbosity profile (short / balanced / chatty)
     enriched += style_block()
 
-    # Discord gets the reaction vocabulary; other platforms never see the tags
+    # Discord gets the reaction vocabulary, iMessage its tapbacks; other platforms never see the tags
+    _tapbacks = list((msg.extra or {}).get("tapbacks") or [])
+    _effects = bool((msg.extra or {}).get("effects"))
     if msg.platform == "discord":
         enriched += reaction_rules()
+    elif _tapbacks:
+        enriched += tapback_rules(_tapbacks)
+    if _effects:
+        enriched += effect_rules()
 
-    # Output discipline, never leak meta into the actual message.
-    enriched += (
-        "\n\n[OUTPUT RULES: Reply with ONLY the exact message you are sending, nothing else. "
-        "Never add translations, your reasoning, explanations, notes, labels, or alternate "
-        "versions (no '(translation: ...)', no 'changed to', no 'in English:'). "
-        "Never describe an action or an image instead of doing it: no '[Image of a "
-        "shocked emoji]', no '*rolls eyes*', no '(sends a selfie)'. You cannot send "
-        "a reaction here, so if an emoji is the whole response, type the emoji itself. "
-        "Output the raw message only.]"
-    )
+    # Output discipline, never leak meta into the actual message. Where the reply can act (Minecraft), the rules that
+    # say so instead of the one that would forbid it (action_rules).
+    if (msg.extra or {}).get("can_act"):
+        enriched += action_rules()
+    else:
+        enriched += (
+            "\n\n[OUTPUT RULES: Reply with ONLY the exact message you are sending, nothing else. "
+            "Never add translations, your reasoning, explanations, notes, labels, or alternate "
+            "versions (no '(translation: ...)', no 'changed to', no 'in English:'). "
+            "Never describe an action or an image instead of doing it: no '[Image of a "
+            "shocked emoji]', no '*rolls eyes*', no '(sends a selfie)'. "
+            # Where it can tap back (iMessage), the tag is how; everywhere else there is no reaction to send.
+            + ("" if _tapbacks else "You cannot send a reaction here, so if an emoji is the whole response, "
+                                    "type the emoji itself. ")
+            + "Output the raw message only.]"
+        )
+
+    # A persona that also plays Minecraft can say yes to coming to play on a server, from wherever it is asked
+    # (app/platforms/minecraft/link.py): a few lines, only when the message is about playing somewhere.
+    try:
+        from app.platforms.minecraft import link as _mc_link
+        enriched += _mc_link.rule_for(msg)
+    except Exception:
+        pass
 
     # ── Pictures / selfies ── if the user asks for a photo and we have an eligible one, tell the model it IS sending a selfie right now and remember which file so the adapter can actually send it (stored on msg.extra).
     picture_to_send = None
     try:
         from app.utils.pictures import (is_picture_request, is_video_request, pick_picture, pictures_enabled,
                                         selfie_instruction)
-        if pictures_enabled(load_config()):
+        # Not where nothing can be sent: a public comment, a LIVE, a TikTok chat with no photo button.
+        if pictures_enabled(load_config()) and not (msg.extra or {}).get("no_pictures"):
             # A video when a video is asked for and there is one; else a photo when a photo (or a video it has none
             # of) is asked for.
             wants_video = is_video_request(msg.content)
@@ -610,11 +711,13 @@ async def generate_ai_response(msg: IncomingMessage) -> Optional[str]:
     history = message_history[history_key]
 
     _default_lang = bot_cfg.get("default_language", "en")
+    # A caller that wants one language whatever they write in (a LIVE set to the persona's own) says so here.
+    _set_lang = str((msg.extra or {}).get("language") or "")
     lang_entry = _lang_cache.get(uid, {"tag": _default_lang, "count": 0})
     lang_entry["count"] += 1
     # Only (re)detect when there's enough text, short messages like "tg" are ambiguous and caused wrong-language replies.
     _alpha = sum(ch.isalpha() for ch in (msg.content or ""))
-    if _alpha >= 8 and (lang_entry["count"] == 1 or lang_entry["count"] % 5 == 0):
+    if not _set_lang and _alpha >= 8 and (lang_entry["count"] == 1 or lang_entry["count"] % 5 == 0):
         try:
             detected = await detect_language(history, msg.content)
             if detected:
@@ -622,14 +725,18 @@ async def generate_ai_response(msg: IncomingMessage) -> Optional[str]:
         except Exception:
             pass
     _lang_cache[uid] = lang_entry
-    lang_tag = lang_entry["tag"]
+    lang_tag = _set_lang or lang_entry["tag"]
 
     from app.utils.languages import language_name
     lang_display = language_name(lang_tag)
-    enriched += (
-        f"\n\n[LANGUAGE: The user is writing in {lang_display}. "
-        f"Reply in {lang_display} only, matching their casual tone and register.]"
-    )
+    if _set_lang:
+        enriched += (f"\n\n[LANGUAGE: Reply in {lang_display} only, whatever language they write in, "
+                     f"in a casual tone and register.]")
+    else:
+        enriched += (
+            f"\n\n[LANGUAGE: The user is writing in {lang_display}. "
+            f"Reply in {lang_display} only, matching their casual tone and register.]"
+        )
 
     # ── France time ──────────────────────────────────────────────────────────
     fr_time = france_time_str()
@@ -662,6 +769,22 @@ async def generate_ai_response(msg: IncomingMessage) -> Optional[str]:
                 f"comma or dash.]"
             )
 
+    # ── A shared TikTok or Spotlight, watched: what happens and what is said in it (app/utils/videowatch.py). A TikTok
+    # that could not be watched gives its caption, and its cover for the vision model, as before. ──
+    # Any other link is read the same way, and noted (app/utils/web/links.py), except where the web is off for it.
+    if any(host in (msg.content or "") for host in ("tiktok.com", "snapchat.com", "instagram.com")) \
+            or ("http" in (msg.content or "") and not (msg.extra or {}).get("no_web")):
+        try:
+            from app.utils import videowatch
+            msg.content, _cover, _watched = await videowatch.enrich_links(msg.content)
+            if _cover and not msg.image_url:
+                msg.image_url = _cover
+            elif _watched and msg.image_url and msg.image_url == (msg.extra or {}).get("tiktok_cover"):
+                # The runner sent the shared video's cover to be looked at; its frames already were.
+                msg.image_url = None
+        except Exception:
+            pass
+
     # ── History management ───────────────────────────────────────────────────
     history.append({"role": "user", "content": msg.content})
     if len(history) > MAX_HISTORY * 2:
@@ -677,14 +800,35 @@ async def generate_ai_response(msg: IncomingMessage) -> Optional[str]:
         except Exception:
             pass
 
+    # ── The web (app/utils/web) ── what it saw online lately, and a look online when the message needs one: the reply's
+    # own model says so (lookup.py). Not where a reply cannot wait for it (no_web: Minecraft, the iPhone relay) or in a
+    # LIVE (lookup.Turn checks ai.REALTIME).
+    _web = None
+    if not (msg.extra or {}).get("no_web"):
+        try:
+            from app.utils.web import journal as _web_journal, lookup as _web_lookup
+            enriched += _web_journal.prompt_block()
+            _web = _web_lookup.Turn(who=msg.user_name, conv=history_key, about=msg.content,
+                                    on_lookup=(msg.extra or {}).get("on_lookup"))
+        except Exception:
+            _web = None
+
+    # The picture is described once: a reply asked twice (a lookup's second ask) uses the description already put into
+    # the conversation (ai.generate_response_image) rather than looking at it again.
+    _seen_picture = False
+
+    async def _reply(instructions):
+        nonlocal _seen_picture
+        if msg.image_url and not _seen_picture:
+            try:
+                return await generate_response_image(msg.content, instructions, msg.image_url, history)
+            finally:
+                _seen_picture = bool(history) and "[Image of " in str(history[-1].get("content") or "")
+        return await generate_response(msg.content, instructions + (IMAGE_SEEN if _seen_picture else ""), history)
+
     # ── Generate response ────────────────────────────────────────────────────
     try:
-        if msg.image_url:
-            response = await generate_response_image(
-                msg.content, enriched, msg.image_url, history
-            )
-        else:
-            response = await generate_response(msg.content, enriched, history)
+        response = await (_web.answer(_reply, enriched) if _web else _reply(enriched))
     except Exception as e:
         log_system(f"[Engine] AI error for {msg.user_name}: {e}")
         return None
@@ -697,6 +841,37 @@ async def generate_ai_response(msg: IncomingMessage) -> Optional[str]:
     if not response:
         return None
 
+    # A tapback the persona chose (iMessage): the tag comes out of what is sent, and the bridge taps it on the message
+    # being answered (msg.extra["react"]). As on Discord, telling a model to react only when a person would gets a
+    # reaction on nearly every reply, so the chance below is the real rate control; a tapback with nothing said is the
+    # whole reply, and is kept.
+    try:
+        _chance = float(((bot_cfg.get("reactions") or {}).get("chance", 0.3)) or 0)
+    except (TypeError, ValueError):
+        _chance = 0.3
+    if (_tapbacks or _effects) and "[[EFFECT" in response.upper():
+        # An effect it chose (iMessage): out of the words whatever happens, kept as rarely as its tapbacks are.
+        response, _fx = take_effect(response)
+        if _fx and _effects and random.random() < _chance:
+            msg.extra["effect"] = _fx
+    if _tapbacks and "[[REACT" in response:
+        from app.utils.behavior import parse_reaction_tag
+        response, _tb, _tb_only = parse_reaction_tag(response, _tapbacks)
+        if _tb and response.strip():
+            if random.random() >= _chance:
+                _tb = None
+        if _tb:
+            msg.extra["react"] = _tb
+        if not response.strip():
+            if not _tb:
+                return None
+            # Their message is in the history already; the tap is what was said back.
+            history.append({"role": "assistant", "content": f"[tapped back {_tb}]"})
+            message_history[history_key] = history
+            return ""
+    if not response.strip():
+        return None              # an effect's tag and nothing else: no message to send it with
+
     # A reply that is only a stage direction - "[Image of a wide, annoyed eye-roll emoji]", "*rolls eyes*" - went out as that literal text, which reads as obviously automated. Models produce them when the conversation calls for a reaction rather than words, and this platform has no reactions to send, so there is nothing to convert it into. Saying nothing is the better of the two: the message stays unanswered and is picked up on the next pass.
     from app.utils.humanize import is_stage_direction_only, strip_stage_directions
     if is_stage_direction_only(response):
@@ -707,8 +882,24 @@ async def generate_ai_response(msg: IncomingMessage) -> Optional[str]:
     if _trimmed and _trimmed != response:
         response = _trimmed
 
+    # Going to play on a server it was asked to: the tag comes out of what is sent and kept, and its Minecraft
+    # account is asked to go (link.dispatch).
+    try:
+        from app.platforms.minecraft import link as _mc_link
+        response, _joins = _mc_link.take_tags(response)
+        if _joins:
+            _went = _mc_link.dispatch(_joins, msg)
+            log_system(f"[Engine] {msg.user_name} asked it to play on {_joins[0]}"
+                       + ("; its Minecraft account is going" if _went else "; it has no Minecraft account to send"))
+    except Exception:
+        pass
+    if not response:
+        return None
+
     # ── Post-response: memory extraction ── two more sequential model calls, neither of which changes the reply that has already been generated. Awaiting them here delayed every Snapchat reply by however long they took, so they run alongside the send instead.
-    _spawn_memory_update(uid, msg.content, response, memory)
+    # Not for a LIVE's passing viewers: hundreds of people saying one thing each are not people to remember.
+    if not (msg.extra or {}).get("no_memory"):
+        _spawn_memory_update(uid, msg.content, response, memory)
 
     # ── Update history with reply ────────────────────────────────────────────
     history.append({"role": "assistant", "content": response})
@@ -718,8 +909,12 @@ async def generate_ai_response(msg: IncomingMessage) -> Optional[str]:
     try:
         # The adapter says which of its accounts this came in on, for the per-account figures on the Accounts page.
         account = (msg.extra or {}).get("account")
-        if msg.platform == "snapchat":
+        if (msg.extra or {}).get("no_stats"):
+            pass                                  # a LIVE's viewers are not the people it talks to
+        elif msg.platform == "snapchat":
             record_user_message_snap(uid, msg.user_name, account=account)
+        elif msg.platform in registry.BRIDGED_BUT_SNAPCHAT:
+            record_user_message_web(msg.platform, uid, msg.user_name, account=account)
         else:
             record_user_message(int(uid), msg.user_name, account=account)
     except (ValueError, TypeError):

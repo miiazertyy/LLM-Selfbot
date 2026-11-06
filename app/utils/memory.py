@@ -18,10 +18,20 @@ def init_memory():
 
 
 def get_memory(user_id: int, persona=None) -> dict:
+    """What this persona remembers about them. Someone linked to accounts on other platforms (`link`) is one person:
+    it is everything remembered about any of them, the newest fact winning where two say different things."""
     ensure_persona_schema()
+    ids = person_ids(user_id) or [user_id]
+    marks = ",".join("?" * len(ids))
     with _connect() as conn:
-        rows = conn.execute("SELECT key, value FROM user_memory WHERE persona = ? AND user_id = ?",
-                            (persona_key(persona), user_id)).fetchall()
+        try:
+            rows = conn.execute(
+                f"SELECT key, value FROM user_memory WHERE persona = ? AND user_id IN ({marks}) "
+                "ORDER BY COALESCE(learned_at, 0)", (persona_key(persona), *ids)).fetchall()
+        except sqlite3.OperationalError:
+            rows = conn.execute(f"SELECT key, value FROM user_memory WHERE persona = ? AND user_id IN ({marks})",
+                                (persona_key(persona), *ids)).fetchall()
+    # Oldest first, so the last one read is the one kept.
     return {row[0]: row[1] for row in rows}
 
 
@@ -68,6 +78,100 @@ def copy_persona_memory(src: str, dst: str):
         except sqlite3.OperationalError:
             conn.execute("INSERT OR REPLACE INTO user_memory (persona, user_id, key, value) "
                          "SELECT ?, user_id, key, value FROM user_memory WHERE persona = ?", (dst, src))
+
+
+# ── One person, several accounts ──────────────────────────────────────────────
+# The same human writes to the bot from Discord and from Snapchat, and until now it knew them as two strangers,
+# learning everything twice. Linking them makes one person of them: what it remembers is shared, whichever account
+# they write from. Who someone is does not depend on which persona is talking to them, so a link is not kept per
+# persona; what is remembered still is.
+#
+# Nothing is merged on disk. Each account's facts stay under its own id, so unlinking one that was not the same
+# person after all gives each of them back exactly what it had.
+
+_LINKS = ("CREATE TABLE IF NOT EXISTS person_links ("
+          " user_id TEXT PRIMARY KEY, group_id TEXT NOT NULL, linked_at REAL NOT NULL DEFAULT 0)")
+_links_ok = False
+
+
+def _links(conn):
+    """The table, made once per process."""
+    global _links_ok
+    if not _links_ok:
+        conn.execute(_LINKS)
+        conn.execute("CREATE INDEX IF NOT EXISTS person_links_group ON person_links(group_id)")
+        _links_ok = True
+
+
+def person_ids(user_id, conn=None) -> list:
+    """Every id this person writes from, their own first, or [] when they are not linked to anyone."""
+    if conn is None:
+        with _connect() as c:
+            return person_ids(user_id, c)
+    _links(conn)
+    row = conn.execute("SELECT group_id FROM person_links WHERE user_id = ?", (str(user_id),)).fetchone()
+    if not row:
+        return []
+    ids = [r[0] for r in conn.execute(
+        "SELECT user_id FROM person_links WHERE group_id = ? ORDER BY linked_at, user_id", (row[0],))]
+    # Their own id first: where a fact is in two of them, the one being asked about is the one written to.
+    return [str(user_id)] + [i for i in ids if i != str(user_id)]
+
+
+def linked_people() -> dict:
+    """Every linked person: each id to the other ids it is the same person as."""
+    with _connect() as conn:
+        _links(conn)
+        by_group = {}
+        for uid, gid in conn.execute("SELECT user_id, group_id FROM person_links ORDER BY linked_at, user_id"):
+            by_group.setdefault(gid, []).append(str(uid))
+    out = {}
+    for ids in by_group.values():
+        for uid in ids:
+            out[uid] = [i for i in ids if i != uid]
+    return out
+
+
+def link_people(user_id, other_id) -> list:
+    """Say these two accounts are one person. Either already being in a group joins the groups rather than making a
+    third, so linking a third account to any member of a pair takes in all of them."""
+    a, b = str(user_id), str(other_id)
+    if a == b:
+        raise ValueError("that is the same account")
+    with _connect() as conn:
+        _links(conn)
+        now = time.time()
+        ga = conn.execute("SELECT group_id FROM person_links WHERE user_id = ?", (a,)).fetchone()
+        gb = conn.execute("SELECT group_id FROM person_links WHERE user_id = ?", (b,)).fetchone()
+        if ga and gb:
+            if ga[0] != gb[0]:
+                conn.execute("UPDATE person_links SET group_id = ? WHERE group_id = ?", (ga[0], gb[0]))
+        elif ga or gb:
+            gid = (ga or gb)[0]
+            conn.execute("INSERT OR REPLACE INTO person_links (user_id, group_id, linked_at) VALUES (?, ?, ?)",
+                         (b if ga else a, gid, now))
+        else:
+            gid = f"grp_{int(now * 1000):x}"
+            conn.execute("INSERT OR REPLACE INTO person_links (user_id, group_id, linked_at) VALUES (?, ?, ?)",
+                         (a, gid, now))
+            conn.execute("INSERT OR REPLACE INTO person_links (user_id, group_id, linked_at) VALUES (?, ?, ?)",
+                         (b, gid, now + 0.001))
+        return person_ids(a, conn)
+
+
+def unlink_person(user_id) -> None:
+    """Take one account out: it was not the same person after all. It keeps its own facts, and the rest stay linked;
+    a pair left with one member is no group at all, so that one is let go too."""
+    uid = str(user_id)
+    with _connect() as conn:
+        _links(conn)
+        row = conn.execute("SELECT group_id FROM person_links WHERE user_id = ?", (uid,)).fetchone()
+        if not row:
+            return
+        conn.execute("DELETE FROM person_links WHERE user_id = ?", (uid,))
+        left = [r[0] for r in conn.execute("SELECT user_id FROM person_links WHERE group_id = ?", (row[0],))]
+        if len(left) < 2:
+            conn.execute("DELETE FROM person_links WHERE group_id = ?", (row[0],))
 
 
 # ── Per-user persona overrides ────────────────────────────────────────────────

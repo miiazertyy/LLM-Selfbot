@@ -45,14 +45,28 @@ check("the rest are glass chips the same size, not bare faint digits",
 check("an order's first in the accent, no medals", ".rk.is-first .rk-coin {" in rb and 'class:is-first={kind === "step" && n === 1}' in rb)
 check("the number centred on the digit itself", "text-box: trim-both cap alphabetic;" in rb)
 check("a shine crosses the medals as the list arrives, bronze first, silently",
-      "calc(var(--shine-at) + var(--order) * 150ms)" in rb and "--order: {3 - n}" in rb and "play(" not in rb)
+      "calc(var(--shine-at) + var(--order) * 150ms)" in rb and "--order: {3 - n}" in rb
+      and "play(" not in rb.split("onMount(() => {", 1)[1])
+spun = rb[rb.index("function spin()"):rb.index("onMount(() => {")]
+check("on the leaderboard a press spins it: three turns about its upright, a pop, then it stops",
+      "<RankBadge n={i + 1} delay={450} spins />" in read("lib/dashboard/WidgetBody.svelte")
+      and "turned(1080, 1)" in spun and "rotateY(${deg}deg)" in spun and "iterations" not in spun)
+check("  heard as it goes, and a coin's ting as it stops, the same note the medal has",
+      'play("zip", { level: 0.6 });' in spun and 'play("medal", { delay: LANDS, p: { gold: 1, silver: 0.5, bronze: 0 }[medal] });' in spun)
+check("  the medals shine as it stops, on the chips there is nothing to shine", "glance?.animate(" in spun)
+check("  a real button, making its own sound", 'this={spins ? "button" : "span"}' in rb and 'data-sound={spins ? "self" : undefined}' in rb)
+check("  everywhere else it stays what it was: a number on a row",
+      "spins = false," in rb and "spins" not in read("lib/bigpicture/BPPeople.svelte").split("<RankBadge", 1)[1].split("/>", 1)[0]
+      and "spins" not in read("lib/components/ModelsPanel.svelte").split("<RankBadge", 1)[1].split("/>", 1)[0]
+      and "spins" not in read("lib/components/ModelPicker.svelte").split("<RankBadge", 1)[1].split("/>", 1)[0])
+check("  with animations off it does not turn", "if (!get(motionEnabled)) return;" in spun)
 for rel in ("lib/dashboard/WidgetBody.svelte", "lib/components/ModelsPanel.svelte", "lib/components/ModelPicker.svelte",
-            "lib/bigpicture/BPRotate.svelte", "lib/bigpicture/BPScenes.svelte"):
+            "lib/bigpicture/BPPeople.svelte"):
     check(f"{rel.split('/')[-1]} numbers its rows with it", "<RankBadge" in read(rel))
 check("the old dots are gone", ".ap-rank" not in read("lib/dashboard/WidgetBody.svelte")
-      and ".mp-step" not in read("lib/components/ModelsPanel.svelte") and ".bpr-rank" not in read("lib/bigpicture/BPRotate.svelte"))
+      and ".mp-step" not in read("lib/components/ModelsPanel.svelte"))
 check("Big Picture's medals shine without a ting: it has its own sounds and shows the list again and again",
-      "<RankBadge n={i + 1} size={18} quiet />" in read("lib/bigpicture/BPRotate.svelte") and " quiet />" in read("lib/bigpicture/BPScenes.svelte"))
+      "<RankBadge n={i + 1} size={26} quiet />" in read("lib/bigpicture/BPPeople.svelte"))
 
 print("\n== switches like dominoes ==")
 tg = read("lib/components/Toggle.svelte")
@@ -68,13 +82,10 @@ check("a click before its turn takes over at once", "arriving = false;\n    arri
 
 print("\n== a click never waits for a reveal ==")
 sw = read("lib/themesweep.ts")
-check("a press, a key or the wheel ends it there and then", 'addEventListener("keydown", endReveal' in sw
-      and 'addEventListener("wheel", endReveal' in sw and "t?.skipTransition();" in sw)
-check("the press's click, which the browser gives the page's root, handed on to what was under it",
-      "document.elementFromPoint(e.clientX, e.clientY)" in sw and "e.target !== document.documentElement" in sw
-      and "(el as HTMLElement).click?.();" in sw)
-check("another look picked meanwhile gets a reveal of its own, the newer one tidying up",
-      "running" not in code(sw) and "if (mine === latest) root.classList.remove(\"theme-switching\");" in sw)
+check("nothing to wait for: the page is live under it from start to finish, and a press goes straight to it",
+      "startViewTransition" not in code(sw) and "elementFromPoint" not in code(sw))
+check("another look picked meanwhile finishes the one under way, and gets a reveal of its own",
+      "current?.finish();" in sw and "reveal(apply, ready, vars);" in sw)
 
 print("\n== a dropdown never moves the page ==")
 il = read("lib/inlist.ts")

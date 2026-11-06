@@ -3,10 +3,11 @@
  * another, each with a soft marimba note pitched by how tall it is, so a week
  * of them plays the week's shape. They were silent, or simply there.
  *
- * The growing waits for the block the chart is in to land (cascade.ts), the
- * way everything inside a block does, and then for its place in a second,
- * smaller wave down the block: a sheet of widgets landing as one block used to
- * set everything in it going in the same instant. Not seen (below the window)
+ * The growing waits for the block the chart is in to start dropping in
+ * (cascade.ts), the way everything inside a block does, and then for its place
+ * in a second, smaller wave down the block, barely behind the first: a sheet of
+ * widgets landing as one block used to set everything in it going in the same
+ * instant. Not seen (below the window)
  * or with Animations off, the bars are simply there and nothing is heard.
  */
 import { get } from "svelte/store";
@@ -14,9 +15,9 @@ import { motionEnabled } from "./stores";
 import { afterLanding, onScreen, whenShown } from "./cascade";
 import { play } from "./uisound";
 
-/** The second wave's speed down a landed block, and how long it can take at most. */
-const PER_PX = 0.35;
-const MAX_WAIT = 350;
+/** The second wave's speed down a block, and how long it can take at most: barely behind the first (domino.ts's). */
+const PER_PX = 0.12;
+const MAX_WAIT = 120;
 
 /**
  * Calls `start(true)` once the chart may grow (and is seen), then plays a note

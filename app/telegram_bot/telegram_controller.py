@@ -63,9 +63,28 @@ from app.core.ipc import (
     result_file as _result_file,
     send_command as _send_command,
     wait_for_result as _wait_for_result,
-    is_snap as _is_snap,
+    is_bridged as _is_snap,
+    is_tiktok as _is_tiktok,
+    is_instagram as _is_insta,
+    is_minecraft as _is_mc,
+    is_imessage as _is_imsg,
+    is_telegram as _is_tg,
+    is_x as _is_x,
+    x_index as _x_index,
+    is_reddit as _is_reddit,
+    reddit_index as _reddit_index,
+    is_whatsapp as _is_wa,
+    whatsapp_index as _wa_index,
     snap_index as _snap_index,
+    tiktok_index as _tiktok_index,
+    instagram_index as _insta_index,
+    minecraft_index as _mc_index,
+    imessage_index as _imsg_index,
+    telegram_index as _tg_index,
 )
+# _is_snap here: an account run by the shared bridge, Snapchat's, TikTok's, Instagram's, Minecraft's or iMessage's.
+# None has Discord's voice, profile edits, channel toggles or friend commands, so all of them are guarded and helped
+# the same way.
 
 _CONFIG_DIR = DATA_DIR / "config"
 _IPC_DIR = DATA_DIR / "ipc"
@@ -113,6 +132,16 @@ def _count_accounts() -> int:
 NUM_ACCOUNTS = _count_accounts()
 
 
+def _social_on(name: str) -> bool:
+    """A social switched off in Settings has no accounts here either (app/utils/socials.py). Read as this bot starts,
+    like the counts below."""
+    try:
+        from app.utils import socials
+        return socials.on().get(name, True)
+    except Exception:
+        return True
+
+
 def _count_snap_accounts() -> int:
     """Account 1 = SNAP_USERNAME / SNAP_USERNAME_1; then _2, _3 contiguously."""
     if not (real("SNAP_USERNAME") or real("SNAP_USERNAME_1")):
@@ -123,7 +152,133 @@ def _count_snap_accounts() -> int:
     return n
 
 
-NUM_SNAP_ACCOUNTS = _count_snap_accounts()
+NUM_SNAP_ACCOUNTS = _count_snap_accounts() if _social_on("snapchat") else 0
+
+
+def _count_tiktok_accounts() -> int:
+    """TIKTOK_USERNAME_1, _2, ... contiguously: the accounts signed in from the panel."""
+    if not real("TIKTOK_USERNAME_1"):
+        return 0
+    n = 1
+    while real(f"TIKTOK_USERNAME_{n + 1}"):
+        n += 1
+    return n
+
+
+NUM_TIKTOK_ACCOUNTS = _count_tiktok_accounts() if _social_on("tiktok") else 0
+
+
+def _count_instagram_accounts() -> int:
+    """INSTAGRAM_USERNAME_1, _2, ... contiguously: the accounts added from the panel."""
+    if not real("INSTAGRAM_USERNAME_1"):
+        return 0
+    n = 1
+    while real(f"INSTAGRAM_USERNAME_{n + 1}"):
+        n += 1
+    return n
+
+
+NUM_INSTA_ACCOUNTS = _count_instagram_accounts() if _social_on("instagram") else 0
+
+
+def _count_x_accounts() -> int:
+    """X_USERNAME_1, _2, ... contiguously: the accounts added from the panel."""
+    if not real("X_USERNAME_1"):
+        return 0
+    n = 1
+    while real(f"X_USERNAME_{n + 1}"):
+        n += 1
+    return n
+
+
+NUM_X_ACCOUNTS = _count_x_accounts() if _social_on("x") else 0
+
+
+def _count_reddit_accounts() -> int:
+    """REDDIT_USERNAME_1, _2, ... contiguously: the accounts added from the panel."""
+    if not real("REDDIT_USERNAME_1"):
+        return 0
+    n = 1
+    while real(f"REDDIT_USERNAME_{n + 1}"):
+        n += 1
+    return n
+
+
+NUM_REDDIT_ACCOUNTS = _count_reddit_accounts() if _social_on("reddit") else 0
+
+
+def _count_whatsapp_accounts() -> int:
+    """WHATSAPP_NUMBER_1, _2, ... contiguously: the numbers linked from the panel."""
+    if not real("WHATSAPP_NUMBER_1"):
+        return 0
+    n = 1
+    while real(f"WHATSAPP_NUMBER_{n + 1}"):
+        n += 1
+    return n
+
+
+NUM_WHATSAPP_ACCOUNTS = _count_whatsapp_accounts() if _social_on("whatsapp") else 0
+
+
+def _count_minecraft_accounts() -> int:
+    """MINECRAFT_USERNAME_1, _2, ... contiguously: the accounts added from the panel."""
+    if not real("MINECRAFT_USERNAME_1"):
+        return 0
+    n = 1
+    while real(f"MINECRAFT_USERNAME_{n + 1}"):
+        n += 1
+    return n
+
+
+NUM_MC_ACCOUNTS = _count_minecraft_accounts() if _social_on("minecraft") else 0
+
+
+def _count_imessage_accounts() -> int:
+    """IMESSAGE_SERVER_1, _2, ... contiguously: the accounts added from the panel, each a BlueBubbles server."""
+    if not real("IMESSAGE_SERVER_1"):
+        return 0
+    n = 1
+    while real(f"IMESSAGE_SERVER_{n + 1}"):
+        n += 1
+    return n
+
+
+NUM_IMSG_ACCOUNTS = _count_imessage_accounts() if _social_on("imessage") else 0
+
+
+def _count_telegram_accounts() -> int:
+    """TELEGRAM_SESSION_1, _2, ... contiguously: the persona's own Telegram accounts, each one signed in from the
+    panel. Not this bot, which is the one you are talking to."""
+    if not real("TELEGRAM_SESSION_1"):
+        return 0
+    n = 1
+    while real(f"TELEGRAM_SESSION_{n + 1}"):
+        n += 1
+    return n
+
+
+NUM_TG_ACCOUNTS = _count_telegram_accounts() if _social_on("telegram") else 0
+
+
+def _platform_word(account) -> str:
+    """The name of the platform an account is on, for a sentence."""
+    if _is_tiktok(account):
+        return "TikTok"
+    if _is_insta(account):
+        return "Instagram"
+    if _is_x(account):
+        return "X"
+    if _is_reddit(account):
+        return "Reddit"
+    if _is_wa(account):
+        return "WhatsApp"
+    if _is_mc(account):
+        return "Minecraft"
+    if _is_imsg(account):
+        return "iMessage"
+    if _is_tg(account):
+        return "Telegram"
+    return "Snapchat" if _is_snap(account) else "Discord"
 
 
 logging.basicConfig(
@@ -143,6 +298,22 @@ def _get_account(context: ContextTypes.DEFAULT_TYPE):
 
 def _account_label(account) -> str:
     # Clean, premium target prefix shown at the head of every reply.
+    if _is_tiktok(account):
+        return "🎵 " if NUM_TIKTOK_ACCOUNTS <= 1 else f"🎵 #{_tiktok_index(account)} "
+    if _is_insta(account):
+        return "📷 " if NUM_INSTA_ACCOUNTS <= 1 else f"📷 #{_insta_index(account)} "
+    if _is_x(account):
+        return "✖️ " if NUM_X_ACCOUNTS <= 1 else f"✖️ #{_x_index(account)} "
+    if _is_reddit(account):
+        return "👽 " if NUM_REDDIT_ACCOUNTS <= 1 else f"👽 #{_reddit_index(account)} "
+    if _is_wa(account):
+        return "📞 " if NUM_WHATSAPP_ACCOUNTS <= 1 else f"📞 #{_wa_index(account)} "
+    if _is_mc(account):
+        return "⛏️ " if NUM_MC_ACCOUNTS <= 1 else f"⛏️ #{_mc_index(account)} "
+    if _is_imsg(account):
+        return "💬 " if NUM_IMSG_ACCOUNTS <= 1 else f"💬 #{_imsg_index(account)} "
+    if _is_tg(account):
+        return "✈️ " if NUM_TG_ACCOUNTS <= 1 else f"✈️ #{_tg_index(account)} "
     if _is_snap(account):
         if NUM_SNAP_ACCOUNTS <= 1:
             return "👻 "                       # one Snapchat account (ghost = logo)
@@ -175,7 +346,7 @@ async def _block_on_snap(update: Update, account, feature: str = "This command")
     """Warn and return True when the target is Snapchat, guarding Discord-only commands (voice, friends, profile, toggles)."""
     if _is_snap(account):
         await update.message.reply_text(
-            f"⚠️ {feature} isn't available on Snapchat. "
+            f"⚠️ {feature} isn't available on {_platform_word(account)}. "
             f"Switch with /account <n> to control a Discord account."
         )
         return True
@@ -269,21 +440,145 @@ async def cmd_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
         snap_targets = ["snap"] + [f"snap{i}" for i in range(2, n_snap + 1)]
 
     if not context.args:
-        if _is_snap(current):
+        if _is_tiktok(current):
+            cur_str = "*TikTok*" if NUM_TIKTOK_ACCOUNTS <= 1 else f"*TikTok #{_tiktok_index(current)}*"
+        elif _is_insta(current):
+            cur_str = "*Instagram*" if NUM_INSTA_ACCOUNTS <= 1 else f"*Instagram #{_insta_index(current)}*"
+        elif _is_mc(current):
+            cur_str = "*Minecraft*" if NUM_MC_ACCOUNTS <= 1 else f"*Minecraft #{_mc_index(current)}*"
+        elif _is_imsg(current):
+            cur_str = "*iMessage*" if NUM_IMSG_ACCOUNTS <= 1 else f"*iMessage #{_imsg_index(current)}*"
+        elif _is_tg(current):
+            cur_str = "*Telegram*" if NUM_TG_ACCOUNTS <= 1 else f"*Telegram #{_tg_index(current)}*"
+        elif _is_snap(current):
             cur_str = "*Snapchat*" if NUM_SNAP_ACCOUNTS <= 1 else f"*Snapchat #{_snap_index(current)}*"
         else:
             cur_str = f"*account {current}* of {NUM_ACCOUNTS}"
         targets = [f"`{i}`" for i in range(1, NUM_ACCOUNTS + 1)]
         targets += [f"`{t}`" for t in snap_targets]
+        targets += [f"`{'tiktok' if i == 1 else f'tiktok{i}'}`" for i in range(1, NUM_TIKTOK_ACCOUNTS + 1)]
+        targets += [f"`{'insta' if i == 1 else f'insta{i}'}`" for i in range(1, NUM_INSTA_ACCOUNTS + 1)]
+        targets += [f"`{'mc' if i == 1 else f'mc{i}'}`" for i in range(1, NUM_MC_ACCOUNTS + 1)]
+        targets += [f"`{'x' if i == 1 else f'x{i}'}`" for i in range(1, NUM_X_ACCOUNTS + 1)]
+        targets += [f"`{'reddit' if i == 1 else f'reddit{i}'}`" for i in range(1, NUM_REDDIT_ACCOUNTS + 1)]
+        targets += [f"`{'wa' if i == 1 else f'wa{i}'}`" for i in range(1, NUM_WHATSAPP_ACCOUNTS + 1)]
+        targets += [f"`{'imsg' if i == 1 else f'imsg{i}'}`" for i in range(1, NUM_IMSG_ACCOUNTS + 1)]
+        targets += [f"`{'tg' if i == 1 else f'tg{i}'}`" for i in range(1, NUM_TG_ACCOUNTS + 1)]
         await update.message.reply_text(
             f"Currently targeting {cur_str}.\n"
             f"Available targets: {', '.join(targets)}\n"
-            f"Switch with `/account <n>` or `/account snap`.",
+            f"Switch with `/account <n>`, `/account snap`, `/account tiktok`, `/account insta`, "
+            f"`/account x`, `/account reddit`, `/account wa`, `/account mc` or `/account imsg`.",
             parse_mode=ParseMode.MARKDOWN
         )
         return
 
     arg = context.args[0].lower().strip()
+
+    # "tiktok", "tt", "tiktok2" -> TikTok account N.
+    tt_match = re.fullmatch(r"(?:tiktok|tt)(\d*)", arg)
+    if tt_match:
+        idx = int(tt_match.group(1)) if tt_match.group(1) else 1
+        if not NUM_TIKTOK_ACCOUNTS or idx > NUM_TIKTOK_ACCOUNTS:
+            await update.message.reply_text(f"❌ {NUM_TIKTOK_ACCOUNTS or 'No'} TikTok account(s) signed in. "
+                                            "Add one from the panel's Accounts page.")
+            return
+        context.bot_data["account"] = "tiktok" if idx == 1 else f"tiktok{idx}"
+        label = "*TikTok*" if NUM_TIKTOK_ACCOUNTS <= 1 else f"*TikTok #{idx}*"
+        await update.message.reply_text(f"✅ Switched to {label}.", parse_mode=ParseMode.MARKDOWN)
+        return
+
+    # "tg", "telegram", "tg2" -> the persona's own Telegram account N (never this bot).
+    tg_match = re.fullmatch(r"(?:tg|telegram)(\d*)", arg)
+    if tg_match:
+        idx = int(tg_match.group(1)) if tg_match.group(1) else 1
+        if not NUM_TG_ACCOUNTS or idx > NUM_TG_ACCOUNTS:
+            await update.message.reply_text(f"❌ {NUM_TG_ACCOUNTS or 'No'} Telegram account(s) added. "
+                                            "Sign one in from the panel's Accounts page.")
+            return
+        context.bot_data["account"] = "tg" if idx == 1 else f"tg{idx}"
+        label = "*Telegram*" if NUM_TG_ACCOUNTS <= 1 else f"*Telegram #{idx}*"
+        await update.message.reply_text(f"✅ Switched to {label}.", parse_mode=ParseMode.MARKDOWN)
+        return
+
+    # "imsg", "imessage", "im", "imsg2" -> iMessage account N.
+    im_match = re.fullmatch(r"(?:imsg|imessage|im)(\d*)", arg)
+    if im_match:
+        idx = int(im_match.group(1)) if im_match.group(1) else 1
+        if not NUM_IMSG_ACCOUNTS or idx > NUM_IMSG_ACCOUNTS:
+            await update.message.reply_text(f"❌ {NUM_IMSG_ACCOUNTS or 'No'} iMessage account(s) added. "
+                                            "Add one from the panel's Accounts page.")
+            return
+        context.bot_data["account"] = "imsg" if idx == 1 else f"imsg{idx}"
+        label = "*iMessage*" if NUM_IMSG_ACCOUNTS <= 1 else f"*iMessage #{idx}*"
+        await update.message.reply_text(f"✅ Switched to {label}.", parse_mode=ParseMode.MARKDOWN)
+        return
+
+    # "insta", "instagram", "ig", "insta2" -> Instagram account N.
+    ig_match = re.fullmatch(r"(?:insta|instagram|ig)(\d*)", arg)
+    if ig_match:
+        idx = int(ig_match.group(1)) if ig_match.group(1) else 1
+        if not NUM_INSTA_ACCOUNTS or idx > NUM_INSTA_ACCOUNTS:
+            await update.message.reply_text(f"❌ {NUM_INSTA_ACCOUNTS or 'No'} Instagram account(s) added. "
+                                            "Add one from the panel's Accounts page.")
+            return
+        context.bot_data["account"] = "insta" if idx == 1 else f"insta{idx}"
+        label = "*Instagram*" if NUM_INSTA_ACCOUNTS <= 1 else f"*Instagram #{idx}*"
+        await update.message.reply_text(f"✅ Switched to {label}.", parse_mode=ParseMode.MARKDOWN)
+        return
+
+    # "x", "twitter", "x2" -> X account N.
+    x_match = re.fullmatch(r"(?:x|twitter)(\d*)", arg)
+    if x_match:
+        idx = int(x_match.group(1)) if x_match.group(1) else 1
+        if not NUM_X_ACCOUNTS or idx > NUM_X_ACCOUNTS:
+            await update.message.reply_text(f"❌ {NUM_X_ACCOUNTS or 'No'} X account(s) added. "
+                                            "Add one from the panel's Accounts page.")
+            return
+        context.bot_data["account"] = "x" if idx == 1 else f"x{idx}"
+        label = "*X*" if NUM_X_ACCOUNTS <= 1 else f"*X #{idx}*"
+        await update.message.reply_text(f"✅ Switched to {label}.", parse_mode=ParseMode.MARKDOWN)
+        return
+
+    # "reddit", "rd", "reddit2" -> Reddit account N. Not a bare "r": too easy to hit by accident.
+    reddit_match = re.fullmatch(r"(?:reddit|rd)(\d*)", arg)
+    if reddit_match:
+        idx = int(reddit_match.group(1)) if reddit_match.group(1) else 1
+        if not NUM_REDDIT_ACCOUNTS or idx > NUM_REDDIT_ACCOUNTS:
+            await update.message.reply_text(f"❌ {NUM_REDDIT_ACCOUNTS or 'No'} Reddit account(s) added. "
+                                            "Add one from the panel's Accounts page.")
+            return
+        context.bot_data["account"] = "reddit" if idx == 1 else f"reddit{idx}"
+        label = "*Reddit*" if NUM_REDDIT_ACCOUNTS <= 1 else f"*Reddit #{idx}*"
+        await update.message.reply_text(f"✅ Switched to {label}.", parse_mode=ParseMode.MARKDOWN)
+        return
+
+    # "wa", "whatsapp", "wa2" -> WhatsApp account N.
+    wa_match = re.fullmatch(r"(?:wa|whatsapp)(\d*)", arg)
+    if wa_match:
+        idx = int(wa_match.group(1)) if wa_match.group(1) else 1
+        if not NUM_WHATSAPP_ACCOUNTS or idx > NUM_WHATSAPP_ACCOUNTS:
+            await update.message.reply_text(f"❌ {NUM_WHATSAPP_ACCOUNTS or 'No'} WhatsApp account(s) added. "
+                                            "Link one from the panel's Accounts page.")
+            return
+        context.bot_data["account"] = "wa" if idx == 1 else f"wa{idx}"
+        label = "*WhatsApp*" if NUM_WHATSAPP_ACCOUNTS <= 1 else f"*WhatsApp #{idx}*"
+        await update.message.reply_text(f"✅ Switched to {label}.", parse_mode=ParseMode.MARKDOWN)
+        return
+
+    # "mc", "minecraft", "mc2" -> Minecraft account N.
+    mc_match = re.fullmatch(r"(?:mc|minecraft)(\d*)", arg)
+    if mc_match:
+        idx = int(mc_match.group(1)) if mc_match.group(1) else 1
+        if not NUM_MC_ACCOUNTS or idx > NUM_MC_ACCOUNTS:
+            await update.message.reply_text(f"❌ {NUM_MC_ACCOUNTS or 'No'} Minecraft account(s) added. "
+                                            "Add one from the panel's Accounts page.")
+            return
+        context.bot_data["account"] = "mc" if idx == 1 else f"mc{idx}"
+        label = "*Minecraft*" if NUM_MC_ACCOUNTS <= 1 else f"*Minecraft #{idx}*"
+        await update.message.reply_text(f"✅ Switched to {label}. /mc says what it is doing.",
+                                        parse_mode=ParseMode.MARKDOWN)
+        return
 
     # "snap", "snapchat", "snap2", "snapchat2" -> Snapchat account N.
     snap_match = re.fullmatch(r"(?:snap|snapchat)(\d*)", arg)
@@ -1758,6 +2053,45 @@ async def cmd_autojoin(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @owner_only
+async def cmd_call(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Join the picked voice channel ready to talk: /call, or /call <channel id/link> for another channel."""
+    account = _get_account(context)
+    label = _account_label(account)
+    if await _block_on_snap(update, account, "Voice calls"):
+        return
+    cmd_id = _send_command(account, "call_start", {"args": " ".join(context.args)})
+    result = await _wait_for_result(account, cmd_id, timeout=15.0)
+    if result:
+        if result.get("ok"):
+            note = "" if result.get("hearing", True) else f"\n⚠️ {result.get('reason', 'it cannot hear there')}"
+            await update.message.reply_text(
+                f"{label}✅ In **{result.get('channel', '?')}** in **{result.get('guild', '?')}**, "
+                f"ready to answer when someone talks.{note}"
+            )
+        else:
+            await update.message.reply_text(f"❌ {result.get('reason', 'Unknown error')}")
+    else:
+        await update.message.reply_text(f"{label}⚠️ LLMSelfbot didn't respond in time.")
+
+
+@owner_only
+async def cmd_hangup(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    account = _get_account(context)
+    label = _account_label(account)
+    if await _block_on_snap(update, account, "Voice calls"):
+        return
+    cmd_id = _send_command(account, "call_hangup", {})
+    result = await _wait_for_result(account, cmd_id, timeout=15.0)
+    if result:
+        if result.get("ok"):
+            await update.message.reply_text(f"{label}✅ Hung up.")
+        else:
+            await update.message.reply_text(f"❌ {result.get('reason', 'Not in a call.')}")
+    else:
+        await update.message.reply_text(f"{label}⚠️ LLMSelfbot didn't respond in time.")
+
+
+@owner_only
 async def cmd_setstatus(update: Update, context: ContextTypes.DEFAULT_TYPE):
     account = _get_account(context)
     label = _account_label(account)
@@ -2003,6 +2337,189 @@ async def cmd_addfriend(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"{label}⚠️ LLMSelfbot didn't respond in time.")
 
 
+async def _block_unless_tiktok(update: Update, account, feature: str) -> bool:
+    """Warn and return True when the target is not a TikTok account (its LIVE visits, For You)."""
+    if not _is_tiktok(account):
+        await update.message.reply_text(f"⚠️ {feature} is TikTok's. Switch with /account tiktok first.")
+        return True
+    return False
+
+
+async def _tiktok_ask(update: Update, account, cmd: str, payload: dict, timeout: float, done: str) -> None:
+    label = _account_label(account)
+    cmd_id = _send_command(account, cmd, payload)
+    result = await _wait_for_result(account, cmd_id, timeout=timeout)
+    if not result:
+        await update.message.reply_text(f"{label}⚠️ LLMSelfbot didn't respond in time.")
+    elif result.get("ok"):
+        await update.message.reply_text(f"{label}✅ {done}")
+    else:
+        await update.message.reply_text(f"{label}❌ {result.get('reason', 'Unknown error')}")
+
+
+@owner_only
+async def cmd_visit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/visit @name: join their TikTok LIVE now, as a viewer. /visit leave: leave the one it is in."""
+    account = _get_account(context)
+    if await _block_unless_tiktok(update, account, "Visiting a LIVE"):
+        return
+    if not context.args:
+        await update.message.reply_text("Usage: /visit @username, or /visit leave")
+        return
+    arg = context.args[0].strip()
+    if arg.lower() == "leave":
+        await _tiktok_ask(update, account, "tiktok_leave", {}, 30.0, "Leaving the LIVE.")
+        return
+    handle = arg.lstrip("@").lower()
+    if not re.fullmatch(r"[a-z0-9._]{2,24}", handle):
+        await update.message.reply_text("❌ That is not a TikTok username.")
+        return
+    await update.message.reply_text(f"{_account_label(account)}⏳ Looking for @{handle}'s LIVE...")
+    await _tiktok_ask(update, account, "tiktok_visit", {"handle": handle}, 80.0,
+                      f"In @{handle}'s LIVE. It says hello, answers who talks to it, and leaves after a while.")
+
+
+@owner_only
+async def cmd_foryou(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/foryou: a few minutes of TikTok's For You, now."""
+    account = _get_account(context)
+    if await _block_unless_tiktok(update, account, "For You"):
+        return
+    await _tiktok_ask(update, account, "tiktok_foryou", {}, 80.0, "Scrolling For You for a few minutes.")
+
+
+async def _block_unless_insta(update: Update, account, feature: str) -> bool:
+    """Warn and return True when the target is not an Instagram account (its stories, Reels, its Note)."""
+    if not _is_insta(account):
+        await update.message.reply_text(f"⚠️ {feature} is Instagram's. Switch with /account insta first.")
+        return True
+    return False
+
+
+@owner_only
+async def cmd_reels(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/reels: a few minutes of Instagram's Reels, now."""
+    account = _get_account(context)
+    if await _block_unless_insta(update, account, "Reels"):
+        return
+    await _tiktok_ask(update, account, "insta_reels", {}, 80.0, "Scrolling Reels for a few minutes.")
+
+
+@owner_only
+async def cmd_story(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/story <user> [text]: watch someone's Instagram story, and answer it when something is typed after."""
+    account = _get_account(context)
+    if await _block_unless_insta(update, account, "Stories"):
+        return
+    if not context.args:
+        await update.message.reply_text("Usage: /story <user> \u2014 watch their story; /story <user> <text> \u2014 reply to it")
+        return
+    chat = str(context.args[0]).strip()
+    text = " ".join(context.args[1:]).strip()
+    if not chat.startswith("ig_"):
+        from app.utils.snappeople import instagram_id
+        chat = instagram_id(chat)
+    await _tiktok_ask(update, account, "insta_story",
+                      {"user_id": chat, "action": "reply" if text else "watch", "text": text}, 95.0,
+                      "Replied to their story." if text else "Watched their story.")
+
+
+@owner_only
+async def cmd_note(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/note [text]: set the account's Instagram Note; with nothing after it, one of its own."""
+    account = _get_account(context)
+    if await _block_unless_insta(update, account, "Notes"):
+        return
+    text = " ".join(context.args or []).strip()[:60]
+    await _tiktok_ask(update, account, "insta_note", {"text": text}, 70.0,
+                      f"Note set: {text}" if text else "Note set.")
+
+
+async def _block_unless_mc(update: Update, account, feature: str) -> bool:
+    """Warn and return True when the target is not a Minecraft account."""
+    if not _is_mc(account):
+        await update.message.reply_text(f"⚠️ {feature} is Minecraft's. Switch with /account mc first.")
+        return True
+    return False
+
+
+def _mc_status_text(game: dict) -> str:
+    """Where it is and what it is doing, from what its runner last heard from mindcraft."""
+    if not game.get("in_game"):
+        why = str(game.get("reason") or "").strip()
+        return "Not in the world right now." + (f"\n{why}" if why else "")
+    s = game.get("state") or {}
+    play = s.get("gameplay") or {}
+    pos = play.get("position") or {}
+    doing = (s.get("action") or {}).get("current") or "Idle"
+    lines = [f"In the world. {doing}."]
+    if play:
+        lines.append(f"❤️ {play.get('health', '?')}/20 · 🍗 {play.get('hunger', '?')}/20 · "
+                     f"{play.get('timeLabel', '')} {('· ' + play['weather']) if play.get('weather') else ''}".rstrip())
+    if pos:
+        lines.append(f"📍 {round(pos.get('x', 0))}, {round(pos.get('y', 0))}, {round(pos.get('z', 0))}"
+                     f"{(' in ' + str(play.get('biome')).replace('_', ' ')) if play.get('biome') else ''}")
+    near = [p for p in ((s.get("nearby") or {}).get("humanPlayers") or []) if p]
+    if near:
+        lines.append("👥 " + ", ".join(near[:8]))
+    return "\n".join(lines)
+
+
+@owner_only
+async def cmd_mc(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/mc: what the Minecraft account is doing. /mc say <words>: say it in the game. /mc do <goal>: something to
+    get done, worked at by itself. /mc go <server>, /mc home: play on another server, and on its own again.
+    /mc leave, /mc join: out of the world, and back in."""
+    account = _get_account(context)
+    if await _block_unless_mc(update, account, "/mc"):
+        return
+    args = list(context.args or [])
+    sub = args[0].lower() if args else ""
+    rest = " ".join(args[1:]).strip()
+    label = _account_label(account)
+    if sub in ("", "status", "where"):
+        cmd_id = _send_command(account, "mc_state", {})
+        result = await _wait_for_result(account, cmd_id, timeout=15.0)
+        if not result:
+            await update.message.reply_text(f"{label}⚠️ LLMSelfbot didn't respond in time.")
+        elif not result.get("ok"):
+            await update.message.reply_text(f"{label}❌ {result.get('reason', 'Unknown error')}")
+        else:
+            await update.message.reply_text(f"{label}{_mc_status_text(result)}")
+        return
+    if sub == "say":
+        if not rest:
+            await update.message.reply_text("Usage: /mc say <words>")
+            return
+        await _tiktok_ask(update, account, "send_message", {"user_id": "", "text": rest}, 50.0, f"Said: {rest}")
+        return
+    if sub in ("do", "goal"):
+        if not rest:
+            await update.message.reply_text("Usage: /mc do <something to get done>, e.g. /mc do build a shelter")
+            return
+        await _tiktok_ask(update, account, "mc_tell", {"text": rest}, 50.0, f"On it: {rest}")
+        return
+    if sub == "leave":
+        await _tiktok_ask(update, account, "mc_leave", {}, 20.0, "It left the world.")
+        return
+    if sub in ("join", "back"):
+        await _tiktok_ask(update, account, "mc_join", {}, 20.0, "It is joining the world again.")
+        return
+    if sub in ("go", "server", "play"):
+        if not rest:
+            await update.message.reply_text("Usage: /mc go <server address>, e.g. /mc go play.example.net")
+            return
+        await _tiktok_ask(update, account, "mc_join_server", {"address": rest, "by_owner": True}, 40.0,
+                          f"Going to {rest}.")
+        return
+    if sub == "home":
+        await _tiktok_ask(update, account, "mc_join_server", {"address": "home", "by_owner": True}, 40.0,
+                          "Going back to its own server.")
+        return
+    await update.message.reply_text("Usage: /mc · /mc say <words> · /mc do <goal> · /mc go <server> · /mc home · "
+                                    "/mc leave · /mc join")
+
+
 @owner_only
 async def cmd_reload(update: Update, context: ContextTypes.DEFAULT_TYPE):
     account = _get_account(context)
@@ -2084,6 +2601,26 @@ def _parse_platform_arg(context: ContextTypes.DEFAULT_TYPE):
         if m:
             idx = int(m.group(1)) if m.group(1) else 1
             return "snap" if idx == 1 else f"snap{idx}"
+        m = re.fullmatch(r"(?:tiktok|tt)(\d*)", a)
+        if m:
+            idx = int(m.group(1)) if m.group(1) else 1
+            return "tiktok" if idx == 1 else f"tiktok{idx}"
+        m = re.fullmatch(r"(?:insta|instagram|ig)(\d*)", a)
+        if m:
+            idx = int(m.group(1)) if m.group(1) else 1
+            return "insta" if idx == 1 else f"insta{idx}"
+        m = re.fullmatch(r"(?:mc|minecraft)(\d*)", a)
+        if m:
+            idx = int(m.group(1)) if m.group(1) else 1
+            return "mc" if idx == 1 else f"mc{idx}"
+        m = re.fullmatch(r"(?:x|twitter)(\d*)", a)
+        if m:
+            idx = int(m.group(1)) if m.group(1) else 1
+            return "x" if idx == 1 else f"x{idx}"
+        m = re.fullmatch(r"(?:reddit|rd)(\d*)", a)
+        if m:
+            idx = int(m.group(1)) if m.group(1) else 1
+            return "reddit" if idx == 1 else f"reddit{idx}"
         if a in ("discord", "dc", "dis"):
             return "discord"
     return None
@@ -2127,7 +2664,7 @@ def _trim_help_for_snap(help_text: str) -> str:
         "\n  🎭  *Behaviour*"
         "\n  /mood \\[name\\], view or set current mood"
         "\n  /ignore \\<user\\>, ignore / unignore a user"
-        "\n_Voice, profile edits, channel toggles & friend requests are Discord\\-only on Snapchat\\._"
+        "\n_Voice, profile edits, channel toggles & friend requests are Discord\\-only\\._"
     )
     return result
 
@@ -2140,10 +2677,41 @@ async def _send_help(update: Update, context: ContextTypes.DEFAULT_TYPE = None, 
 
     account_section = ""
     snap_on = _snap_enabled() or bool(NUM_SNAP_ACCOUNTS)
-    if NUM_ACCOUNTS > 1 or snap_on:
-        cur = ("snapchat" if NUM_SNAP_ACCOUNTS <= 1 else f"snapchat #{_snap_index(account)}") \
-            if _is_snap(account) else f"account {account} of {NUM_ACCOUNTS}"
+    if (NUM_ACCOUNTS > 1 or snap_on or NUM_TIKTOK_ACCOUNTS or NUM_INSTA_ACCOUNTS or NUM_X_ACCOUNTS
+            or NUM_REDDIT_ACCOUNTS or NUM_MC_ACCOUNTS or NUM_IMSG_ACCOUNTS or NUM_TG_ACCOUNTS):
+        if _is_tiktok(account):
+            cur = "tiktok" if NUM_TIKTOK_ACCOUNTS <= 1 else f"tiktok #{_tiktok_index(account)}"
+        elif _is_insta(account):
+            cur = "instagram" if NUM_INSTA_ACCOUNTS <= 1 else f"instagram #{_insta_index(account)}"
+        elif _is_x(account):
+            cur = "x" if NUM_X_ACCOUNTS <= 1 else f"x #{_x_index(account)}"
+        elif _is_reddit(account):
+            cur = "reddit" if NUM_REDDIT_ACCOUNTS <= 1 else f"reddit #{_reddit_index(account)}"
+        elif _is_mc(account):
+            cur = "minecraft" if NUM_MC_ACCOUNTS <= 1 else f"minecraft #{_mc_index(account)}"
+        elif _is_imsg(account):
+            cur = "imessage" if NUM_IMSG_ACCOUNTS <= 1 else f"imessage #{_imsg_index(account)}"
+        elif _is_tg(account):
+            cur = "telegram" if NUM_TG_ACCOUNTS <= 1 else f"telegram #{_tg_index(account)}"
+        elif _is_snap(account):
+            cur = "snapchat" if NUM_SNAP_ACCOUNTS <= 1 else f"snapchat #{_snap_index(account)}"
+        else:
+            cur = f"account {account} of {NUM_ACCOUNTS}"
         snap_line = "/account snap \u2014 control the Snapchat bot\n" if snap_on else ""
+        if NUM_TIKTOK_ACCOUNTS:
+            snap_line += "/account tiktok \u2014 control the TikTok bot\n"
+        if NUM_INSTA_ACCOUNTS:
+            snap_line += "/account insta \u2014 control the Instagram bot\n"
+        if NUM_X_ACCOUNTS:
+            snap_line += "/account x \u2014 control the X bot\n"
+        if NUM_REDDIT_ACCOUNTS:
+            snap_line += "/account reddit \u2014 control the Reddit bot\n"
+        if NUM_MC_ACCOUNTS:
+            snap_line += "/account mc \u2014 control the Minecraft bot \\(then /mc\\)\n"
+        if NUM_IMSG_ACCOUNTS:
+            snap_line += "/account imsg \u2014 control the iMessage bot\n"
+        if NUM_TG_ACCOUNTS:
+            snap_line += "/account tg \u2014 control the Telegram bot\n"
         account_section = (
             f"\n*\ud83d\udd00 Targets* \u2014 currently {cur}\n"
             "/start discord \u00b7 /start snapchat \u2014 switch \\+ show that platform's commands\n"
@@ -2152,7 +2720,7 @@ async def _send_help(update: Update, context: ContextTypes.DEFAULT_TYPE = None, 
             f"{snap_line}"
         )
 
-    help_text = f"""📋 *Commands, {'Snapchat' if is_snap else 'Discord'}*{account_section}
+    help_text = f"""📋 *Commands, {_platform_word(platform)}*{account_section}
 `─────────────────────────────`
   🌙  *AI*
   /pause \u2014 pause / unpause AI responses
@@ -2297,6 +2865,30 @@ async def _error_notification_loop(app):
         # Include every configured Snapchat account: snap, snap2, snap3...
         for i in range(1, NUM_SNAP_ACCOUNTS + 1):
             targets.append("snap" if i == 1 else f"snap{i}")
+        # And every TikTok account: tiktok, tiktok2...
+        for i in range(1, NUM_TIKTOK_ACCOUNTS + 1):
+            targets.append("tiktok" if i == 1 else f"tiktok{i}")
+        # And every Instagram account: insta, insta2...
+        for i in range(1, NUM_INSTA_ACCOUNTS + 1):
+            targets.append("insta" if i == 1 else f"insta{i}")
+        # And every X account: x, x2... (never polled before 2026-11-01, so their alerts went nowhere)
+        for i in range(1, NUM_X_ACCOUNTS + 1):
+            targets.append("x" if i == 1 else f"x{i}")
+        # And every Reddit account: reddit, reddit2...
+        for i in range(1, NUM_REDDIT_ACCOUNTS + 1):
+            targets.append("reddit" if i == 1 else f"reddit{i}")
+        # And every WhatsApp account: wa, wa2...
+        for i in range(1, NUM_WHATSAPP_ACCOUNTS + 1):
+            targets.append("wa" if i == 1 else f"wa{i}")
+        # And every Minecraft account: mc, mc2...
+        for i in range(1, NUM_MC_ACCOUNTS + 1):
+            targets.append("mc" if i == 1 else f"mc{i}")
+        # And every Telegram account of the persona's: tg, tg2...
+        for i in range(1, NUM_TG_ACCOUNTS + 1):
+            targets.append("tg" if i == 1 else f"tg{i}")
+        # And every iMessage account: imsg, imsg2...
+        for i in range(1, NUM_IMSG_ACCOUNTS + 1):
+            targets.append("imsg" if i == 1 else f"imsg{i}")
         for account in targets:
             cmd_file = _cmd_file(account)
             if not cmd_file.exists():
@@ -2319,10 +2911,13 @@ async def _error_notification_loop(app):
                 detail = payload.get("detail", "")
                 # A crash alert (queued by the supervisor) has its own switch; one switched off is dropped, not kept for later.
                 crash = payload.get("kind") == "crash"
-                if not (crashes_on if crash else errors_on):
+                # Something an account did rather than something that went wrong (a Minecraft account going to
+                # another server, and who asked): told whenever any alert is on.
+                info = payload.get("kind") == "info"
+                if not ((errors_on or crashes_on) if info else (crashes_on if crash else errors_on)):
                     continue
                 try:
-                    msg_text = f"{'⚠️' if crash else '🚨'} *{_escape(title)}*\n\n{_escape(detail)}"
+                    msg_text = f"{'ℹ️' if info else '⚠️' if crash else '🚨'} *{_escape(title)}*\n\n{_escape(detail)}"
                     sent = await app.bot.send_message(
                         chat_id=TG_OWNER_ID,
                         text=msg_text,
@@ -2391,6 +2986,14 @@ def main():
         print("[TG Controller] Snapchat  : enabled, use /account snap")
     else:
         print("[TG Controller] Snapchat  : disabled")
+    if NUM_TIKTOK_ACCOUNTS:
+        print(f"[TG Controller] TikTok    : {NUM_TIKTOK_ACCOUNTS} account(s), use /account tiktok")
+    if NUM_INSTA_ACCOUNTS:
+        print(f"[TG Controller] Instagram : {NUM_INSTA_ACCOUNTS} account(s), use /account insta")
+    if NUM_X_ACCOUNTS:
+        print(f"[TG Controller] X         : {NUM_X_ACCOUNTS} account(s), use /account x")
+    if NUM_REDDIT_ACCOUNTS:
+        print(f"[TG Controller] Reddit    : {NUM_REDDIT_ACCOUNTS} account(s), use /account reddit")
     print("[TG Controller] IPC files : ../config/tg_commands_N.json (per account) + ../ipc/tg_commands_snap.json")
     print(f"[TG Controller] Token     : {TG_TOKEN[:8]}...{TG_TOKEN[-4:]}")
 
@@ -2447,6 +3050,8 @@ def main():
     app.add_handler(CommandHandler("join",            cmd_join))
     app.add_handler(CommandHandler("leave",           cmd_leave))
     app.add_handler(CommandHandler("autojoin",        cmd_autojoin))
+    app.add_handler(CommandHandler("call",            cmd_call))
+    app.add_handler(CommandHandler("hangup",          cmd_hangup))
     app.add_handler(CommandHandler("imagels",         cmd_imagels))
     app.add_handler(CommandHandler("imagelist",       cmd_imagels))
     app.add_handler(CommandHandler("imagedownload",   cmd_imagedownload))
@@ -2459,6 +3064,12 @@ def main():
     app.add_handler(CallbackQueryHandler(_imagels_callback,     pattern=r"^imgdel:"))
     app.add_handler(CommandHandler("leaderboard",     cmd_leaderboard))
     app.add_handler(CommandHandler("addfriend",       cmd_addfriend))
+    app.add_handler(CommandHandler("visit",           cmd_visit))
+    app.add_handler(CommandHandler("foryou",          cmd_foryou))
+    app.add_handler(CommandHandler("reels",           cmd_reels))
+    app.add_handler(CommandHandler("story",           cmd_story))
+    app.add_handler(CommandHandler("note",            cmd_note))
+    app.add_handler(CommandHandler("mc",              cmd_mc))
     app.add_handler(CommandHandler("restart",         cmd_restart))
     app.add_handler(CommandHandler("shutdown",        cmd_shutdown))
     app.add_handler(CommandHandler("clear",           cmd_clear))

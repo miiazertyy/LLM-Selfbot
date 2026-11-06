@@ -89,7 +89,7 @@ check("once it is being deleted, it cannot be brought back half way", "going = [
       and "leaving = [];\n    going" in page)
 check("it shrinks away and the others close up", "animate:flip" in page and "out:scale" in page)
 check("Big Picture and search show pictures by id too (a video by its still)",
-      'api.pictureThumb({ name: String(p.name), id: String(p.id ?? ""), video: !!p.video }' in read("lib/bigpicture/BigPicture.svelte")
+      'api.pictureThumb({ name: String(p.name), id: String(p.id ?? ""), video: !!p.video }' in read("lib/bigpicture/world.svelte.ts")
       and 'api.pictureThumb({ name: String(p.name), id: String(p.id ?? ""), video: !!p.video })' in read("lib/search.ts")
       and "scoped(p.id ? `/api/pictures/id/${encodeURIComponent(p.id)}`" in read("lib/api.ts"))
 

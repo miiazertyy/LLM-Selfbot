@@ -32,11 +32,27 @@ if _TRUECOLOR:
         # (accent, soft accent) as 24-bit truecolor
         "discord":  ("\033[38;2;88;101;242m", "\033[38;2;67;78;180m"),    # Discord blurple
         "snapchat": ("\033[38;2;255;196;37m", "\033[38;2;191;143;18m"),   # Snapchat gold
+        "tiktok":   ("\033[38;2;254;44;85m", "\033[38;2;37;244;238m"),    # TikTok red and cyan
+        "instagram": ("\033[38;2;225;48;108m", "\033[38;2;253;169;60m"),  # Instagram pink and amber
+        "minecraft": ("\033[38;2;124;189;74m", "\033[38;2;138;90;52m"),   # grass green and earth
+        "imessage": ("\033[38;2;10;132;255m", "\033[38;2;52;199;89m"),    # iMessage blue and Messages green
+        "telegram": ("\033[38;2;42;171;238m", "\033[38;2;120;205;245m"),   # Telegram's blue, and its lighter one
+        "x": ("\033[38;2;231;233;234m", "\033[38;2;113;118;123m"),         # X is black on white or white on black
+        "reddit": ("\033[38;2;255;69;0m", "\033[38;2;255;139;96m"),       # Reddit orange, and its arrows
+        "whatsapp": ("\033[38;2;37;211;102m", "\033[38;2;18;140;126m"),   # WhatsApp green, and its darker teal
     }
 else:
     _THEMES = {
         "discord":  (Fore.LIGHTBLUE_EX,   Fore.BLUE),
         "snapchat": (Fore.LIGHTYELLOW_EX, Fore.YELLOW),
+        "tiktok":   (Fore.LIGHTRED_EX,    Fore.CYAN),
+        "instagram": (Fore.LIGHTMAGENTA_EX, Fore.MAGENTA),
+        "minecraft": (Fore.LIGHTGREEN_EX, Fore.GREEN),
+        "imessage": (Fore.LIGHTCYAN_EX, Fore.LIGHTGREEN_EX),
+        "telegram": (Fore.LIGHTBLUE_EX, Fore.LIGHTCYAN_EX),
+        "x": (Fore.WHITE, Fore.LIGHTBLACK_EX),
+        "reddit": (Fore.RED, Fore.LIGHTRED_EX),
+        "whatsapp": (Fore.GREEN, Fore.LIGHTGREEN_EX),
     }
 
 # Default until a runner picks one.
@@ -44,9 +60,30 @@ _ACCENT, _ACCENT_SOFT = _THEMES["discord"]
 
 
 def set_theme(platform: str):
-    """Select the accent palette for this process ('discord' or 'snapchat')."""
+    """Select the accent palette for this process ('discord', 'snapchat', 'tiktok', 'instagram', 'x', 'reddit',
+    'whatsapp', 'minecraft' or 'imessage')."""
     global _ACCENT, _ACCENT_SOFT
-    key = "snapchat" if str(platform).lower().startswith("snap") else "discord"
+    p = str(platform).lower()
+    if p.startswith("insta"):
+        key = "instagram"
+    elif p.startswith("x"):
+        key = "x"
+    elif p.startswith("reddit"):
+        key = "reddit"
+    elif p.startswith(("whatsapp", "wa")):
+        key = "whatsapp"
+    elif p.startswith(("imessage", "imsg")):
+        key = "imessage"
+    elif p.startswith(("telegram", "tg")):
+        key = "telegram"
+    elif p.startswith(("minecraft", "mc")):
+        key = "minecraft"
+    elif p.startswith("snap"):
+        key = "snapchat"
+    elif p.startswith("tiktok"):
+        key = "tiktok"
+    else:
+        key = "discord"
     _ACCENT, _ACCENT_SOFT = _THEMES.get(key, _THEMES["discord"])
 
 
@@ -99,11 +136,17 @@ def log_model_fallback(from_model: str, to_model: str, why: str = ""):
 THINK_MARK = "\x1eTHINK "
 
 
+# How many thoughts have been logged: whoever has one of its own to add can see if the model already said it.
+thoughts_logged = 0
+
+
 def log_thinking(text: str, model: str = ""):
     """What a reasoning model thought before it answered, for the Logs page."""
+    global thoughts_logged
     text = (text or "").strip()
     if not text:
         return
+    thoughts_logged += 1
     from app.core.launcher import under_panel
     if under_panel():
         try:

@@ -113,8 +113,10 @@ export type SkyTarget = {
   look: Look;
   /** 0 calm, 1 lively. */
   energy: number;
-  /** Where across the screen the stage is, 0 to 1. */
+  /** Where across the screen the light gathers, 0 to 1. */
   focus?: number;
+  /** And where up it, 0 at the bottom. */
+  focusY?: number;
 };
 
 /**
@@ -144,6 +146,8 @@ export class Sky {
   private energyT = 0.2;
   private focus = 0.45;
   private focusT = 0.45;
+  private focusY = 0.58;
+  private focusYT = 0.58;
   private mouse = [0.5, 0.5];
   private mouseT = [0.5, 0.5];
   /** Seconds of movement so far, started somewhere different each time; frozen while still. */
@@ -224,6 +228,7 @@ export class Sky {
     this.lookT = dials(t.look);
     this.energyT = Math.min(1, Math.max(0, t.energy));
     this.focusT = t.focus ?? this.focusT;
+    this.focusYT = t.focusY ?? this.focusYT;
     if (now) this.snap();
     if (this.still) this.kick();
   }
@@ -287,6 +292,7 @@ export class Sky {
     this.look = [...this.lookT];
     this.energy = this.energyT;
     this.focus = this.focusT;
+    this.focusY = this.focusYT;
     this.mouse = [...this.mouseT];
   }
 
@@ -321,6 +327,7 @@ export class Sky {
     for (let i = 0; i < this.look.length; i++) this.look[i] += (this.lookT[i] - this.look[i]) * k;
     this.energy += (this.energyT - this.energy) * ke;
     this.focus += (this.focusT - this.focus) * k;
+    this.focusY += (this.focusYT - this.focusY) * k;
     this.mouse[0] += (this.mouseT[0] - this.mouse[0]) * km;
     this.mouse[1] += (this.mouseT[1] - this.mouse[1]) * km;
   }
@@ -349,7 +356,7 @@ export class Sky {
     gl.uniform1f(L.u_glow, glow);
     gl.uniform1f(L.u_energy, this.energy);
     gl.uniform1f(L.u_age, this.still ? 1e3 : this.clock - this.pulseAt);
-    gl.uniform2f(L.u_focus, this.focus, 0.58);
+    gl.uniform2f(L.u_focus, this.focus, this.focusY);
     gl.uniform2f(L.u_mouse, this.mouse[0], this.mouse[1]);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   }

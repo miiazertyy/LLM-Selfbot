@@ -79,10 +79,10 @@ for k in ("DISCORD_TOKEN_1", "SNAP_USERNAME_1", "SNAP_PASSWORD_1"):
 envfile.reload_into_process()
 
 print("\n== add ==")
-r = client.post("/api/accounts/slots/discord", json={"token": "tokenAAA", "proxy": "http://a"})
+r = client.post("/api/accounts/slots/discord", json={"token": "tokenAAA", "proxy": "http://a:8080"})
 check("first account added", r.status_code == 200, f"{r.status_code} {r.text[:150]}")
 r = client.post("/api/accounts/slots/discord", json={"token": "tokenBBB"})
-r = client.post("/api/accounts/slots/discord", json={"token": "tokenCCC", "proxy": "http://c"})
+r = client.post("/api/accounts/slots/discord", json={"token": "tokenCCC", "proxy": "http://c:8080"})
 slots = client.get("/api/accounts/slots").json()["slots"]
 check("three discord slots", len([s for s in slots if s["platform"] == "discord"]) == 3, str(len(slots)))
 check("written as DISCORD_TOKEN_1..3",
@@ -97,11 +97,11 @@ body = client.get("/api/accounts/slots").text
 check("no token value in the response", "tokenAAA" not in body and "tokenBBB" not in body, body[:200])
 check("no masked token either", "…" not in body, body[:200])
 check("token_set reported instead", all(s.get("token_set") for s in slots if s["platform"] == "discord"))
-check("proxy IS returned (not a secret)", any(s.get("proxy") == "http://a" for s in slots))
+check("proxy IS returned (not a secret)", any(s.get("proxy") == "http://a:8080" for s in slots))
 
 print("\n== edit ==")
-r = client.post("/api/accounts/slots/discord/2", json={"proxy": "http://newproxy"})
-check("proxy updated", r.status_code == 200 and env()["DISCORD_PROXY_2"] == "http://newproxy",
+r = client.post("/api/accounts/slots/discord/2", json={"proxy": "http://newproxy:8080"})
+check("proxy updated", r.status_code == 200 and env()["DISCORD_PROXY_2"] == "http://newproxy:8080",
       str(env().get("DISCORD_PROXY_2")))
 check("blank token leaves the stored one alone", env()["DISCORD_TOKEN_2"] == "tokenBBB",
       str(env().get("DISCORD_TOKEN_2")))
@@ -114,7 +114,7 @@ print("\n== delete renumbers ==")
 r = client.delete("/api/accounts/slots/discord/2")
 check("delete accepted", r.status_code == 200, f"{r.status_code} {r.text[:150]}")
 check("slot 3 moved down to 2", env().get("DISCORD_TOKEN_2") == "tokenCCC", str(env().get("DISCORD_TOKEN_2")))
-check("its proxy moved with it", env().get("DISCORD_PROXY_2") == "http://c", str(env().get("DISCORD_PROXY_2")))
+check("its proxy moved with it", env().get("DISCORD_PROXY_2") == "http://c:8080", str(env().get("DISCORD_PROXY_2")))
 check("no gap left behind", "DISCORD_TOKEN_3" not in env() or not env()["DISCORD_TOKEN_3"], str(env()))
 check("the counter sees exactly 2", ipc._count_accounts() == 2, str(ipc._count_accounts()))
 

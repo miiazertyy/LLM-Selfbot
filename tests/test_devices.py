@@ -117,13 +117,17 @@ for name in ("windows-x64", "macos-arm64", "linux-x64"):
     check(f"{name}: nothing to say", not rep["missing"], json.dumps(rep["missing"])[:160])
 with env(**{**CLEAN, "LLMSELFBOT_DEVICE": "linux-arm64"}):
     arm = compat.report()["missing"]
-check("Linux on ARM: Snapchat needs Chromium, with the command to get it",
-      set(arm) == {"snapchat"} and arm["snapchat"]["fix"]["command"] == "sudo apt install chromium")
+BROWSER_PLATFORMS = {"snapchat", "tiktok", "instagram", "x", "reddit"}
+check("Linux on ARM: every browser platform needs Chromium, with the command to get it",
+      set(arm) == BROWSER_PLATFORMS
+      and all(arm[p]["fix"]["command"] == "sudo apt install chromium"
+              for p in BROWSER_PLATFORMS), ", ".join(sorted(arm)))
 with env(**{**CLEAN, "LLMSELFBOT_DEVICE": "android"}):
     android = compat.report()["missing"]
-check("Android: no Snapchat, no AI servers, no voice, one Discord account, keep it open",
-      {"snapchat", "local_start", "voice_messages", "voice_calls", "discord_many", "background",
-       "browser_login", "files_pick", "files_save", "folders"} <= set(android), ", ".join(sorted(android)))
+check("Android: no browser platform at all, no AI servers, no voice, one Discord account, keep it open",
+      BROWSER_PLATFORMS | {"local_start", "voice_messages", "voice_calls", "discord_many",
+                           "background", "browser_login", "files_pick", "files_save", "folders"} <= set(android),
+      ", ".join(sorted(android)))
 check("but Discord itself works there, and it updates", "discord" not in android and "update" not in android)
 with env(**{**CLEAN, "LLMSELFBOT_DEVICE": "ios"}):
     ios = compat.report()["missing"]
@@ -292,7 +296,9 @@ check("Telegram polls without signal handlers there, which only a main thread ma
       '{"stop_signals": None}' in read("app/telegram_bot/telegram_controller.py"))
 sup = read("app/web/supervisor.py")
 check("one Discord account at a time where accounts share the app", "n = min(n, 1)" in sup)
-check("no Snapchat planned on a phone", "if snap_on and device.is_phone():" in sup)
+from app.platforms import registry  # noqa: E402
+check("no Snapchat planned on a phone", not registry.BY_ID["snapchat"].on_phone
+      and "(device.is_phone() and not p.on_phone)" in sup)
 check("and no stale processes swept, since a thread leaves none", "if device.single_process() or not IPC_DIR.exists():" in sup)
 
 print("\n== the panel, on a phone ==")
@@ -362,7 +368,81 @@ check("it says the app is a phone app before anything of it is imported",
 check("and sends links to anywhere else to the phone's browser", "webbrowser.open" in shell and "return False" in shell)
 check("if the server cannot start, it says why instead of staying blank", "could not start" in shell)
 
+print("\n== the phone apps have what can work on them ==")
+check("openai below 3, as on a computer: 3 refuses the client every model call is counted through, so no reply would go out",
+      "openai>=2.30,<3" in req and "openai>=2.30,<3" in read("requirements.txt"))
+check("the panel's live logs and Try a call have what they talk over: uvicorn alone answers them with nothing",
+      any(r.startswith("websockets") for r in req))
+check("Telegram can reach an account's proxy", any(r.startswith("python-socks") for r in req))
+check("Telegram's encryption as a wheel: it is published as source only, which Briefcase will not install for iOS",
+      '"pyaes==1.6.1"' in stage and stage.index('"pyaes==1.6.1"') < stage.index("if android:"))
+check("the microphone, with the sentence an iPhone shows when it asks: without one it closes the app",
+      "Try a call" in app_cfg.get("permission", {}).get("microphone", ""))
+chrome = read("mobile/src/llmselfbot/webchrome.py")
+check("Android's web view gets a file picker, which it has none of by itself",
+      "def onShowFileChooser(self, view, callback, params):" in chrome and "Intent.ACTION_GET_CONTENT" in chrome)
+check("told every time, cancelled or not, or it never opens one again", "callback.onReceiveValue(None)" in chrome
+      and "callback.onReceiveValue(picked(code, data))" in chrome)
+check("several files too", "getClipData()" in chrome and "EXTRA_ALLOW_MULTIPLE" in chrome)
+check("the microphone for the panel and nothing else, asking the phone first",
+      "def onPermissionRequest(self, request):" in chrome and "request.deny()" in chrome
+      and "request_permissions(" in chrome and 'startswith(app.panel.rstrip("/"))' in chrome)
+check("built by Chaquopy, as a class has to be", '"llmselfbot.webchrome"' in read("mobile/pyproject.toml"))
+check("only on Android, and failing to is not the end of the app", "self.android_chrome()" in shell
+      and 'if self.shell != "android":' in shell.split("def android_chrome(self):", 1)[1][:400]
+      and "except Exception as exc:" in shell.split("def android_chrome(self):", 1)[1][:600])
+os.environ.pop("LLMSELFBOT_FILE_PICKER", None)
+check("the panel says files can't be picked until the app says it has a picker", compat.check("files_pick", "android"))
+os.environ["LLMSELFBOT_FILE_PICKER"] = "1"
+check("and then says nothing", compat.check("files_pick", "android") is None)
+os.environ.pop("LLMSELFBOT_FILE_PICKER", None)
+check("iOS brings up its own", compat.check("files_pick", "ios") is None)
+check("the exports card says so too, rather than a drop zone that does nothing",
+      '<NotHere feature="files_pick" variant="line" />' in read("webui/src/lib/personas/FromExports.svelte"))
+check("a panel opened from another device has no microphone to ask for, and says why",
+      "if (!navigator.mediaDevices)" in read("webui/src/lib/components/CallSetup.svelte"))
+
+print("\n== the phone apps, on the whole screen ==")
+check("a plain window: no title bar over the panel", "self.main_window = toga.Window(title=self.formal_name)" in shell
+      and "toga.MainWindow" not in shell)
+check("Android keeps a theme with an action bar, which Toga hides on a plain window (it fails without one)",
+      app_cfg["android"].get("base_theme", "").endswith("DarkActionBar"))
+e2e = shell.split("def edge_to_edge(self):", 1)[1].split("\n    def ", 1)[0]
+check("iPhone: the panel runs under the status bar, where Toga kept it below",
+      "c.top_inset = 0" in e2e and "impl.notify_resize(c)" in e2e and "container.on_native_layout = layout" in e2e)
+check("and the web view gives the page the safe areas instead of black bands round it",
+      "scrollView.contentInsetAdjustmentBehavior = 2" in e2e)
+check("only on an iPhone, and a Toga that differs only costs the bands", 'if self.shell != "ios":' in e2e
+      and "except Exception as exc:" in e2e)
+bars = shell.split("def paint_bars(self, rgb):", 1)[1].split("\n    async def ", 1)[0]
+check("the bars round it are the panel's own colour: Android's status and navigation bars",
+      "window.setStatusBarColor(color)" in bars and "window.setNavigationBarColor(color)" in bars)
+check("and on an iPhone what shows behind it", "self.main_window._impl.native.backgroundColor = color" in bars
+      and "web.scrollView.backgroundColor = color" in bars)
+check("painted from the start, the starting page's colour", "BACKGROUND = (13, 11, 20)" in shell
+      and shell.index("self.edge_to_edge()") < shell.index("self.paint_bars(BACKGROUND)")
+      and "#0d0b14" in shell.lower())
+follow = shell.split("async def follow_theme(self):", 1)[1].split("\n    def ", 1)[0].split("\n    async def ", 1)[0]
+check("then following the theme: a theme changed in the panel recolours them",
+      'getComputedStyle(document.documentElement).backgroundColor' in follow and "if rgb != last:" in follow
+      and "self.loop.create_task(self.follow_theme())" in shell)
+check("the iPhone's status bar text light over it", app_cfg["iOS"]["info"].get("UIStatusBarStyle") == "UIStatusBarStyleLightContent"
+      and app_cfg["iOS"]["info"].get("UIViewControllerBasedStatusBarAppearance") is False)
+html = read("webui/index.html")
+css = read("webui/src/app.css")
+check("the page covers the whole screen", "viewport-fit=cover" in html)
+check("and keeps its contents clear of the notch and the home indicator, by the safe areas",
+      "padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px)" in css
+      and css.index(".app-shell {") < css.index("env(safe-area-inset-top, 0px)"))
+notices = read("webui/src/lib/components/Notices.svelte")
+check("the toasts too", "bottom: calc(1rem + env(safe-area-inset-bottom, 0px));" in notices
+      and 'class="toast-stack"' in notices and "<Notices />" in read("webui/src/App.svelte"))
+
 print("\n== in the workflow ==")
+check("Node 24 in every job: the tests import the panel's TypeScript, which Node 20 cannot",
+      wf.count("node-version: 24") == 4 and "node-version: 20" not in wf)
+check("the actions on their Node 24 releases", "actions/checkout@v5" in wf and "actions/setup-python@v6" in wf
+      and "actions/setup-node@v5" in wf and "checkout@v4" not in wf)
 check("an Android job and an iPhone job", "\n  android:\n" in wf and "\n  ios:\n" in wf)
 check("both on Python 3.13, which curl_cffi's Android build is for", wf.count('python-version: "3.13"') >= 2)
 check("both stage the app with the release's version", '--version "$APP_VERSION" --android' in wf
@@ -373,8 +453,8 @@ check("and says plainly when there is not", "::warning::No ANDROID_KEYSTORE_BASE
 check("the IPA is built for a phone, unsigned, with an ad-hoc signature for Python's libraries",
       "-sdk iphoneos" in wf and "CODE_SIGNING_ALLOWED=NO" in wf and 'EXPANDED_CODE_SIGN_IDENTITY="-"' in wf)
 check("and packed the way an IPA is", "mkdir -p ipa/Payload" in wf and "LLMSelfbot-ios.ipa" in wf)
-check("with an AltStore source beside it, so SideStore keeps it up to date", "altstore.json" in wf
-      and "releases/latest/download/altstore.json" in read("mobile/altstore.py"))
+check("and nothing else: no AltStore source beside it", "altstore.json" not in wf and "altstore.py" not in wf
+      and not (ROOT / "mobile" / "altstore.py").exists())
 check("the iPhone build cannot hold back the rest of a release", "continue-on-error: true" in wf.split("\n  ios:\n")[1][:600])
 check("both are attached to the release", wf.count("LLMSelfbot-android.apk") >= 3 and wf.count("LLMSelfbot-ios.ipa") >= 3)
 

@@ -81,7 +81,7 @@ def check(name, cond, extra=""):
 print("== the list ==")
 r = c.get("/api/personas").json()
 check("Default, with every account, and the colours to pick from", [p["id"] for p in r["personas"]] == ["default"]
-      and r["personas"][0]["accounts"] == ["discord_1", "discord_2", "snapchat_1"] and len(r["palette"]) == 10, str(r)[:300])
+      and r["personas"][0]["accounts"] == ["discord_1", "discord_2", "snapchat_1"] and len(r["palette"]) == 30, str(r)[:300])
 
 print("\n== making one ==")
 r = c.post("/api/personas", json={"name": "Juniper"}).json()

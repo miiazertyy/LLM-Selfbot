@@ -361,8 +361,10 @@ api = read("lib/api.ts")
 check("the calls", all(k in api for k in ("chatsSearch:", "chatsSearchDiscord:", "chatsSearchAll:", "chatsShared:", "chatsWindow:", "chatsExport:")))
 card = read("lib/accounts/AccountCard.svelte")
 check("an account's @username can be selected, copied in a click, and from the right-click menu",
-      '<span class="selectable acct-handle truncate">@{handle}</span>' in card and "onclick={copyHandle}" in card
+      '<span class="selectable acct-handle truncate">{at}{handle}</span>' in card and "onclick={copyHandle}" in card
       and 'label: "Copy username"' in card)
+check("on iMessage an address, an Apple ID's email or a number, with no @ in front",
+      'const at = $derived(slot.platform === "imessage" ? "" : "@");' in card and 'label: "Copy address"' in card)
 check("the Dashboard's accounts too", "accountMenu(r)" in read("lib/dashboard/AccountsWidget.svelte"))
 check("Snapchat's Snaps and calls said plainly", '"Sent a Snap"' in read("lib/components/MessageBody.svelte"))
 settings = read("pages/Settings.svelte")

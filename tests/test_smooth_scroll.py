@@ -57,8 +57,12 @@ ap = read("lib/components/Appearance.svelte")
 cp = read("lib/components/CommandPalette.svelte")
 check("a preference of its own, on by default, kept with the app",
       'export const smoothScroll = persisted<boolean>("smoothScroll", true, true);' in stores)
-check("the glide asks it, and only it", "const wanted = () => get(smoothScroll);" in ss and "!wanted() ||" in ss
-      and "motionEnabled" not in ss)
+wheel = ss[ss.index("function step("):ss.index("/** Whichever glideInto")] + ss[ss.index("function onWheel("):]
+check("the glide asks it, and only it", "const wanted = () => get(smoothScroll);" in ss and "!wanted() ||" in wheel
+      and "motionEnabled" not in wheel)
+into = ss[ss.index("export function glideInto("):ss.index("function onWheel(")]
+check("a glide into view is apart from it: it stands in for a scroll a page asks for, so it goes by Animations",
+      "if (!get(motionEnabled)) {" in into and "wanted()" not in into)
 check("in Settings, Appearance, Interface, between Animations and Cursor snow, in plain words",
       ap.index(">Animations<") < ap.index(">Smooth scrolling<") < ap.index(">Cursor snow<")
       and "The mouse wheel glides instead of jumping." in ap

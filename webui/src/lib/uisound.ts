@@ -31,6 +31,8 @@
  *   settle   a widget of the Dashboard set down in its place
  *   glint    a glint of light: Appearance's colours flooding in, a run of them up the scale (strong: the chosen one)
  *   grow     a bar growing up with its note rising alongside, higher the taller it gets, landing as it lands
+ *   dawn     a slow soft swell: Big Picture opening, the room coming up
+ *   whoosh   a breath of air going past: a page of Big Picture sliding in
  *
  * Dragging:
  *   lift     taken hold of, to be moved (a row of a list)
@@ -61,6 +63,7 @@ export type UISound =
   | "tap" | "up" | "tick" | "on" | "off" | "select" | "open" | "menu"
   | "ok" | "info" | "err" | "send" | "receive" | "delete" | "undo"
   | "wind" | "slide" | "rise" | "done" | "key" | "land" | "pluck" | "zip" | "seat" | "medal" | "settle" | "glint" | "grow"
+  | "dawn" | "whoosh"
   | "lift" | "slot" | "drop" | "grab" | "release" | "hover";
 
 /** Where a sound is made: the master out, the room, and a second of noise to cut clicks from. */
@@ -225,7 +228,7 @@ const GAP: Record<UISound, number> = {
   ok: 300, info: 300, err: 300, send: 200, receive: 400, delete: 120, undo: 120,
   // slide under the switches' domino step (Toggle.svelte), or a run of them would lose every other one
   wind: 26, slide: 30, rise: 45, done: 500, key: 22, land: 60,
-  pluck: 28, zip: 60, seat: 50, medal: 60, settle: 45, glint: 12, grow: 28,
+  pluck: 28, zip: 60, seat: 50, medal: 60, settle: 45, glint: 12, grow: 28, dawn: 800, whoosh: 120,
   lift: 120, slot: 35, drop: 120, grab: 60, release: 60, hover: 400,
 };
 /** When each sound was last made, or is booked to be (play's `delay`): a few seconds of them. */
@@ -489,6 +492,18 @@ function voices(name: UISound, { p = 0.5, strong = false }: { p?: number; strong
       click(0.21, 2400, 0.008, 0.16, 2, 0.03);
       break;
     }
+    case "dawn":
+      // Big Picture opening: the room coming up. Two low notes swelling a fifth apart, a shimmer far above them arriving late.
+      tone(0, 196, 0.9, 0.09, { glide: 233, wet: 0.5, attack: 0.18 });
+      tone(0.05, 293.7, 0.85, 0.07, { glide: 349, wet: 0.5, attack: 0.2 });
+      swish(0.04, 300, 1500, 0.5, 0.1);
+      bell(0.34, 1318.5, 1.2, 0.05, 0.55);
+      break;
+    case "whoosh":
+      // A page sliding in: air going past, with no note in it, so one every few seconds is never a tune.
+      swish(0, 420, 1900, 0.26, 0.22);
+      click(0.2, 1500, 0.016, 0.22, 1.4, 0.05);
+      break;
     case "settle":
       // A widget set down in its place: a muted thup, felt more than heard.
       tone(0, 160, 0.11, 0.06, { glide: 115, wet: 0.12, attack: 0.004 });

@@ -1,0 +1,106 @@
+<!doctype html>
+<!--
+    A Reddit feed, in the shape redditbot.js reads:
+
+      - every post is a <shreddit-post>, and its facts are its attributes: id, author, subreddit-prefixed-name,
+        score, comment-count, permalink, created-timestamp, post-title
+      - what it says is ordinary light DOM, slotted in: div[slot="text-body"]
+      - the buttons are NOT: they live inside the post's own shadow root, which is why there is a script at the
+        bottom putting them there. On the real site Reddit's own code does that; in a saved copy of a page
+        nothing does, so the one here is what lets the piercing be tested at all.
+
+    Every word is x's and every address is made up. Once there is an account, reddit_probe.js --html writes a
+    real page sanitized the same way, and this is replaced by it.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>xxxxxx</title>
+  <style>
+    body { margin: 0; font: 14px/1.4 system-ui; }
+    shreddit-post { display: block; padding: 12px; border-bottom: 1px solid #333; }
+  </style>
+</head>
+<body>
+  <shreddit-app user-logged-in="true">
+    <div id="expand-user-drawer-button" role="button" aria-label="xxxxxx xxxx"></div>
+    <shreddit-feed>
+
+      <!-- Somebody else's, with words on it. -->
+      <shreddit-post
+        id="t3_1abc2de"
+        author="xxxxxxxx"
+        subreddit-prefixed-name="r/xxxxxxx"
+        score="128"
+        comment-count="41"
+        permalink="/r/xxxxxxx/comments/1abc2de/xxxxx_xxxx/"
+        created-timestamp="2026-10-31T09:14:00.000Z"
+        post-title="xxxxx xxxx xxx"
+        locked="false"
+        nsfw="false">
+        <a slot="full-post-link" href="/r/xxxxxxx/comments/1abc2de/xxxxx_xxxx/">xxxxx xxxx xxx</a>
+        <div slot="text-body"><p>xxxx xxxxxx xx xxxx xxxxx xxxxxxx.</p></div>
+      </shreddit-post>
+
+      <!-- One with a picture on it. -->
+      <shreddit-post
+        id="t3_9xyz8fg"
+        author="xxxxxx"
+        subreddit-prefixed-name="r/xxxxxxx"
+        score="4"
+        comment-count="2"
+        permalink="/r/xxxxxxx/comments/9xyz8fg/xxxx/"
+        created-timestamp="2026-10-30T20:02:00.000Z"
+        post-title="xxxx xxxxxxx"
+        locked="true"
+        nsfw="false">
+        <div slot="post-media-container">
+          <img src="about:blank" alt="xxxx" />
+        </div>
+      </shreddit-post>
+
+      <!-- Its own, so `mine` has something to be true about. -->
+      <shreddit-post
+        id="t3_7mno4pq"
+        author="aliciamwwoff"
+        subreddit-prefixed-name="r/xxxxxxx"
+        score="12"
+        comment-count="3"
+        permalink="/r/xxxxxxx/comments/7mno4pq/xxxxxx/"
+        created-timestamp="2026-10-29T11:00:00.000Z"
+        post-title="xxxxxx xxxx">
+        <div slot="text-body"><p>xxxx xx xxxx xx xxxx.</p></div>
+      </shreddit-post>
+
+      <!-- An advert, which it must never answer or comment under. -->
+      <shreddit-post
+        id="t3_0ad0000"
+        author="xxxxxxxxx"
+        subreddit-prefixed-name="r/xxxxxxx"
+        score="0"
+        comment-count="0"
+        permalink="/r/xxxxxxx/comments/0ad0000/xxx/"
+        created-timestamp="2026-10-31T10:00:00.000Z"
+        post-title="xxx xxxxxx"
+        promoted="true">
+        <div slot="text-body"><p>xxx xxx.</p></div>
+      </shreddit-post>
+
+    </shreddit-feed>
+  </shreddit-app>
+
+  <script>
+    // Reddit's buttons live inside each post's shadow root. Nothing in a saved page puts them there, so this
+    // does: it is what the deep-query helpers are tested against.
+    for (const post of document.querySelectorAll("shreddit-post")) {
+      const root = post.attachShadow({ mode: "open" });
+      const bar = document.createElement("div");
+      bar.innerHTML =
+        '<button upvote aria-label="xxxxxx"></button>' +
+        '<button downvote aria-label="xxxxxxxx"></button>' +
+        '<button data-post-click-location="save" aria-label="xxxx"></button>';
+      root.append(document.createElement("slot"), bar);
+    }
+  </script>
+</body>
+</html>

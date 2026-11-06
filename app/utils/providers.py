@@ -37,7 +37,7 @@ import urllib.request
 # aggregators and the fast-inference hosts. `jobs` is what each one can do
 # through the OpenAI-compatible API, which is not always all it can do.
 PROVIDERS = [
-    {"id": "groq", "name": "Groq", "env": "GROQ_API_KEY", "multi": True,
+    {"id": "groq", "name": "Groq", "env": "GROQ_API_KEY",
      "base_url": "https://api.groq.com/openai/v1",
      "site": "https://console.groq.com/keys", "jobs": ["chat", "vision", "stt", "tts"],
      "blurb": "Fast and free to start. What the app was built on."},
@@ -51,7 +51,7 @@ PROVIDERS = [
      "blurb": "Claude models."},
     {"id": "gemini", "name": "Google Gemini", "env": "GEMINI_API_KEY",
      "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
-     "site": "https://aistudio.google.com/apikey", "jobs": ["chat", "vision"],
+     "site": "https://aistudio.google.com/apikey", "jobs": ["chat", "vision", "tts"],
      "blurb": "Gemini models, with a free tier."},
     {"id": "openrouter", "name": "OpenRouter", "env": "OPENROUTER_API_KEY",
      "base_url": "https://openrouter.ai/api/v1",
@@ -59,7 +59,7 @@ PROVIDERS = [
      "blurb": "Hundreds of models behind one key, some free."},
     {"id": "mistral", "name": "Mistral", "env": "MISTRAL_API_KEY",
      "base_url": "https://api.mistral.ai/v1",
-     "site": "https://console.mistral.ai/api-keys", "jobs": ["chat", "vision"],
+     "site": "https://console.mistral.ai/api-keys", "jobs": ["chat", "vision", "stt", "tts"],
      "blurb": "Mistral and Pixtral models."},
     {"id": "deepseek", "name": "DeepSeek", "env": "DEEPSEEK_API_KEY",
      "base_url": "https://api.deepseek.com/v1",
@@ -67,16 +67,41 @@ PROVIDERS = [
      "blurb": "DeepSeek chat and reasoning models, cheap."},
     {"id": "xai", "name": "xAI", "env": "XAI_API_KEY",
      "base_url": "https://api.x.ai/v1",
-     "site": "https://console.x.ai", "jobs": ["chat", "vision"],
+     "site": "https://console.x.ai", "jobs": ["chat", "vision", "tts"],
      "blurb": "Grok models."},
     {"id": "together", "name": "Together AI", "env": "TOGETHER_API_KEY",
      "base_url": "https://api.together.xyz/v1",
-     "site": "https://api.together.ai/settings/api-keys", "jobs": ["chat", "vision"],
+     "site": "https://api.together.ai/settings/api-keys", "jobs": ["chat", "vision", "stt"],
      "blurb": "Open models, hosted."},
     {"id": "cerebras", "name": "Cerebras", "env": "CEREBRAS_API_KEY",
      "base_url": "https://api.cerebras.ai/v1",
      "site": "https://cloud.cerebras.ai", "jobs": ["chat"],
      "blurb": "Very fast open models."},
+    {"id": "elevenlabs", "name": "ElevenLabs", "env": "ELEVENLABS_API_KEY",
+     "base_url": "https://api.elevenlabs.io/v1",
+     "site": "https://elevenlabs.io/app/settings/api-keys", "jobs": ["stt", "tts"],
+     "blurb": "The most natural voices, and new ones designed from a description."},
+    # Only hearing and speaking, each through its own API (app/voice/speech.py).
+    {"id": "deepgram", "name": "Deepgram", "env": "DEEPGRAM_API_KEY",
+     "base_url": "https://api.deepgram.com/v1",
+     "site": "https://console.deepgram.com", "jobs": ["stt", "tts"],
+     "blurb": "Quick hearing and natural voices, made for calls."},
+    {"id": "cartesia", "name": "Cartesia", "env": "CARTESIA_API_KEY",
+     "base_url": "https://api.cartesia.ai",
+     "site": "https://play.cartesia.ai", "jobs": ["stt", "tts"],
+     "blurb": "Very quick, lifelike voices."},
+    {"id": "fish", "name": "Fish Audio", "env": "FISH_API_KEY",
+     "base_url": "https://api.fish.audio",
+     "site": "https://fish.audio", "jobs": ["tts"],
+     "blurb": "Thousands of voices, and your own."},
+    {"id": "rime", "name": "Rime", "env": "RIME_API_KEY",
+     "base_url": "https://coda.api.rime.ai",
+     "site": "https://app.rime.ai", "jobs": ["tts"],
+     "blurb": "Voices that sound like people talking."},
+    {"id": "minimax", "name": "MiniMax", "env": "MINIMAX_API_KEY",
+     "base_url": "https://api.minimax.io/v1",
+     "site": "https://platform.minimax.io", "jobs": ["tts"],
+     "blurb": "Expressive voices in many languages."},
     {"id": "local", "name": "This computer", "env": "",
      "base_url": "",            # from bot.local.base_url
      "site": "https://ollama.com/download", "jobs": ["chat", "vision", "stt", "tts"],
@@ -92,6 +117,7 @@ COST = {
     "local": ("free", "Runs on your own computer, so it costs nothing to use."),
     "gemini": ("free", "Free tier in Google AI Studio, with rate limits."),
     "cerebras": ("free", "Free tier with rate limits."),
+    "elevenlabs": ("some", "A small free allowance each month, then paid."),
     "mistral": ("free", "Free Experiment plan with rate limits."),
     "openrouter": ("some", "Some models are free (their names end in :free), the rest are pay per use."),
     "openai": ("paid", "Pay per use. The account needs credit."),
@@ -99,6 +125,11 @@ COST = {
     "deepseek": ("paid", "Pay per use, and cheap. The account needs credit."),
     "xai": ("paid", "Pay per use. The account needs credit."),
     "together": ("paid", "Pay per use. The account needs credit."),
+    "deepgram": ("some", "Free credit to start, then pay per use."),
+    "cartesia": ("some", "A free plan with a monthly allowance, then paid."),
+    "fish": ("some", "A free tier, then pay per use."),
+    "rime": ("paid", "Paid. Its site has the current plans."),
+    "minimax": ("paid", "Pay per use."),
 }
 
 # The jobs besides replies, the capability each needs, and the old Groq key
@@ -108,12 +139,18 @@ JOBS = {
     "vision": {"needs": "vision", "groq_key": "groq_image_model", "local_key": "vision_model"},
     "stt": {"needs": "stt", "groq_key": "groq_whisper_model", "local_key": "stt_model"},
     "tts": {"needs": "tts", "groq_key": "groq_tts_model", "local_key": "tts_model"},
+    # Looking things up on the web (app/utils/web/agent.py): searching, reading pages, browsing.
+    "web": {"needs": "chat", "groq_key": "", "local_key": ""},
 }
 DEFAULTS = {
     "small": "openai/gpt-oss-20b",
     "vision": "meta-llama/llama-4-scout-17b-16e-instruct",
     "stt": "whisper-large-v3-turbo",
     "tts": "canopylabs/orpheus-v1-english",
+    # Not the replies' model: on Groq each model has its own allowance, so a lookup's several calls never use up the
+    # one the replies need. Fast, and it answers in plain JSON; gpt-oss reaches for a browser tool of its own instead,
+    # which Groq refuses (ai.web_completion reads what it wanted anyway).
+    "web": "qwen/qwen3.8-27b",
 }
 
 
@@ -137,7 +174,7 @@ def _env_value(name: str) -> str:
 
 
 def keys_for(pid: str) -> list:
-    """Every key set for this provider. Groq alone takes several (_1, _2, ...)."""
+    """Every key set for this provider, in the order they are tried: NAME, then NAME_1, NAME_2, ..."""
     p = BY_ID.get(pid)
     if not p or not p["env"]:
         return []
@@ -145,12 +182,38 @@ def keys_for(pid: str) -> list:
     first = _env_value(p["env"])
     if first:
         out.append(first)
-    if p.get("multi"):
-        for i in range(1, 21):
-            k = _env_value(f"{p['env']}_{i}")
-            if k and k not in out:
-                out.append(k)
+    for i in range(1, 51):
+        k = _env_value(f"{p['env']}_{i}")
+        if k and k not in out:
+            out.append(k)
     return out
+
+
+# Keys that have just run out or been refused, and when each may be asked again: the provider's next one takes over.
+_key_rest: dict = {}
+
+
+def rest_key(pid: str, key: str, seconds: float) -> None:
+    _key_rest[(pid, key)] = time.time() + seconds
+
+
+def key_order(pid: str) -> list:
+    """Its keys, the ones resting last: not gone, because when all of them are, one may have come back."""
+    now = time.time()
+    return sorted(keys_for(pid), key=lambda k: _key_rest.get((pid, k), 0) > now)
+
+
+def key_now(pid: str) -> str:
+    keys = key_order(pid)
+    return keys[0] if keys else ""
+
+
+def key_at_fault(status: int) -> float:
+    """How long a key is left alone after this answer, in seconds: rate limited, refused, or out of credit. 0 when
+    it says nothing about the key, and another would only be told the same."""
+    if status == 429:
+        return 20.0
+    return 600.0 if status in (401, 402, 403) else 0.0
 
 
 def local_settings(config: dict) -> dict:
@@ -313,7 +376,8 @@ def capabilities(pid: str, model_id: str) -> list:
         return sorted(groqmodels.capabilities(model_id))
     low = (model_id or "").lower()
     caps = set()
-    if any(n in low for n in _STT):
+    # "tts" says speaking even where a hearing name is in it too (voxtral-mini-tts).
+    if any(n in low for n in _STT) and "tts" not in low:
         caps.add("stt")
     if any(n in low for n in _TTS) and "stt" not in caps:
         caps.add("tts")
@@ -480,39 +544,77 @@ def list_models(pid: str, config: dict, force: bool = False, timeout: float = 8.
         for m in models:
             if not m["capabilities"]:
                 m["capabilities"] = ["chat"]
+        # Its own voice (app/voice/onboard.py): no server, so listed whether or not one is running.
+        from app.voice import onboard
+        models += [{"id": m, "capabilities": [onboard.MODELS[onboard._key(m)]["job"]]} for m in onboard.installed()]
         error = result["error"]
     else:
-        keys = keys_for(pid)
+        keys = key_order(pid)
         if not keys:
             error = "No key set."
-        else:
-            headers = {"Authorization": f"Bearer {keys[0]}"}
-            if pid == "anthropic":
-                headers.update({"x-api-key": keys[0], "anthropic-version": "2023-06-01"})
-            try:
-                data = _get_json(base_url(pid, config).rstrip("/") + "/models", headers, timeout)
-                items = data.get("data") if isinstance(data, dict) else data
-                for item in items or []:
-                    mid = item.get("id") if isinstance(item, dict) else None
-                    if not mid:
-                        continue
-                    # Gemini lists them as "models/gemini-2.5-flash".
-                    if pid == "gemini" and mid.startswith("models/"):
-                        mid = mid[len("models/"):]
-                    models.append({"id": mid, "capabilities": capabilities(pid, mid)})
-            except urllib.error.HTTPError as e:
-                try:
-                    raw = e.read().decode("utf-8", "replace")
-                except Exception:
-                    raw = ""
-                error, _ = http_error(pid, e.code, raw)
-                if e.code == 403 and error.startswith("This key"):
-                    error = "The key was refused."
-            except Exception as e:
-                error = f"Could not reach {BY_ID[pid]['name']}: {type(e).__name__}"
+        for key in keys:
+            models, error, status = _models_with(pid, key, config, timeout)
+            rest = key_at_fault(status)
+            if not rest:
+                break
+            rest_key(pid, key, rest)
+    if pid not in ("groq", "local") and models and not error:
+        # What a provider hears and speaks with in its own API is not always in its list of models.
+        from app.voice import speech
+        have = {m["id"] for m in models}
+        models += [m for m in speech.models_for(pid) if m["id"] not in have]
     models.sort(key=lambda m: m["id"])
     _cache[pid] = {"at": now, "models": models, "error": error}
     return {"models": models, "error": error}
+
+
+def _models_with(pid: str, key: str, config: dict, timeout: float) -> tuple:
+    """(models, what went wrong, the status it came back with), asking with this key."""
+    models, error, status = [], "", 0
+    if not any(job in ("chat", "vision") for job in BY_ID[pid]["jobs"]) and pid != "elevenlabs":
+        # Hearing and speaking only, each in its own API: what they have is known, there is no list to ask for.
+        from app.voice import speech
+        return speech.models_for(pid), "", 0
+    if pid == "elevenlabs":
+        # Not OpenAI's shape: the key goes in xi-api-key, and the list is a plain array of model_id.
+        try:
+            data = _get_json(base_url(pid, config).rstrip("/") + "/models", {"xi-api-key": key}, timeout)
+            for item in data if isinstance(data, list) else []:
+                mid = item.get("model_id") if isinstance(item, dict) else None
+                if mid and item.get("can_do_text_to_speech", True):
+                    models.append({"id": mid, "capabilities": ["tts"]})
+        except urllib.error.HTTPError as e:
+            status = e.code
+            error = "The key was refused." if e.code in (401, 403) else f"ElevenLabs said {e.code}."
+        except Exception as e:
+            error = f"Could not reach ElevenLabs: {type(e).__name__}"
+        return models, error, status
+    headers = {"Authorization": f"Bearer {key}"}
+    if pid == "anthropic":
+        headers.update({"x-api-key": key, "anthropic-version": "2023-06-01"})
+    try:
+        data = _get_json(base_url(pid, config).rstrip("/") + "/models", headers, timeout)
+        items = data.get("data") if isinstance(data, dict) else data
+        for item in items or []:
+            mid = item.get("id") if isinstance(item, dict) else None
+            if not mid:
+                continue
+            # Gemini lists them as "models/gemini-2.5-flash".
+            if pid == "gemini" and mid.startswith("models/"):
+                mid = mid[len("models/"):]
+            models.append({"id": mid, "capabilities": capabilities(pid, mid)})
+    except urllib.error.HTTPError as e:
+        status = e.code
+        try:
+            raw = e.read().decode("utf-8", "replace")
+        except Exception:
+            raw = ""
+        error, _ = http_error(pid, e.code, raw)
+        if e.code == 403 and error.startswith("This key"):
+            error = "The key was refused."
+    except Exception as e:
+        error = f"Could not reach {BY_ID[pid]['name']}: {type(e).__name__}"
+    return models, error, status
 
 
 def label(entry: dict) -> str:

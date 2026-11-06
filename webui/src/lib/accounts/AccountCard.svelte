@@ -17,6 +17,8 @@
   import Badge from "../components/Badge.svelte";
   import Button from "../components/Button.svelte";
   import Icon from "../components/Icon.svelte";
+  import LiveThought from "../components/LiveThought.svelte";
+  import Select from "../components/Select.svelte";
   import WeekBars from "./WeekBars.svelte";
   import StatusDot from "../components/StatusDot.svelte";
   import UserChip from "../components/UserChip.svelte";
@@ -30,10 +32,17 @@
   import { get } from "svelte/store";
   import { motionEnabled } from "../stores";
   import { play } from "../uisound";
+  import { unroll } from "../unroll";
   import PersonaOrb from "../personas/PersonaOrb.svelte";
   import PersonaMenu from "../personas/PersonaMenu.svelte";
   import { colorOf, personaOf } from "../personas/logic";
   import { personasRes } from "../personas/store";
+  import { isBrowser, platformIcon, platformOf } from "../platforms";
+  import { openUrl } from "../window";
+  import { api } from "../api";
+  import { toast } from "../stores";
+  import { visiblePoll } from "../poll";
+  import { onMount } from "svelte";
 
   let {
     slot,
@@ -43,6 +52,7 @@
     dates = [],
     waiting = null,
     moods = [],
+    moodLines = {},
     acting = "",
     onaction,
     onedit,
@@ -53,6 +63,8 @@
     onlogs,
     onsettings,
     onpersona,
+    onlive,
+    onwatch,
   }: {
     slot: Slot;
     rt?: Runtime;
@@ -63,6 +75,8 @@
     /** People waiting for a reply on this account, null when not known yet. */
     waiting?: number | null;
     moods?: string[];
+    /** What each mood tells it, by name: the line under it in the picker. */
+    moodLines?: Record<string, string>;
     /** "<id>:<action>" while one is in flight. */
     acting?: string;
     onaction: (act: string) => void;
@@ -75,7 +89,37 @@
     onsettings: (to: string) => void;
     /** Give it another persona (the page saves it and restarts the account). */
     onpersona?: (pid: string) => void;
+    /** A TikTok account's LIVE view (the page opens it). */
+    onlive?: () => void;
+    /** A Minecraft account's live view (the page opens it). */
+    onwatch?: () => void;
   } = $props();
+
+  // ── A TikTok account's LIVE: a red dot on its button while it is live ───────
+  let liveOn = $state(false);
+  // Someone else's LIVE it is in as a viewer (tiktok.visits): their @handle, "" when it is in none.
+  let visiting = $state("");
+  onMount(() => {
+    if (slot.platform !== "tiktok") return;
+    // A glint when it goes live while the page is open; a first look (now, not a period later) finds it quietly.
+    // Asked even before the account's state is known (a stopped one just says it is not live).
+    const look = async (first = false) => {
+      if (rt && rt.state !== "running") { liveOn = false; visiting = ""; return; }
+      try {
+        const was = liveOn;
+        const wasVisiting = visiting;
+        const r = await api.liveFeed(slot.id);
+        liveOn = !!r?.live;
+        visiting = r?.visit?.on ? String(r.visit.host || "") : "";
+        if (liveOn && !was && !first) play("glint", { level: 0.6 });
+        else if (visiting && !wasVisiting && !first) play("rise", { level: 0.5 });
+      } catch {
+        // stopped, or not answering yet
+      }
+    };
+    look(true);
+    return visiblePoll(() => look(), 15000);
+  });
 
   // ── Who it speaks as ───────────────────────────────────────────────────────
   // A chip on the banner, opposite the platform's: pressed, the personas to give it.
@@ -130,7 +174,9 @@
       cond.reachable && slot.platform === "discord" && { label: "Reload commands", icon: "terminal", run: () => onaction("reload") },
       "sep",
       { label: "Copy name", icon: "copy", run: () => copyText(name, "Copied the name.") },
-      rt?.username && { label: "Copy username", icon: "copy", run: () => copyText(rt?.username ?? "", "Copied the username.") },
+      rt?.username && (slot.platform === "imessage"
+        ? { label: "Copy address", icon: "copy", run: () => copyText(rt?.username ?? "", "Copied the address.") }
+        : { label: "Copy username", icon: "copy", run: () => copyText(rt?.username ?? "", "Copied the username.") }),
       "sep",
       { label: "Remove account", icon: "trash", danger: true, run: ondelete },
     ];
@@ -139,28 +185,33 @@
   const handle = $derived(rt?.username && rt.username !== name ? rt.username : "");
   // It can be selected like any text, and copied in one click: it is what someone searches to add the account.
   let handleCopied = $state(false);
+  /** iMessage's is an Apple ID's email or a phone number, which no "@" goes in front of. */
+  const at = $derived(slot.platform === "imessage" ? "" : "@");
   async function copyHandle() {
-    await copyText(handle, "Copied the username.");
+    await copyText(handle, slot.platform === "imessage" ? "Copied the address." : "Copied the username.");
     handleCopied = true;
     setTimeout(() => (handleCopied = false), 1400);
   }
   /** A Snapchat account the runner has read, with no photo or Bitmoji: Snapchat's own empty silhouette, as Snapchat draws it. */
-  const silhouette = $derived(slot.platform === "snapchat" && !rt?.avatar && !!rt?.username);
+  const silhouette = $derived(platformOf(slot.platform).silhouette && !rt?.avatar && !!rt?.username);
   const presence = $derived(presenceOf(slot, rt, d));
   const busyWith = (a: string) => acting === `${rt?.id}:${a}`;
 
   // ── Popovers ───────────────────────────────────────────────────────────────
-  let menu = $state<"" | "more" | "mood">("");
+  let menu = $state<"" | "more" | "goal" | "server">("");
   let confirmWipe = $state(false);
   let menuEl: HTMLElement | null = $state(null);
-  let moodEl: HTMLElement | null = $state(null);
+  /** One fading out once closed: the card stays raised over the next one until it has gone. */
+  let leaving = $state(false);
+  /** How one goes: back down into its button as it fades, quicker than it came (it came unrolling: app.css .unroll). */
+  const menuOut = $derived({ y: 4, duration: $motionEnabled ? 150 : 0, opacity: 0 });
 
   $effect(() => {
     if (!menu) {
       confirmWipe = false;
       return;
     }
-    const el = menu === "more" ? menuEl : moodEl;
+    const el = menu === "more" || menu === "server" ? menuEl : goalEl;
     const off = (e: MouseEvent) => {
       if (el && !el.contains(e.target as Node)) menu = "";
     };
@@ -177,6 +228,103 @@
   function pick(fn: () => void) {
     menu = "";
     fn();
+  }
+
+  // ── Its mood: a dropdown, each mood with a face of its own and the first line of what it tells it ──
+  /** The moods people usually name; any other gets a badge with its initial, in a colour of its own. */
+  const MOOD_MARK: Record<string, string> = {
+    chill: "😌", calm: "😌", playful: "😜", silly: "🤪", busy: "⏳", tired: "😴", sleepy: "😪", annoyed: "😒",
+    grumpy: "😤", angry: "😠", flirty: "😏", romantic: "🥰", happy: "😊", excited: "🤩", hyper: "⚡",
+    sad: "😢", lonely: "🥺", bored: "😑", shy: "🙈", sarcastic: "🙄", curious: "🤔", focused: "🎯",
+    confident: "😎", nervous: "😬", cozy: "☕", sick: "🤒",
+  };
+  const titled = (m: string) => m.charAt(0).toUpperCase() + m.slice(1);
+  /** Its first sentence, kept to one line. */
+  function firstLine(says = ""): string {
+    const one = (says.trim().split(/(?<=[.!?])\s/)[0] ?? "").trim();
+    return one.length > 60 ? `${one.slice(0, 59).trimEnd()}…` : one;
+  }
+  const moodOptions = $derived.by(() => {
+    // One it was set to that is not among them (a mood since renamed) still shows as what it is.
+    const names = d?.mood && !moods.includes(d.mood) ? [d.mood, ...moods] : moods;
+    return names.map((m) => ({
+      value: m,
+      label: titled(m),
+      hint: firstLine(moodLines[m]),
+      ...(MOOD_MARK[m.toLowerCase()] ? { mark: MOOD_MARK[m.toLowerCase()] } : { badge: true }),
+    }));
+  });
+
+  // ── A Minecraft account: something to get done, and leaving or joining the world ──
+  let goalEl: HTMLElement | null = $state(null);
+  let goalText = $state("");
+  let goalBusy = $state(false);
+  const inWorld = $derived(rt?.web?.state === "ready" && !rt?.web?.stale);
+  /** Its field takes the keyboard as the box opens. */
+  function focusNow(node: HTMLElement) {
+    requestAnimationFrame(() => node.focus());
+  }
+  async function sendGoal() {
+    const text = goalText.trim();
+    if (!text || goalBusy) return;
+    goalBusy = true;
+    play("send");
+    try {
+      const r: any = await api.minecraftOp(slot.id, "goal", text);
+      if (r?.ok) {
+        play("ok", { delay: 120 });
+        toast(`On it: ${text}`, "ok");
+        goalText = "";
+        menu = "";
+      } else {
+        play("err");
+        toast(r?.reason || "It did not take it", "err");
+      }
+    } catch (e: any) {
+      play("err");
+      toast(e?.message || "It did not take it", "err");
+    } finally {
+      goalBusy = false;
+    }
+  }
+  // Another server, or its own again: its runner starts over there (snapchat_bridge.py _mc_switch).
+  let serverText = $state("");
+  let serverBusy = $state(false);
+  /** The server it is on now, as its runner says, and its own, as its account names it ("" for Settings' one). */
+  const onServer = $derived(String(rt?.web?.game?.server || ""));
+  const ownServer = $derived(slot.host ? `${slot.host}:${slot.port || 25565}` : "");
+  const away = $derived(!!onServer && !!ownServer && onServer.toLowerCase() !== ownServer.toLowerCase());
+  async function goServer(home = false) {
+    const address = serverText.trim();
+    if ((!home && !address) || serverBusy) return;
+    serverBusy = true;
+    play("send");
+    try {
+      const r: any = await api.minecraftOp(slot.id, home ? "home" : "server", address);
+      if (r?.ok) {
+        play("ok", { delay: 120 });
+        toast(r.already ? "It is there already" : home ? "Going back to its own server" : `Going to ${address}`, "ok");
+        serverText = "";
+        menu = "";
+      } else {
+        play("err");
+        toast(r?.reason || "It did not go", "err");
+      }
+    } catch (e: any) {
+      play("err");
+      toast(e?.message || "It did not go", "err");
+    } finally {
+      serverBusy = false;
+    }
+  }
+  async function worldOp(op: "leave" | "join") {
+    try {
+      const r: any = await api.minecraftOp(slot.id, op);
+      if (r?.ok) toast(op === "leave" ? "It left the world" : "It is joining the world", "ok");
+      else toast(r?.reason || "It did not answer", "err");
+    } catch (e: any) {
+      toast(e?.message || "It did not answer", "err");
+    }
   }
 
   function wipe() {
@@ -203,9 +351,14 @@
     else if (a.kind === "logs") onlogs();
     else if (a.kind === "settings") onsettings(a.to || "");
     else if (a.kind === "start") onaction("start");
+    else if (a.kind === "url" && a.to) {
+      play("open");
+      openUrl(a.to);
+    }
   }
 
   const ping = $derived(d?.latency_ms ?? null);
+  const compact = (n: number) => new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format(n);
 </script>
 
 <article
@@ -216,7 +369,7 @@
   class:is-down={!cond.running}
   class:is-paused={cond.paused}
   class:is-bad={cond.tone === "bad"}
-  class:is-raised={!!menu || personaOpen}
+  class:is-raised={!!menu || personaOpen || leaving}
 >
   <!-- ── Who it speaks as: top left, opposite the platform. Ahead of the banner
        so the banner, platform and name stay next to each other (the banner
@@ -254,7 +407,7 @@
     {/key}
   </div>
   <span class="acct-platform">
-    <Icon name={slot.platform === "snapchat" ? "snapchat" : "discord"} size={12} />
+    <Icon name={platformIcon(slot.platform)} size={12} />
     {platformName(slot.platform)} #{slot.index}
   </span>
 
@@ -265,7 +418,7 @@
         <Avatar src={rt?.avatar ?? ""} {name} size={68} ring="ring-[3px] ring-black/30" {silhouette} />
       {:else}
         <span class="flex h-[68px] w-[68px] items-center justify-center rounded-full bg-white/[0.07] text-accent ring-[3px] ring-black/30">
-          <Icon name={slot.platform === "snapchat" ? "snapchat" : "discord"} size={28} />
+          <Icon name={platformIcon(slot.platform)} size={28} />
         </span>
       {/if}
       <span class="acct-dot">
@@ -283,9 +436,9 @@
       </div>
       <div class="mt-0.5 flex min-w-0 items-center gap-1.5 text-[12px] text-muted">
         {#if handle}
-          <span class="selectable acct-handle truncate">@{handle}</span>
+          <span class="selectable acct-handle truncate">{at}{handle}</span>
           <button type="button" class="acct-copy" class:is-done={handleCopied} onclick={copyHandle}
-                  aria-label="Copy @{handle}" title="Copy @{handle}">
+                  aria-label="Copy {at}{handle}" title="Copy {at}{handle}">
             <Icon name={handleCopied ? "check" : "copy"} size={11} />
           </button>
           <span class="text-faint">·</span>
@@ -302,6 +455,8 @@
   </div>
 
   <div class="space-y-4 px-5 pb-4 pt-4">
+    <!-- ── What it is thinking, while it is ───────────────────────────────── -->
+    <LiveThought source={slot.id} variant="line" />
     <!-- ── Anything that needs doing, with the button that does it ────────── -->
     {#if cond.alert}
       <div class="acct-alert" class:is-bad={cond.alert.tone === "bad"} role="status">
@@ -394,7 +549,22 @@
         {/if}
         {#if d.guilds != null}<span><span class="text-ink">{d.guilds}</span> servers</span>{/if}
         {#if d.friends != null}<span><span class="text-ink">{d.friends}</span> friends</span>{/if}
-        <span><span class="text-ink">{d.active_channels ?? 0}</span> {slot.platform === "snapchat" ? "chats watched" : "chats open"}</span>
+        <!-- A TikTok or Instagram account's profile counts, as the site says them (1.2K). -->
+        {#if d.followers != null}<span><span class="text-ink">{compact(d.followers)}</span> followers</span>{/if}
+        {#if d.following != null}<span><span class="text-ink">{compact(d.following)}</span> following</span>{/if}
+        {#if d.likes != null}<span><span class="text-ink">{compact(d.likes)}</span> likes</span>{/if}
+        {#if d.videos != null}<span><span class="text-ink">{compact(d.videos)}</span> videos</span>{/if}
+        {#if d.posts != null}<span><span class="text-ink">{compact(d.posts)}</span> posts</span>{/if}
+        <span><span class="text-ink">{d.active_channels ?? 0}</span> {slot.platform === "minecraft" ? "players met"
+          : slot.platform === "telegram" ? "chats"
+          : slot.platform === "imessage" ? "conversations"
+          : isBrowser(slot.platform) ? "chats watched" : "chats open"}</span>
+        {#if d.imessage}
+          <!-- The Mac it reads through: whether messages arrive the moment they land, and what BlueBubbles allows. -->
+          <span class={d.imessage.live ? "text-good" : "text-warn"}>{d.imessage.live ? "Live" : "Checking every few seconds"}</span>
+          <span>Private API <span class={d.imessage.private_api && d.imessage.helper ? "text-good" : "text-faint"}>
+            {d.imessage.private_api && d.imessage.helper ? "on" : "off"}</span></span>
+        {/if}
         {#if d.ignored_users}<span><span class="text-ink">{d.ignored_users}</span> ignored</span>{/if}
       </div>
     {/if}
@@ -404,36 +574,62 @@
   <footer class="acct-controls">
     <div class="flex min-w-0 items-center gap-2.5">
       {#if cond.reachable}
-        <div class="relative" bind:this={moodEl}>
-          <button class="acct-chip" class:is-on={menu === "mood"} onclick={() => (menu = menu === "mood" ? "" : "mood")}
-                  title="Set its mood" aria-expanded={menu === "mood"}>
-            <span class="text-faint">Mood</span>
-            <span class="max-w-[7rem] truncate">{d?.mood || "not set"}</span>
+        {#if moods.length || d?.mood}
+          <!-- Its mood, as a real dropdown: a face for each, what it tells it under its name, the one it is in ticked.
+               It still drifts to another on its own. -->
+          <span class="acct-mood" title="Its mood. It drifts to another on its own.">
+            <Select size="sm" prefix="Mood" value={d?.mood ?? ""} placeholder="Not set" options={moodOptions}
+                    width="min-w-[9rem] max-w-[13rem]" listWidth={300} onchange={(v) => onmood(String(v))} />
+          </span>
+        {:else}
+          <button class="acct-chip" title="No moods are set up yet. Add some on the Persona page."
+                  onclick={() => { play("open"); window.location.hash = "/persona"; }}>
+            <span class="text-faint">Mood</span><span>Add some</span>
           </button>
-          {#if menu === "mood"}
-            <div class="acct-pop glass floating pop left-0 w-56" role="menu">
-              <div class="mb-1.5 px-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-faint">Mood</div>
-              {#if moods.length}
-                <div class="flex flex-wrap gap-1">
-                  {#each moods as m}
-                    <button
-                      class="jelly rounded-lg px-2 py-1 text-[11.5px] transition-colors
-                             {d?.mood === m ? 'bg-accent/20 text-accent' : 'bg-white/[0.05] text-muted hover:bg-white/[0.09] hover:text-ink'}"
-                      onclick={() => pick(() => onmood(m))}
-                    >{m}</button>
-                  {/each}
-                </div>
-              {:else}
-                <p class="px-1 text-[11.5px] text-faint">No moods are set up. Add some under Persona.</p>
-              {/if}
-              <p class="mt-2 px-1 text-[10.5px] leading-snug text-faint">Until it drifts to another on its own.</p>
+        {/if}
+      {/if}
+      {#if cond.reachable && slot.platform === "minecraft" && inWorld}
+        <!-- Something for it to get done: mindcraft works at it by itself, a step at a time. -->
+        <div class="relative" bind:this={goalEl}>
+          <button class="acct-chip" class:is-on={menu === "goal"}
+                  onclick={() => { play(menu === "goal" ? "off" : "open"); menu = menu === "goal" ? "" : "goal"; }}
+                  title="Give it something to do" aria-expanded={menu === "goal"}>
+            <Icon name="sparkle" size={12} /><span>Goal</span>
+          </button>
+          {#if menu === "goal"}
+            <div class="acct-pop glass floating unroll is-up left-0 w-72" role="dialog" aria-label="Something to do" use:unroll
+                 out:fly={menuOut} onoutrostart={() => (leaving = true)} onoutroend={() => (leaving = false)}>
+              <div class="mb-1.5 px-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-faint">Something to do</div>
+              <div class="flex items-center gap-1.5">
+                <input class="field min-w-0 flex-1 text-[12.5px]" bind:value={goalText} maxlength="300" use:focusNow
+                       placeholder="Build a shelter before dark" aria-label="What it should do"
+                       onkeydown={(e) => { if (e.key === "Enter") { e.preventDefault(); sendGoal(); } }} />
+                <Button size="sm" loading={goalBusy} disabled={!goalText.trim()} onclick={sendGoal}>Go</Button>
+              </div>
+              <p class="mt-2 px-1 text-[10.5px] leading-snug text-faint">It works at it by itself until it is done.</p>
             </div>
           {/if}
         </div>
+        {#if onwatch}
+          <!-- What it sees, live. -->
+          <button class="acct-chip" onclick={() => { play("open"); onwatch?.(); }} title="See what it is doing">
+            <Icon name="eye" size={12} /><span>Watch</span>
+          </button>
+        {/if}
       {/if}
     </div>
 
     <div class="ml-auto flex shrink-0 items-center gap-1.5">
+      {#if slot.platform === "tiktok" && onlive}
+        <!-- Its LIVE: what viewers say and what it answers, and the page for OBS. Red while it is live. -->
+        <button class="acct-chip acct-live" class:is-live={liveOn} class:is-visiting={!liveOn && !!visiting}
+                onclick={() => { play("open"); onlive?.(); }}
+                title={liveOn ? "It is live now: see the chat and its answers"
+                  : visiting ? `In @${visiting}'s LIVE as a viewer: see what it says there`
+                  : "Its LIVE: the chat and its answers"}>
+          <span class="acct-live-dot" aria-hidden="true"></span>{!liveOn && visiting ? `In @${visiting}'s LIVE` : "LIVE"}
+        </button>
+      {/if}
       {#if cond.running}
         <Button size="sm" kind="ghost" loading={busyWith("restart")} onclick={() => onaction("restart")}>
           {#if !busyWith("restart")}<Icon name="refresh" size={13} />{/if}Restart
@@ -448,12 +644,14 @@
       {/if}
 
       <div class="relative" bind:this={menuEl}>
-        <button class="acct-icon-btn" class:is-on={menu === "more"} onclick={() => (menu = menu === "more" ? "" : "more")}
+        <button class="acct-icon-btn" class:is-on={menu === "more"}
+                onclick={() => { if (menu !== "more") play("open"); menu = menu === "more" ? "" : "more"; }}
                 aria-label="More for this account" aria-expanded={menu === "more"} title="More">
           <Icon name="more" size={16} />
         </button>
         {#if menu === "more"}
-          <div class="acct-pop glass floating pop right-0 w-60" role="menu">
+          <div class="acct-pop glass floating unroll is-up right-0 w-60" role="menu" use:unroll
+               out:fly={menuOut} onoutrostart={() => (leaving = true)} onoutroend={() => (leaving = false)}>
             {#if cond.reachable}
               <!-- Stays signed in and online, just stops answering. -->
               <button class="acct-item" role="menuitem" onclick={() => pick(() => onaction("pause"))}>
@@ -463,7 +661,12 @@
               <div class="acct-sep"></div>
             {/if}
             <button class="acct-item" role="menuitem" onclick={() => pick(onedit)}>
-              <Icon name="edit" size={14} /><span>Edit login</span>
+              <Icon name="edit" size={14} /><span>{slot.platform === "tiktok" ? "Sign in again"
+                : slot.platform === "instagram" ? "Login and sign-in"
+                : slot.platform === "minecraft" ? "Name and server"
+                : slot.platform === "telegram" ? "Sign in again"
+                : slot.platform === "imessage" ? (slot.server === "phone" ? "How it reaches iMessage" : "Server and password")
+                : "Edit login"}</span>
             </button>
             {#if onprofile && slot.platform === "discord" && rt}
               <button class="acct-item" role="menuitem" onclick={() => pick(onprofile)}>
@@ -483,6 +686,20 @@
                   <Icon name="terminal" size={14} /><span>Reload commands</span>
                 </button>
               {/if}
+              {#if slot.platform === "minecraft"}
+                <!-- Out of the world and back, without stopping the account. -->
+                <button class="acct-item" role="menuitem" onclick={() => pick(() => worldOp(inWorld ? "leave" : "join"))}>
+                  <Icon name={inWorld ? "signout" : "play"} size={14} /><span>{inWorld ? "Leave the world" : "Join the world"}</span>
+                </button>
+                <button class="acct-item" role="menuitem" onclick={() => { play("open"); menu = "server"; }}>
+                  <Icon name="globe" size={14} /><span>Play on another server</span>
+                </button>
+                {#if away}
+                  <button class="acct-item" role="menuitem" onclick={() => pick(() => goServer(true))}>
+                    <Icon name="undo" size={14} /><span>Back to its own server</span>
+                  </button>
+                {/if}
+              {/if}
               <button class="acct-item" class:is-danger={confirmWipe} role="menuitem" onclick={wipe}>
                 <Icon name="eraser" size={14} />
                 <span>{confirmWipe ? "Click again to forget them" : "Forget conversations"}</span>
@@ -492,6 +709,21 @@
             <button class="acct-item is-danger" role="menuitem" onclick={() => pick(ondelete)}>
               <Icon name="trash" size={14} /><span>Remove account</span>
             </button>
+          </div>
+        {/if}
+        {#if menu === "server"}
+          <div class="acct-pop glass floating unroll is-up right-0 w-72" role="dialog" aria-label="Another server" use:unroll
+               out:fly={menuOut} onoutrostart={() => (leaving = true)} onoutroend={() => (leaving = false)}>
+            <div class="mb-1.5 px-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-faint">Another server</div>
+            <div class="flex items-center gap-1.5">
+              <input class="field min-w-0 flex-1 font-mono text-[12.5px]" bind:value={serverText} maxlength="120"
+                     use:focusNow placeholder="play.example.net" aria-label="The server's address" spellcheck="false"
+                     onkeydown={(e) => { if (e.key === "Enter") { e.preventDefault(); goServer(); } }} />
+              <Button size="sm" loading={serverBusy} disabled={!serverText.trim()} onclick={() => goServer()}>Go</Button>
+            </div>
+            <p class="mt-2 px-1 text-[10.5px] leading-snug text-faint">
+              {onServer ? `Now on ${onServer}.` : ""} It signs itself in where the server asks in the chat.
+            </p>
           </div>
         {/if}
       </div>
@@ -867,11 +1099,11 @@
   }
   .acct-icon-btn:active { transform: scale(0.9); }
 
-  /* Menus open upwards: they hang off the bottom edge of the card, and
-     downwards they would run off the page on the last row. */
+  /* Menus open upwards, unrolling up out of their button (app.css .unroll): they hang off the bottom edge of the
+     card, and downwards they would run off the page on the last row. */
   .acct-pop {
     position: absolute;
-    bottom: calc(100% + 8px);
+    bottom: calc(100% + 6px);
     z-index: 30;
     padding: 6px;
     border-radius: 14px;
@@ -909,4 +1141,25 @@
   :global(:root[data-motion="off"]) .acct-banner-flash { opacity: 0; }
   :global(:root[data-motion="off"]) .acct-persona,
   :global(:root[data-motion="off"]) .acct-persona-chev { transition: none; }
+  /* A TikTok account's LIVE button: TikTok's red dot, beating while it is live. */
+  .acct-live { gap: 6px; font-weight: 700; letter-spacing: 0.04em; }
+  .acct-live-dot { width: 7px; height: 7px; border-radius: 999px; background: color-mix(in srgb, var(--color-faint) 80%, transparent); }
+  .acct-live.is-live { color: #fff; background: linear-gradient(180deg, #ff3b5c, #e0153d);
+                       box-shadow: 0 6px 18px -6px rgb(254 44 85 / 0.8); }
+  .acct-live.is-live .acct-live-dot { background: #fff; animation: acct-live-beat 1.2s ease-in-out infinite; }
+  /* In someone else's LIVE as a viewer: TikTok's cyan, softly lit, the dot beating slower. */
+  .acct-live.is-visiting {
+    max-width: 210px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    letter-spacing: 0;
+    color: #c9fbff;
+    background: linear-gradient(180deg, rgb(37 244 238 / 0.22), rgb(37 244 238 / 0.1));
+    box-shadow: inset 0 0 0 1px rgb(37 244 238 / 0.35), 0 6px 16px -10px rgb(37 244 238 / 0.7);
+  }
+  .acct-live.is-visiting .acct-live-dot { background: #25f4ee; animation: acct-live-beat 2s ease-in-out infinite; }
+  :global(:root[data-motion="off"]) .acct-live.is-visiting .acct-live-dot { animation: none; }
+  @keyframes acct-live-beat { 50% { transform: scale(0.55); opacity: 0.6; } }
+  :global(:root[data-motion="off"]) .acct-live.is-live .acct-live-dot { animation: none; }
 </style>

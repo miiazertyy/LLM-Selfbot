@@ -53,9 +53,12 @@ from app.web.schema import CONFIG_SCHEMA  # noqa: E402
 needs = {f["key"]: f.get("needs") for f in CONFIG_SCHEMA if f.get("needs")}
 check("voice messages and the Snapchat switch are marked", needs.get("bot.tts.enabled") == "voice_messages"
       and needs.get("snapchat.enabled") == "snapchat")
-check("the Snapchat tab says so at the top", '{#if tab.id === "snapchat"}<NotHere feature="snapchat" />{/if}' in settings)
+check("every browser platform's tab says so at the top",
+      '{#if tab.id === "snapchat" || tab.id === "tiktok" || tab.id === "instagram" || tab.id === "x"\n'
+      '                 || tab.id === "reddit" || tab.id === "whatsapp"}' in settings
+      and "<NotHere feature={tab.id} />" in settings)
 acc = read("pages/Accounts.svelte")
-check("adding an account: the platform says whether it runs here", '<NotHere feature={editPlatform === "discord" ? "discord" : "snapchat"} />' in acc)
+check("adding an account: the platform says whether it runs here", '<NotHere feature={editPlatform} />' in acc)
 check("and one that cannot is not added", "!blocked &&" in acc)
 check("without a browser to sign in with, a token is the way in", 'discordMode = missing("browser_login") ? "token" : "login";' in acc)
 check("the add menu tags what does not run here", '<NotHere feature="snapchat" variant="chip" />' in acc)
@@ -95,9 +98,11 @@ check("a choice can have an icon, a flag, or a badge with its initial", "o.icon"
 check("and a line under it saying what it does", '<span class="sel-opt-hint">' in sel)
 check("the chosen one's mark shows on the closed box", "{#if selected}{@render markOf(selected, true)}{/if}" in sel)
 check("one highlight glides from row to row", 'class="sel-glide"' in sel and "transform: translateY({glide.y}px)" in sel)
-check("rows settle in one after another", "calc(var(--i, 0) * 18ms)" in sel)
-check("a long list can be searched", "const searchable = $derived(options.length > 8);" in sel and '<label class="sel-search">' in sel)
-check("and it never runs off the screen", 'style="max-height: {room}px"' in sel and "options.some((o) => o.hint) ? 52 : 38" in sel)
+# Since 2026-11-02 the rows come in as the list unrolls (lib/unroll.ts), each as the edge reaches it.
+check("rows settle in one after another", 'use:unroll={".sel-opt"}' in sel)
+check("a long list can be searched", "const searchable = $derived(search ?? options.length > 8);" in sel and '<label class="sel-search">' in sel)
+# A row's line under its name runs to two lines rather than being cut off: such rows are counted taller.
+check("and it never runs off the screen", 'style="max-height: {room}px"' in sel and "const rowH = hinted ? 62 : 38;" in sel)
 check("the value still types itself in, with nothing left blinking",
       '<span class="sel-cursor"></span>' in sel and "@keyframes sel-blink" not in sel and "infinite" not in sel)
 check("the typing starts from the first letter drawn", "typing = null;          // done: the plain label, no cursor" in sel)
@@ -180,15 +185,15 @@ print("\n== Big Picture ==")
 q = read("lib/bigpicture/BPQueue.svelte")
 check("the queue scrolls instead of squeezing its cards together", "flex-shrink: 0;" in q and "overflow-y: auto;" in q)
 check("fading at whichever edge has more", ".bpq-list.is-above" in q and ".bpq-list.is-below" in q)
-check("whoever goes on stage is brought into view", 'scrollIntoView({ block: "nearest", behavior: "smooth" })' in q)
+check("whoever goes on stage is brought into view, in the list alone", "list.scrollBy(" in q)
 check("and a sticker reads as one", 'return m[2] ? `Sticker: ${m[2].trim()}` : "Sent a sticker";' in q)
 stage = read("lib/bigpicture/BPStage.svelte")
 check("the conversation scrolls back as far as it has been read", "messages.slice(-100)" in stage
-      and "overflow-y: auto;" in stage)
+      and "bp-scrolls" in stage)
 check("reading further back at the top", "if (el.scrollTop < 80) onearlier?.();" in stage
       and "export async function loadEarlier(" in read("lib/chats.ts"))
 check("keeping your place as earlier ones arrive", "el.scrollTop = beforeTop + (el.scrollHeight - beforeH);" in stage)
-check("and a way back to the newest", 'class="bps-newest"' in stage)
+check("and a way back to the newest", "bps-newest" in stage)
 mb = read("lib/components/MessageBody.svelte")
 check("a picture opens over Big Picture, not behind it", "z-index: 400;" in mb)
 check("and Escape closes the picture, not Big Picture", "e.stopImmediatePropagation();" in mb)

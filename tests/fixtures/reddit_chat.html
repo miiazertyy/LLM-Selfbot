@@ -1,0 +1,87 @@
+<!doctype html>
+<!--
+    Reddit chat, which is its own app on chat.reddit.com, in the shape redditbot.js reads:
+
+      - the rooms down the side are <rs-room-list-item>, each linking to /room/<id>
+      - a room with something new in it carries data-unread
+      - the messages are <rs-message> rows inside <rs-timeline>
+      - its own messages are drawn to the right of the pane's middle and theirs to the left, so the CSS here is
+        not decoration: it is what makes `mine` resolve. One row also carries a sender attribute, which is the
+        stronger answer where Reddit gives one.
+
+    Every word is x's and every address is made up.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>xxxx</title>
+  <style>
+    body { margin: 0; font: 14px/1.4 system-ui; display: flex; }
+    rs-room-list { display: block; width: 260px; border-right: 1px solid #333; }
+    rs-room-list-item { display: block; padding: 10px; }
+    rs-timeline { display: block; width: 680px; }
+    rs-message { display: block; width: 280px; margin: 6px 0; padding: 8px; background: #222; }
+    rs-message.mine { margin-left: 380px; }
+  </style>
+</head>
+<body>
+  <rs-room-list>
+    <!-- Somebody, with something new. -->
+    <rs-room-list-item data-unread>
+      <a href="/room/abc123">
+        xxxxxxxx
+        <span>xxxx xx xxxx xxxx?</span>
+        <a href="/user/xxxxxxxx">xxxxxxxx</a>
+        <img src="about:blank" alt="xxxxxx" />
+      </a>
+    </rs-room-list-item>
+
+    <!-- A group, read, with two people in it. -->
+    <rs-room-list-item room-type="group">
+      <a href="/room/def456">
+        xxx xxxxx
+        <span>xxxx xxxx</span>
+        <a href="/user/xxxxxx">xxxxxx</a>
+        <a href="/user/xxxxxxx">xxxxxxx</a>
+      </a>
+    </rs-room-list-item>
+
+    <!-- Reddit's own, which is never answered. -->
+    <rs-room-list-item>
+      <a href="/room/ghi789">
+        reddit
+        <span>xxxxxxx xx xxxxxx</span>
+      </a>
+    </rs-room-list-item>
+  </rs-room-list>
+
+  <rs-timeline>
+    <rs-message data-event-id="e1" sender="@xxxxxxxx:reddit.com">
+      xxxxxxxx
+      <span>xxxx xx xxxx xxxx?</span>
+      <time datetime="2026-10-31T18:02:00.000Z">18:02</time>
+    </rs-message>
+
+    <rs-message class="mine" data-event-id="e2" sender="@aliciamwwoff:reddit.com">
+      aliciamwwoff
+      <span>xxxx xxxxx xxxx xxxx.</span>
+      <time datetime="2026-10-31T18:03:00.000Z">18:03</time>
+    </rs-message>
+
+    <!-- One with a picture and no words, and no sender attribute: which side it is drawn on is the only answer. -->
+    <rs-message data-event-id="e3">
+      <img src="about:blank" alt="xxxx" />
+      <time datetime="2026-10-31T18:05:00.000Z">18:05</time>
+    </rs-message>
+
+    <!-- A link with nothing said about it. -->
+    <rs-message data-event-id="e4" sender="@xxxxxxxx:reddit.com">
+      <a href="https://www.reddit.com/r/xxxxxxx/comments/1abc2de/xxxxx_xxxx/">xxxxx</a>
+      <time datetime="2026-10-31T18:07:00.000Z">18:07</time>
+    </rs-message>
+  </rs-timeline>
+
+  <div contenteditable="true" role="textbox" aria-label="xxxxxxx"></div>
+  <button aria-label="xxxx">xxxx</button>
+</body>
+</html>

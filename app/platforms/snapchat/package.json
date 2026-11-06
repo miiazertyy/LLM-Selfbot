@@ -8,10 +8,13 @@
     "start": "node snapchat_runner.js"
   },
   "dependencies": {
+    "baileys": "7.0.0-rc14",
+    "jimp": "1.6.1",
     "dotenv": "^18.0.3",
     "puppeteer": "^24.1.1",
     "puppeteer-extra": "^3.3.6",
-    "puppeteer-extra-plugin-stealth": "^2.11.2"
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
+    "proxy-agent": "^6.5.0"
   },
   "license": "ISC"
 }

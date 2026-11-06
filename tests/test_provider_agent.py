@@ -115,8 +115,10 @@ print("\n== the model lists get through too ==")
 providers._cache.clear()
 seen.clear()
 listed = providers.list_models("mistral", {"bot": {}}, force=True)
-check("a provider's model list loads behind the same guard", [m["id"] for m in listed["models"]] == ["model-a", "model-b"]
+check("a provider's model list loads behind the same guard", [m["id"] for m in listed["models"]][:2] == ["model-a", "model-b"]
       and not listed["error"], str(listed))
+check("with what it hears and speaks with beside it (app/voice/speech.py)",
+      {"voxtral-mini-transcribe-3-0", "voxtral-mini-tts-3-0"} <= {m["id"] for m in listed["models"]})
 check("sent with the app's name", seen and seen[0].startswith("LLMSelfbot/"), str(seen[:1]))
 
 server.shutdown()

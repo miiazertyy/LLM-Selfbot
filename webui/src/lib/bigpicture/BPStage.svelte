@@ -1,107 +1,114 @@
 <script lang="ts">
   /**
-   * The centre of Big Picture: the conversation in the spotlight, big.
+   * The conversation on stage, big: the middle of the Now page.
    *
-   * Their picture in a ring that counts down to the reply, who they are and
-   * where, the tracker from Received to Sent, and the conversation itself in
-   * large bubbles. New messages pop in; while the model writes or the reply is
-   * typed out, dots bounce where it will appear; when it has gone, a check.
-   * A change of spotlight pulls the next one up from below (motion.ts), and the
-   * avatar flies in from its card in the queue, and back to it when it leaves,
+   * Their picture in a ring that counts down to the reply, who they are and where,
+   * six slim segments from Received to Sent with the one under way filling, and the
+   * conversation itself in large bubbles, each run of them with one face and one
+   * time. New messages pop in; while the model writes or the reply is typed out,
+   * dots bounce where it will appear, with what it is thinking in a faint bubble
+   * above them when it is a model that says. When the reply has gone, a check, and
+   * the thought folds away.
+   *
+   * A change of who is on stage pulls the next one up from below (motion.ts), and
+   * the face flies in from its row in the queue, and back to it when it leaves,
    * under the key it arrived with (flightKey).
+   *
+   * The buttons say only what can be done now: Reply now when there is a wait to
+   * skip, Cancel when a reply is lined up, Ignore, and Answer again once they have
+   * been ignored. They rest with the pointer, so the view plays clean when nobody
+   * is touching it.
    */
+  import { slide } from "svelte/transition";
   import Avatar from "../components/Avatar.svelte";
   import Icon from "../components/Icon.svelte";
   import MessageBody from "../components/MessageBody.svelte";
+  import PlatformMark from "../components/PlatformMark.svelte";
   import { FULL_WHEN, fmtDate, whenSent } from "../fmt";
-  import { STEPS, progress, type Status } from "../chatstatus";
-  import { convKey, typingNow, type ChatAccount, type ChatUser, type ConvMessage } from "../chats";
-  import type { Scene } from "./director";
-  import BPScenes from "./BPScenes.svelte";
+  import { STEPS, progress } from "../chatstatus";
+  import { convKey, drafts, setDraft, typingNow, type ConvMessage } from "../chats";
+  import { platformOfUser } from "../platforms";
+  import { shortModel } from "../providers";
+  import { motionEnabled } from "../stores";
+  import type { Thought } from "../thoughts";
   import { fitText } from "./fit";
+  import { focusable } from "./focus";
   import { sparkOnMount } from "./fx";
-  import { flightKey, liftOut, popIn, receiveAvatar, riseIn, sendFace } from "./motion";
-  import type { MemoryPerson, SceneActions, SceneWorld } from "./types";
-
-  type Spot = { key: string; target: string; u: ChatUser; st: Status; account?: ChatAccount; answered: boolean };
+  import { flightKey, popIn, receiveAvatar, sendFace } from "./motion";
+  import { ago, runsOf } from "./scenes";
+  import type { Spot } from "./types";
 
   let {
-    spot = null,
+    spot,
     messages = [],
-    onearlier,
     now = 0,
-    hideText = false,
     multi = false,
-    scene = null,
-    sceneKey = 0,
-    sceneData,
+    thought = null,
+    busy = false,
+    replying = false,
+    onearlier,
     onreply,
     oncancel,
     onignore,
     onsend,
-    busy = false,
-    replying = false,
+    composer = $bindable(null),
   }: {
-    spot?: Spot | null;
+    spot: Spot;
     messages?: ConvMessage[];
+    now?: number;
+    multi?: boolean;
+    /** What the model thought for this reply, when it says. */
+    thought?: Thought | null;
+    busy?: boolean;
+    replying?: boolean;
     /** Scrolled to the top: read further back. */
     onearlier?: () => void;
-    now?: number;
-    hideText?: boolean;
-    multi?: boolean;
-    scene?: Scene | null;
-    sceneKey?: number;
-    sceneData: {
-      recent: any[];
-      today: { replies: number; people: number; tokens: number; requests: number };
-      hourly: number[];
-      top: any[];
-      memory?: MemoryPerson | null;
-      /** How many are in the queue while the stage is idle: old ones nobody is answering. */
-      waiting?: number;
-      /** The rest of the app, for its scenes: accounts, pictures, requests, persona, health. */
-      world?: SceneWorld | null;
-      act?: SceneActions;
-    };
     /** Answer them now, skipping the wait. */
     onreply?: () => void;
     /** Drop the reply that is lined up. */
     oncancel?: () => void;
-    /** Stop answering them at all. */
+    /** Stop answering them, or start again. */
     onignore?: () => void;
     /** Send this text as the account. */
     onsend?: (text: string) => void;
-    busy?: boolean;
-    replying?: boolean;
+    /** The box to write in, for W. */
+    composer?: HTMLInputElement | null;
   } = $props();
 
-  const layerKey = $derived(spot ? `spot:${spot.key}` : `scene:${sceneKey}`);
   /** On the tracker: 0 received ... 5 sent. */
-  const stage = $derived(spot ? (spot.answered ? 5 : spot.st.phase === "live" ? spot.st.step ?? 0 : 0) : 0);
-  const typing = $derived(!!spot && !spot.answered && spot.st.phase === "live" && (spot.st.step === 2 || spot.st.step === 4));
+  const stage = $derived(spot.answered ? 5 : spot.st.phase === "live" ? spot.st.step ?? 0 : 0);
+  const quietly = $derived(!!spot.browsing || !!spot.ignored);
+  const typing = $derived(!spot.answered && !quietly && spot.st.phase === "live" && (spot.st.step === 2 || spot.st.step === 4));
   /** They are typing to it right now (lib/chats.ts typingNow): their dots, as the bot has its own. */
-  const theyType = $derived(!!spot && !!$typingNow[convKey(spot.target, String(spot.u.id))]);
-  const ring = $derived(spot ? (spot.answered ? 1 : spot.st.step === 1 || spot.st.step === 3 ? progress(spot.st, now) : spot.st.step ? 1 : 0) : 0);
+  const theyType = $derived(!!$typingNow[convKey(spot.target, String(spot.u.id))]);
+  /** How far round the ring is: the wait counting down, or all of it while it works. */
+  const ring = $derived(spot.answered ? 1 : quietly ? 0 : spot.st.step === 1 || spot.st.step === 3 ? progress(spot.st, now) : spot.st.step ? 1 : 0);
+  const canHurry = $derived(!spot.answered && !quietly && (spot.st.phase === "needs" || spot.st.step === 1 || spot.st.step === 3));
+  const canCancel = $derived(!spot.answered && !quietly && spot.st.phase === "live");
+
+  const statusWord = $derived(spot.ignored ? "The bot is off for them" : spot.browsing
+    ? (spot.u.ts ? `Last message ${ago(spot.u.ts, now)}` : "Not waiting")
+    : spot.answered ? "Replied" : spot.st.title);
+  const statusTone = $derived(spot.ignored ? "warn" : spot.browsing ? "muted" : spot.answered ? "good" : spot.st.tone);
 
   /**
-   * The conversation, both sides, as far back as it has been read (it used to
-   * be the last five, with no way to see the rest); the row's own last
-   * message when the history has not been read yet.
+   * The conversation, both sides, as far back as it has been read; the row's own
+   * last message when the history has not been read yet.
    */
   const shown = $derived.by<ConvMessage[]>(() => {
-    if (!spot) return [];
     if (messages.length) return messages.slice(-100);
     const u = spot.u;
+    if (!u.text && !u.snippet && !u.attachments?.length) return [];
     return [{ mine: false, ts: u.ts ?? now, mid: u.mid, text: u.text || u.snippet || "",
               attachments: u.attachments, stickers: u.stickers, embeds: u.embeds }];
   });
+  const ends = $derived(runsOf(shown));
   const where = $derived.by(() => {
-    if (!spot) return "";
     if (spot.u.kind === "server") return spot.u.where ?? "A server";
     const acct = spot.account?.display_name || spot.account?.username;
-    return multi && acct ? `Direct message · to ${acct}` : "Direct message";
+    return multi && acct ? `Direct message, to ${acct}` : "Direct message";
   });
-  const C = 2 * Math.PI * 78;
+  const C = 2 * Math.PI * 52;
 
   // ── Scrolling back ───────────────────────────────────────────────────────
   // It starts at the newest message and follows new ones as they come, until
@@ -147,442 +154,369 @@
     firstId = first;
     above = el.scrollTop > 4;
   });
-  // Someone new on stage: start at their newest message.
+  // The bubbles below the last message come and go: keep the newest in view while they do.
   $effect(() => {
-    void spot?.key;
-    stick = true;
-    firstId = "";
-    queueMicrotask(() => {
-      if (msgsEl) msgsEl.scrollTop = msgsEl.scrollHeight;
-    });
+    void typing;
+    void theyType;
+    void thought;
+    if (stick) queueMicrotask(() => msgsEl && (msgsEl.scrollTop = msgsEl.scrollHeight));
   });
 
-  /** What is being written to them from here, kept per person. */
-  let drafts = $state<Record<string, string>>({});
-  const key = $derived(spot?.key ?? "");
-  let draft = $state("");
+  // ── What it is thinking, typed out ───────────────────────────────────────
+  let typed = $state(0);
+  let thoughtEl: HTMLElement | null = $state(null);
   $effect(() => {
-    // Switching conversation swaps the draft, so a half-written line is not lost
-    // when the director moves on and comes back.
-    const k = key;
-    draft = drafts[k] ?? "";
+    const text = thought?.text ?? "";
+    void thought?.at;
+    typed = 0;
+    if (!text) return;
+    if (!$motionEnabled) {
+      typed = text.length;
+      return;
+    }
+    const id = setInterval(() => {
+      typed = Math.min(text.length, typed + 3);
+      if (typed >= text.length) clearInterval(id);
+    }, 16);
+    return () => clearInterval(id);
   });
   $effect(() => {
-    const k = key;
-    if (k) drafts[k] = draft;
+    void typed;
+    const box = thoughtEl;
+    if (box && box.scrollHeight > box.clientHeight) box.scrollTop = box.scrollHeight;
+    if (stick && msgsEl) msgsEl.scrollTop = msgsEl.scrollHeight;
   });
+
+  // ── Writing to them from here ────────────────────────────────────────────
+  // The Chats tab's own drafts: a half-written line follows them there and back.
+  const draftKey = $derived(convKey(spot.target, String(spot.u.id)));
+  const draft = $derived($drafts[draftKey] ?? "");
   function say() {
     const text = draft.trim();
     if (!text) return;
-    draft = "";
+    setDraft(draftKey, "");
     onsend?.(text);
   }
 </script>
 
 <div class="bps">
-  {#key layerKey}
-    <div class="bps-layer" in:riseIn out:liftOut>
-      {#if spot}
-        <div class="bps-hero">
-          <div class="bps-halo" data-tone={spot.answered ? "good" : spot.st.tone} data-step={spot.answered ? 5 : spot.st.step ?? 0}>
-            <svg class="bps-ring" viewBox="0 0 170 170" aria-hidden="true">
-              <circle cx="85" cy="85" r="78" class="track" />
-              <circle cx="85" cy="85" r="78" class="fill" style="stroke-dasharray: {C}; stroke-dashoffset: {C * (1 - ring)}" />
-            </svg>
-            <span class="bps-face" use:flightKey={spot.key} in:receiveAvatar|global={{ key: spot.key }} out:sendFace|global>
-              <Avatar src={spot.u.avatar} name={spot.u.name} size={132} zoom={false} />
-            </span>
-            {#if spot.answered}
-              <!-- The reply went out: the check pops in with a shower of sparks. -->
-              <span class="bps-done" in:popIn use:sparkOnMount={{ count: 22, spread: 130 }}><Icon name="check" size={24} /></span>
-            {/if}
-          </div>
-          <div class="bps-who">
-            <div class="bps-where">{where}</div>
-            <div class="bps-name" use:fitText={{ min: 26, text: spot.u.name }}>{spot.u.name}</div>
-            {#key spot.answered ? "done" : spot.st.title}
-              <div class="bps-status" data-tone={spot.answered ? "good" : spot.st.tone} in:popIn={{ from: 0.92 }}>
-                {spot.answered ? "Replied" : spot.st.title}
-              </div>
-            {/key}
-          </div>
-        </div>
-
-        <ol class="bps-track" aria-label="Where the reply is">
-          {#each STEPS as label, i}
-            <li class="bps-step" class:is-done={i < stage || stage === 5} class:is-now={i === stage && stage < 5}>
-              <span class="bps-dot"></span><span class="bps-step-label">{label}</span>
-            </li>
-            {#if i < STEPS.length - 1}<li class="bps-line" class:is-done={i < stage} aria-hidden="true"><i></i></li>{/if}
-          {/each}
-        </ol>
-
-        <div class="bps-msgs" class:is-hidden={hideText} class:is-above={above}
-             bind:this={msgsEl} onscroll={onMsgsScroll}>
-          {#each shown as m, i (m.mid ?? `${m.ts}:${i}`)}
-            <div class="bps-msg" class:is-mine={m.mine} class:is-deleted={!!m.deleted} in:popIn>
-              {#if !m.mine}
-                <span class="bps-msg-av"><Avatar src={m.author?.avatar ?? spot.u.avatar} name={m.author?.name ?? spot.u.name} size={34} zoom={false} /></span>
-              {/if}
-              <div class="bps-bubble">
-                {#if m.author && !m.mine}<div class="bps-author">{m.author.name}</div>{/if}
-                <MessageBody text={m.text ?? ""} attachments={m.attachments ?? []} stickers={m.stickers ?? []} embeds={m.embeds ?? []} clamp={4} />
-                {#if m.deleted}
-                  <!-- Deleted on Discord and kept: a bin on its corner. -->
-                  <span class="bps-bin" title="{m.mine ? 'You deleted this' : `${m.author?.name ?? spot.u.name} deleted this`} · {fmtDate(m.deleted * 1000, FULL_WHEN)}"><Icon name="trash" size={13} /></span>
-                {:else if m.edited}
-                  <span class="bps-edited">edited</span>
-                {/if}
-              </div>
-              <!-- When it was sent: always there, quietly, since this view is
-                   watched more than pointed at. -->
-              {#if m.ts}<span class="bps-time" title={fmtDate(m.ts * 1000, FULL_WHEN)}>{whenSent(m.ts)}</span>{/if}
-            </div>
-          {/each}
-          {#if theyType && !typing}
-            <div class="bps-msg" in:popIn>
-              <span class="bps-msg-av"><Avatar src={spot.u.avatar} name={spot.u.name} size={34} zoom={false} /></span>
-              <div class="bps-bubble bps-typing" title="{spot.u.name} is typing"><i></i><i></i><i></i></div>
-            </div>
-          {/if}
-          {#if typing}
-            <div class="bps-msg is-mine" in:popIn>
-              <div class="bps-bubble bps-typing" title={spot.st.title}><i></i><i></i><i></i></div>
-            </div>
-          {/if}
-        </div>
-        {#if !stick}
-          <button type="button" class="bps-newest" onclick={() => toNewest()} in:popIn>
-            <Icon name="chevron" size={13} />Newest
-          </button>
-        {/if}
-
-        <!-- The same things the Chats tab can do, without leaving: answer them
-             now, drop the reply that is lined up, stop answering them, or write
-             one yourself. Only shown while the mouse is about, so the view still
-             plays by itself when nobody is touching it. -->
-        {#if onreply || onsend}
-          <div class="bps-do">
-            <form class="bps-say" onsubmit={(e) => { e.preventDefault(); say(); }}>
-              <input bind:value={draft} placeholder="Write to {spot.u.name}…" maxlength="2000"
-                     spellcheck="false" aria-label="Write to {spot.u.name}"
-                     onkeydown={(e) => e.stopPropagation()} />
-              <button type="submit" class="bps-btn is-go" disabled={!draft.trim() || busy}
-                      title="Send as the account" aria-label="Send">
-                <Icon name="send" size={15} />
-              </button>
-            </form>
-            {#if onreply && !spot.answered}
-              <button class="bps-btn" onclick={onreply} disabled={busy || replying}
-                      title="Write and send a reply now, skipping the wait">
-                <Icon name="chats" size={14} />{replying ? "Replying" : "Reply now"}
-              </button>
-            {/if}
-            {#if oncancel && !spot.answered && spot.st.phase === "live"}
-              <button class="bps-btn" onclick={oncancel} disabled={busy}
-                      title="Drop the reply that is lined up">
-                <Icon name="close" size={13} />Cancel
-              </button>
-            {/if}
-            {#if onignore}
-              <button class="bps-btn is-off" onclick={onignore} disabled={busy}
-                      title="Stop answering them">
-                <Icon name="eyeOff" size={14} />Ignore
-              </button>
-            {/if}
-          </div>
-        {/if}
-      {:else if scene}
-        <BPScenes {scene} {now} {hideText} recent={sceneData.recent} today={sceneData.today} hourly={sceneData.hourly}
-                  top={sceneData.top} memory={sceneData.memory ?? null} waiting={sceneData.waiting ?? 0}
-                  world={sceneData.world ?? null} act={sceneData.act ?? {}} />
+  <div class="bps-hero">
+    <div class="bps-halo" data-tone={statusTone} data-step={spot.answered ? 5 : quietly ? 0 : spot.st.step ?? 0}>
+      <svg class="bps-ring" viewBox="0 0 116 116" aria-hidden="true"><circle cx="58" cy="58" r="52" class="track" /></svg>
+      <svg class="bps-ring is-fill" viewBox="0 0 116 116" aria-hidden="true">
+        <circle cx="58" cy="58" r="52" class="fill" style="stroke-dasharray: {C}; stroke-dashoffset: {C * (1 - ring)}" />
+      </svg>
+      <span class="bps-face" use:flightKey={spot.key} in:receiveAvatar|global={{ key: spot.key }} out:sendFace|global>
+        <Avatar src={spot.u.avatar} name={spot.u.name} size={92} zoom={false} />
+      </span>
+      {#if spot.answered}
+        <!-- The reply went out: the check pops in with a shower of sparks. -->
+        <span class="bps-done" in:popIn use:sparkOnMount={{ count: 22, spread: 130 }}><Icon name="check" size={18} /></span>
       {/if}
     </div>
-  {/key}
+    <div class="bps-who">
+      <div class="bp-name" use:fitText={{ min: 26, text: spot.u.name }}>{spot.u.name}</div>
+      <div class="bps-line">
+        {#key statusWord}
+          <span class="bps-status" data-tone={statusTone} in:popIn={{ from: 0.94 }}>{statusWord}</span>
+        {/key}
+        <span class="bps-where"><PlatformMark platform={spot.account?.platform ?? platformOfUser(spot.u.id).id} size={18} />{where}</span>
+      </div>
+      {#if !quietly}
+        <ol class="bps-track" aria-label="Where the reply is">
+          {#each STEPS as label, i}
+            <li class="bps-step" class:is-done={i < stage || stage === 5} class:is-now={i === stage && stage < 5}
+                data-moving={i === stage && (stage === 1 || stage === 3) ? "yes" : undefined}>
+              <span class="bps-seg"><i style="--f: {i === stage && (stage === 1 || stage === 3) ? progress(spot.st, now) : i < stage || stage === 5 ? 1 : i === stage ? 1 : 0}"></i></span>
+              <span class="bps-step-label">{label}</span>
+            </li>
+          {/each}
+        </ol>
+      {/if}
+    </div>
+  </div>
+
+  <div class="bps-msgs bp-scrolls" class:is-above={above} bind:this={msgsEl} onscroll={onMsgsScroll}>
+    {#each shown as m, i (m.mid ?? `${m.ts}:${i}`)}
+      <div class="bps-msg" class:is-mine={m.mine} class:is-end={ends[i]} class:is-deleted={!!m.deleted} in:popIn>
+        {#if !m.mine}
+          <span class="bps-msg-av">
+            {#if ends[i]}<Avatar src={m.author?.avatar ?? spot.u.avatar} name={m.author?.name ?? spot.u.name} size={32} zoom={false} />{/if}
+          </span>
+        {/if}
+        <div class="bps-bubble" data-private>
+          {#if m.author && !m.mine}<div class="bps-author">{m.author.name}</div>{/if}
+          <MessageBody text={m.text ?? ""} attachments={m.attachments ?? []} stickers={m.stickers ?? []} embeds={m.embeds ?? []} clamp={4} />
+          {#if m.deleted}
+            <!-- Deleted on Discord and kept: a bin on its corner. -->
+            <span class="bps-bin" title="{m.mine ? 'You deleted this' : `${m.author?.name ?? spot.u.name} deleted this`} · {fmtDate(m.deleted * 1000, FULL_WHEN)}"><Icon name="trash" size={13} /></span>
+          {:else if m.edited}
+            <span class="bps-edited">edited</span>
+          {/if}
+        </div>
+        <!-- When it was sent, once for each run of them, quietly: this view is watched more than pointed at. -->
+        {#if m.ts && ends[i]}<span class="bps-time" title={fmtDate(m.ts * 1000, FULL_WHEN)}>{whenSent(m.ts)}</span>{/if}
+      </div>
+    {/each}
+    {#if theyType && !typing}
+      <div class="bps-msg is-end" in:popIn>
+        <span class="bps-msg-av"><Avatar src={spot.u.avatar} name={spot.u.name} size={32} zoom={false} /></span>
+        <div class="bps-bubble bps-typing" title="{spot.u.name} is typing"><i></i><i></i><i></i></div>
+      </div>
+    {/if}
+    {#if thought && !spot.answered && !quietly}
+      <div class="bps-msg is-mine bps-think" transition:slide={{ duration: $motionEnabled ? 280 : 0 }}>
+        <div class="bps-thought" data-private>
+          <div class="bps-thought-head">Thinking · {shortModel(thought.model || "model")}</div>
+          <p bind:this={thoughtEl}>{thought.text.slice(0, typed)}</p>
+        </div>
+      </div>
+    {/if}
+    {#if typing}
+      <div class="bps-msg is-mine is-end" in:popIn>
+        <div class="bps-bubble bps-typing" title={spot.st.title}><i></i><i></i><i></i></div>
+      </div>
+    {/if}
+  </div>
+  {#if !stick}
+    <button type="button" class="bp-btn is-small bps-newest" onclick={() => toNewest()} in:popIn>
+      <Icon name="arrowDown" size={14} />Newest
+    </button>
+  {/if}
+
+  <div class="bps-do">
+    <form class="bps-say" onsubmit={(e) => { e.preventDefault(); say(); }}>
+      <input bind:this={composer} value={draft} oninput={(e) => setDraft(draftKey, e.currentTarget.value)}
+             placeholder="Write to {spot.u.name}…" maxlength="2000" spellcheck="false" aria-label="Write to {spot.u.name}"
+             use:focusable={{ id: `write:${spot.key}` }} data-private="soft"
+             onkeydown={(e) => { if (e.key !== "Escape") e.stopPropagation(); }} />
+      <button type="submit" class="bp-btn is-small is-round bps-send" class:is-go={!!draft.trim()} disabled={!draft.trim() || busy}
+              title="Send as the account" aria-label="Send">
+        <Icon name="send" size={15} />
+      </button>
+    </form>
+    {#if canHurry}
+      <button class="bp-btn" use:focusable={{ id: "do:reply" }} onclick={onreply} disabled={busy || replying} title="Write and send a reply now (R)">
+        <Icon name="reply" size={15} />{replying ? "Replying" : "Reply now"}
+      </button>
+    {/if}
+    {#if canCancel}
+      <button class="bp-btn" use:focusable={{ id: "do:cancel" }} onclick={oncancel} disabled={busy} title="Drop the reply that is lined up">
+        <Icon name="close" size={14} />Cancel
+      </button>
+    {/if}
+    {#if spot.ignored}
+      <button class="bp-btn" use:focusable={{ id: "do:again" }} onclick={onignore} disabled={busy} title="Let the bot answer them again">
+        <Icon name="eye" size={15} />Answer again
+      </button>
+    {:else if !spot.browsing}
+      <button class="bp-btn bps-off" use:focusable={{ id: "do:ignore" }} onclick={onignore} disabled={busy} title="Stop answering them">
+        <Icon name="eyeOff" size={15} />Ignore
+      </button>
+    {/if}
+  </div>
 </div>
 
 <style>
-  /* One cell exactly as wide as the stage's column. Its width used to come from
-     the content, so a long name made the whole stage wider, and the tracker and
-     your own messages (aligned right) ran on under the panels on the right. */
-  /* flex: the rest of the column, with the chapters under it taking what they need. */
-  .bps { display: grid; grid-template: minmax(0, 1fr) / minmax(0, 1fr); min-width: 0; min-height: 0; height: 100%; flex: 1 1 0; }
-  /* The leaving and the arriving stage share the one cell, so one lifts off the other.
-     Centred, and no wider than reads well, however much room the side panels leave it. */
-  .bps-layer {
-    grid-area: 1 / 1;
-    justify-self: center;
-    will-change: transform, opacity;
+  /* One cell exactly as wide as its column, and no wider than reads well: its
+     width used to come from the content, so a long name made the whole stage wider. */
+  .bps {
+    position: relative;
     display: flex;
-    width: min(100%, 1180px);
+    width: min(100%, 1120px);
+    height: 100%;
     min-width: 0;
     min-height: 0;
     flex-direction: column;
-    /* safe: taller than the stage, it starts at the top rather than losing its heading off it */
-    justify-content: safe center;
-    gap: 26px;
-    padding-bottom: 2vh;
+    gap: clamp(10px, 1.6vh, 18px);
+    margin-inline: auto;
+    padding-bottom: 6px;
   }
-  .bps-hero { display: flex; align-items: center; gap: clamp(18px, 2.4vw, 34px); }
-  .bps-halo { position: relative; display: grid; width: 170px; height: 170px; flex-shrink: 0; place-items: center; }
+  .bps-hero { display: flex; flex-shrink: 0; align-items: center; gap: clamp(14px, 1.5vw, 26px); }
+  .bps-halo { position: relative; display: grid; width: 116px; height: 116px; flex-shrink: 0; place-items: center; }
   .bps-ring { position: absolute; inset: 0; transform: rotate(-90deg); overflow: visible; }
-  .bps-ring circle { fill: none; stroke-width: 4; }
-  .bps-ring .track { stroke: rgb(255 255 255 / 0.1); }
-  .bps-ring .fill {
-    stroke: var(--color-accent);
-    stroke-linecap: round;
-    filter: drop-shadow(0 0 16px color-mix(in srgb, var(--color-accent) 42%, transparent));
-    transition: stroke-dashoffset 1s linear;
-  }
+  .bps-ring circle { fill: none; stroke-width: 3.5; }
+  .bps-ring .track { stroke: var(--bp-line); }
+  /* A ring is drawn on the page's own thread, every frame its arc moves: a smooth second's worth of it, begun again
+     every second, was a style pass at the screen's 143 a second for as long as the view was open, and most of what it
+     cost sitting still. Four steps a second look the same on a ring this size. */
+  .bps-ring .fill { stroke: var(--bp-lit); stroke-linecap: round; transition: stroke-dashoffset 1s steps(4, jump-none); }
   /* Writing: the whole ring breathes rather than a dashed arc whipping round.
      The spinner read as a loading gif stuck on someone's face; a slow swell of
      light says "working on it" without demanding attention, and it is opacity
      only, so it composites. */
-  .bps-halo[data-step="2"] .bps-ring .fill,
-  .bps-halo[data-step="3"] .bps-ring .fill { animation: bps-breathe 2.6s ease-in-out infinite; }
+  .bps-halo[data-step="2"] .bps-ring.is-fill,
+  .bps-halo[data-step="3"] .bps-ring.is-fill { animation: bps-breathe 2.6s ease-in-out infinite; }
   .bps-halo[data-step="2"] .bps-ring .fill { stroke-dasharray: none !important; stroke-dashoffset: 0 !important; }
-  .bps-halo[data-tone="good"] .bps-ring .fill { stroke: var(--color-good); filter: drop-shadow(0 0 19px color-mix(in srgb, var(--color-good) 42%, transparent)); }
+  .bps-halo[data-tone="good"] .bps-ring .fill { stroke: var(--color-good); }
   @keyframes bps-breathe { 0%, 100% { opacity: 0.45; } 50% { opacity: 1; } }
-  .bps-face { display: grid; place-items: center; border-radius: 999px; box-shadow: 0 20px 60px -20px rgb(0 0 0 / 0.8); }
+  .bps-face { display: grid; place-items: center; border-radius: 999px; }
   .bps-done {
     position: absolute;
-    right: 8px;
-    bottom: 8px;
+    right: 4px;
+    bottom: 4px;
     display: grid;
-    width: 40px;
-    height: 40px;
+    width: 32px;
+    height: 32px;
     place-items: center;
     border-radius: 999px;
-    color: #fff;
+    color: var(--color-bg);
     background: var(--color-good);
-    box-shadow: 0 0 0 5px color-mix(in srgb, var(--color-good) 25%, transparent), 0 0 48px color-mix(in srgb, var(--color-good) 42%, transparent);
   }
   /* All the room beside the face, whatever the name: fitText measures against it. */
-  .bps-who { display: flex; min-width: 0; flex: 1 1 0; flex-direction: column; gap: 4px; }
-  .bps-where { font-size: 13px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: var(--bp-faint); }
-  .bps-name {
-    overflow: hidden;
-    font-size: clamp(38px, 4.6vw, 72px);
-    font-weight: 800;
-    line-height: 1.16;
-    letter-spacing: -0.035em;
-    color: #fff;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    /* Room above and below for an emoji, which stands taller than the letters:
-       at a line height of 1 the box it is cut to sliced them flat. The margin
-       takes the room back, so the layout is where it was. */
-    padding-block: 0.1em;
-    margin-block: -0.1em;
-  }
-  .bps-status { font-size: clamp(17px, 1.7vw, 24px); font-weight: 600; color: color-mix(in srgb, var(--color-accent) 75%, white); }
+  .bps-who { display: flex; min-width: 0; flex: 1 1 0; flex-direction: column; gap: 3px; }
+  .bps-line { display: flex; min-width: 0; flex-wrap: wrap; align-items: baseline; gap: 2px 14px; }
+  .bps-status { font-size: clamp(16px, 1.25vw, 22px); font-weight: 650; color: var(--bp-lit); }
   .bps-status[data-tone="good"] { color: var(--color-good); }
   .bps-status[data-tone="warn"] { color: var(--color-warn); }
   .bps-status[data-tone="bad"] { color: var(--color-bad); }
   .bps-status[data-tone="muted"] { color: var(--bp-muted); }
+  .bps-where { display: inline-flex; min-width: 0; align-items: center; align-self: center; gap: 7px; overflow: hidden; font-size: 13px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; color: var(--bp-faint); }
 
-  /* Doing something about the conversation on stage. */
-  .bps-do { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; padding: 2px 4px; }
-  .bps-say {
-    display: flex;
-    min-width: 260px;
-    flex: 1 1 320px;
-    align-items: center;
-    gap: 6px;
-    padding: 5px 5px 5px 16px;
-    border-radius: 999px;
-    background: rgb(255 255 255 / 0.07);
-    box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.1);
-    transition: box-shadow 0.2s ease;
-  }
-  .bps-say:focus-within { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 60%, transparent); }
-  .bps-say input {
-    min-width: 0;
-    flex: 1;
-    font-size: 15px;
-    color: #fff;
-    background: transparent;
-    outline: none;
-  }
-  .bps-say input::placeholder { color: var(--bp-faint); }
-  /* As tall as the box you write in beside them: that is 38px of send button
-     inside 5px of padding either side, so these are the same 48 and the row
-     reads as one control rather than a tall box next to short buttons. */
-  .bps-btn {
-    display: inline-flex;
-    flex-shrink: 0;
-    align-items: center;
-    gap: 7px;
-    height: 48px;
-    padding: 0 20px;
-    border-radius: 999px;
-    font-size: 14px;
-    font-weight: 600;
-    color: #fff;
-    background: rgb(255 255 255 / 0.08);
-    box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.1);
-    transition: transform 0.25s var(--spring), background-color 0.2s ease;
-  }
-  .bps-btn:hover:not(:disabled) { transform: translateY(-1px); background: rgb(255 255 255 / 0.14); }
-  .bps-btn:active:not(:disabled) { transform: scale(0.96); }
-  .bps-btn:disabled { opacity: 0.4; }
-  .bps-btn.is-go {
-    width: 38px;
-    height: 38px;
-    justify-content: center;
-    padding: 0;
-    color: var(--color-bg);
-    background: var(--color-accent);
-    box-shadow: none;
-  }
-  .bps-btn.is-off:hover:not(:disabled) { background: color-mix(in srgb, var(--color-bad) 35%, transparent); }
-  @media (max-width: 720px) {
-    .bps-say { min-width: 0; flex-basis: 100%; }
-  }
-  .bps-track { display: flex; min-width: 0; align-items: center; gap: 0; padding: 4px 6px; }
-  .bps-step { display: flex; flex-shrink: 0; flex-direction: column; align-items: center; gap: 8px; width: 64px; }
-  .bps-dot {
-    width: 16px;
-    height: 16px;
-    border-radius: 999px;
-    background: rgb(255 255 255 / 0.1);
-    box-shadow: inset 0 0 0 1.5px rgb(255 255 255 / 0.18);
-    transition: background-color 0.4s ease, box-shadow 0.4s ease, transform 0.5s var(--spring);
-  }
-  .bps-step.is-done .bps-dot { background: var(--color-accent); box-shadow: 0 0 22px color-mix(in srgb, var(--color-accent) 42%, transparent); }
-  .bps-step.is-now .bps-dot {
-    transform: scale(1.35);
-    background: #fff;
-    box-shadow: 0 0 0 5px color-mix(in srgb, var(--color-accent) 40%, transparent), 0 0 35px color-mix(in srgb, var(--color-accent) 42%, transparent);
-    animation: bps-now 1.4s ease-in-out infinite;
-  }
-  @keyframes bps-now { 50% { box-shadow: 0 0 0 10px color-mix(in srgb, var(--color-accent) 8%, transparent), 0 0 48px color-mix(in srgb, var(--color-accent) 42%, transparent); } }
-  .bps-step-label { font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--bp-faint); }
-  .bps-step.is-now .bps-step-label, .bps-step.is-done .bps-step-label { color: #fff; }
-  .bps-line { flex: 1; height: 3px; margin-bottom: 26px; overflow: hidden; border-radius: 999px; background: rgb(255 255 255 / 0.08); }
-  .bps-line i { display: block; width: 0; height: 100%; background: var(--color-accent); box-shadow: 0 0 16px color-mix(in srgb, var(--color-accent) 42%, transparent); transition: width 0.7s var(--swift); }
-  .bps-line.is-done i { width: 100%; }
+  /* Six slim segments, one running on from the last, the way a story's do. */
+  .bps-track { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 5px; margin-top: 7px; max-width: 620px; }
+  .bps-step { display: flex; min-width: 0; flex-direction: column; gap: 5px; }
+  .bps-seg { display: block; height: 4px; overflow: hidden; border-radius: 999px; background: var(--bp-line); }
+  .bps-seg i { display: block; height: 100%; border-radius: 999px; background: var(--bp-lit); transform: scaleX(var(--f, 0)); transform-origin: left; transition: transform 1s linear; }
+  /* Under way with nothing to count: it breathes, as the ring does. */
+  .bps-step.is-now:not([data-moving]) .bps-seg i { animation: bps-breathe 2.6s ease-in-out infinite; }
+  .bps-step-label { overflow: hidden; font-size: 11.5px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; color: var(--bp-faint); transition: color 0.3s ease; }
+  .bps-step.is-now .bps-step-label { color: var(--color-ink); }
 
   .bps-msgs {
     display: flex;
     min-height: 0;
+    flex: 1 1 0;
     flex-direction: column;
-    gap: 12px;
-    overflow-y: auto;
-    overscroll-behavior: contain;
-    scrollbar-width: none;
-    padding: 4px 4px 8px;
+    gap: 3px;
+    padding: 4px 2px 6px;
   }
-  .bps-msgs::-webkit-scrollbar { display: none; }
   /* Scrolled up: what is above fades in from the top edge. */
   .bps-msgs.is-above {
     -webkit-mask-image: linear-gradient(to bottom, transparent, #000 36px);
     mask-image: linear-gradient(to bottom, transparent, #000 36px);
   }
-  .bps-msg { flex-shrink: 0; }
-  .bps-newest {
-    position: absolute;
-    right: 18px;
-    bottom: 92px;
-    z-index: 3;
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 7px 14px 7px 11px;
-    border-radius: 999px;
-    font-size: 13px;
-    font-weight: 600;
-    color: #fff;
-    background: color-mix(in srgb, var(--color-accent) 55%, rgb(20 20 30 / 0.7));
-    box-shadow: 0 10px 30px -10px rgb(0 0 0 / 0.7);
-    backdrop-filter: blur(12px);
-  }
-  .bps-newest :global(svg) { transform: rotate(90deg); }
-  .bps-msg { display: flex; align-items: flex-end; gap: 10px; max-width: 78%; }
+  /* Pushed to the bottom as a chat is, and flex-shrink 0 so a long one scrolls rather than squashing. */
+  .bps-msg:first-child { margin-top: auto; }
+  .bps-msg { display: flex; flex-shrink: 0; max-width: 76%; align-items: flex-end; gap: 10px; }
+  .bps-msg.is-end { margin-bottom: 12px; }
   .bps-msg.is-mine { align-self: flex-end; flex-direction: row-reverse; }
+  .bps-msg-av { display: grid; width: 32px; flex-shrink: 0; place-items: center; }
   .bps-time {
     flex-shrink: 0;
-    margin-bottom: 8px;
+    margin-bottom: 7px;
     font-size: 12px;
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
-    color: rgb(255 255 255 / 0.5);
+    color: var(--bp-faint);
   }
   .bps-bubble {
+    position: relative;
     min-width: 0;
-    padding: 13px 18px;
+    padding: clamp(9px, 1.1vh, 13px) clamp(13px, 1vw, 18px);
     overflow-wrap: anywhere;
-    border-radius: 22px 22px 22px 6px;
-    font-size: clamp(16px, 1.45vw, 21px);
-    line-height: 1.4;
-    color: #fff;
+    border-radius: 21px;
+    font-size: clamp(16px, 1.22vw, 24px);
+    line-height: 1.36;
     /* No backdrop-filter here on purpose. A bubble is small and sits on a dark
        room, so a flat translucent fill is indistinguishable from a blurred one -
        and a backdrop blur per bubble has to re-sample the moving backdrop on
        every frame of every stage change, which is most of what made picking a
-       conversation stutter. The big panels keep theirs; there are only a few. */
-    background: rgb(255 255 255 / 0.1);
-    box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.09);
+       conversation stutter. */
+    background: color-mix(in srgb, var(--color-ink) 11%, transparent);
   }
-  .bps-msg.is-mine .bps-bubble {
-    border-radius: 22px 22px 6px 22px;
-    background: color-mix(in srgb, var(--color-accent) 42%, rgb(0 0 0 / 0.2));
-    box-shadow: 0 10px 34px -12px color-mix(in srgb, var(--color-accent) 70%, transparent);
-  }
-  .bps-author { margin-bottom: 2px; font-size: 12px; font-weight: 700; color: color-mix(in srgb, var(--color-accent) 70%, white); }
-  .bps-msgs.is-hidden .bps-bubble :global(.mb-text),
-  .bps-msgs.is-hidden .bps-bubble :global(img) { filter: blur(9px); }
-  .bps-typing { display: flex; gap: 6px; padding: 16px 20px; }
-  .bps-typing i { width: 9px; height: 9px; border-radius: 999px; background: #fff; animation: bps-bounce 1.2s ease-in-out infinite; }
+  .bps-msg.is-end .bps-bubble { border-bottom-left-radius: 6px; }
+  .bps-msg.is-mine .bps-bubble { background: color-mix(in srgb, var(--color-accent) 58%, rgb(0 0 0 / 0.3)); }
+  .bps-msg.is-mine.is-end .bps-bubble { border-bottom-left-radius: 21px; border-bottom-right-radius: 6px; }
+  .bps-author { margin-bottom: 2px; font-size: 12px; font-weight: 700; color: var(--bp-lit); }
+  .bps-typing { display: flex; gap: 6px; padding: 15px 19px; }
+  .bps-typing i { width: 8px; height: 8px; border-radius: 999px; background: var(--color-ink); animation: bps-bounce 1.2s ease-in-out infinite; }
   .bps-typing i:nth-child(2) { animation-delay: 0.15s; }
   .bps-typing i:nth-child(3) { animation-delay: 0.3s; }
-  /* Deleted on Discord, and kept: faded, outlined, a bin on its corner. */
-  .bps-msg.is-deleted .bps-bubble { position: relative; opacity: 0.65; box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--color-bad) 50%, transparent); }
+  @keyframes bps-bounce { 0%, 60%, 100% { transform: translateY(0); opacity: 0.4; } 30% { transform: translateY(-6px); opacity: 1; } }
+  /* What the model is thinking: where the reply will land, faint, and folded away when it does. */
+  .bps-think { max-width: 66%; margin-bottom: 4px; }
+  .bps-thought { min-width: 0; padding: 10px 15px 11px; border-radius: 18px; background: color-mix(in srgb, var(--color-accent) 13%, transparent); }
+  .bps-thought-head { margin-bottom: 3px; font-size: 12px; font-weight: 650; color: var(--bp-lit); }
+  .bps-thought p {
+    max-height: 7.2em;
+    overflow: hidden;
+    font-size: clamp(13px, 0.92vw, 16px);
+    line-height: 1.44;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    color: var(--bp-muted);
+    -webkit-mask-image: linear-gradient(to bottom, transparent, #000 1.2em);
+    mask-image: linear-gradient(to bottom, transparent, #000 1.2em);
+  }
+  /* Deleted on Discord, and kept: faded, a bin on its corner. */
+  .bps-msg.is-deleted .bps-bubble { opacity: 0.6; }
   .bps-bin {
     position: absolute;
-    top: -9px;
-    right: -9px;
+    top: -8px;
+    right: -8px;
     display: grid;
-    width: 26px;
-    height: 26px;
+    width: 24px;
+    height: 24px;
     place-items: center;
     border-radius: 999px;
-    color: #fff;
+    color: var(--color-ink);
     background: var(--color-bad);
-    box-shadow: 0 0 0 3px rgb(0 0 0 / 0.5);
   }
-  .bps-msg.is-mine .bps-bin { right: auto; left: -9px; }
-  .bps-edited { display: block; margin-top: 4px; font-size: 12px; opacity: 0.55; }
-  @keyframes bps-bounce { 0%, 60%, 100% { transform: translateY(0); opacity: 0.4; } 30% { transform: translateY(-7px); opacity: 1; } }
-  /* A phone: a smaller face, and a tracker that fits across the screen. The
-     page scrolls there, so the stage is as tall as what is on it rather than
-     a fixed box that a long scene spills out of, over the bar under it. */
-  @media (max-width: 720px) {
-    .bps { height: auto; flex: none; grid-template: auto / minmax(0, 1fr); }
-    .bps-hero { gap: 16px; }
-    .bps-halo { width: 118px; height: 118px; }
-    .bps-face { transform: scale(0.72); }
-    .bps-step { width: auto; flex: 0 1 44px; min-width: 0; }
-    .bps-step-label { font-size: 8.5px; letter-spacing: 0; }
-    .bps-msg { max-width: 92%; }
-  }
-  @media (max-width: 460px) {
-    .bps-step-label { display: none; }
-    .bps-step.is-now .bps-step-label { display: block; position: absolute; margin-top: 30px; }
-    .bps-step { position: relative; }
-  }
-  :global(:root[data-motion="off"]) .bps-halo,
-  :global(:root[data-motion="off"]) .bps-ring,
-  :global(:root[data-motion="off"]) .bps-step.is-now .bps-dot,
-  :global(:root[data-motion="off"]) .bps-ring .fill,
-  :global(:root[data-motion="off"]) .bps-typing i { animation: none; }
+  .bps-msg.is-mine .bps-bin { right: auto; left: -8px; }
+  .bps-edited { display: block; margin-top: 3px; font-size: 12px; opacity: 0.55; }
   /* A message that is only a picture is shown as the picture: no bubble
      behind it, no padding around it. A background plus the image's own
      rounded corners read as a box drawn around every photo. */
   .bps-bubble:has(:global(.mb-media)):not(:has(:global(.mb-text))):not(:has(:global(.mb-chip))) {
     padding: 0;
     background: none;
-    box-shadow: none;
-    backdrop-filter: none;
   }
+  .bps-newest { position: absolute; right: 4px; bottom: 70px; z-index: 3; background: color-mix(in srgb, var(--color-accent) 60%, #10111a); }
+
+  /* Doing something about them. */
+  .bps-do { display: flex; flex-shrink: 0; flex-wrap: wrap; align-items: center; gap: 8px; transition: opacity 0.6s ease; }
+  /* Nobody touching it: it plays clean, with the box to write in still there for whoever comes back. */
+  :global(.bp.is-asleep) .bps-do:not(:focus-within) { opacity: 0.25; }
+  .bps-say {
+    display: flex;
+    min-width: 240px;
+    flex: 1 1 300px;
+    align-items: center;
+    gap: 6px;
+    height: 44px;
+    padding: 0 4px 0 18px;
+    border-radius: 999px;
+    background: var(--bp-fill);
+    transition: background-color 0.2s ease;
+  }
+  .bps-say:focus-within { background: var(--bp-fill-hi); }
+  .bps-say input { min-width: 0; height: 100%; flex: 1; font-size: 15px; color: var(--color-ink); background: transparent; outline: none; }
+  .bps-say input::placeholder { color: var(--bp-faint); }
+  .bps-off:hover:not(:disabled) { color: var(--color-bad); }
+  /* A phone: a smaller face, and the segments fit across the screen. */
+  @media (max-width: 720px) {
+    .bps { height: auto; }
+    .bps-msgs { flex: none; max-height: 56vh; }
+    .bps-hero { align-items: flex-start; }
+    .bps-halo { width: 84px; height: 84px; }
+    .bps-face { transform: scale(0.72); }
+    .bps-step-label { font-size: 9.5px; }
+    .bps-msg { max-width: 92%; }
+    .bps-say { min-width: 0; flex-basis: 100%; }
+  }
+  @media (max-width: 460px) {
+    .bps-step-label { display: none; }
+    .bps-step.is-now .bps-step-label { display: block; overflow: visible; }
+  }
+  /* A short screen: the conversation keeps the room. */
+  @media (max-height: 720px) {
+    .bps-halo { width: 88px; height: 88px; }
+    .bps-face { transform: scale(0.76); }
+    .bps-step-label { display: none; }
+  }
+  :global(:root[data-motion="off"]) .bps-ring.is-fill,
+  :global(:root[data-motion="off"]) .bps-ring .fill,
+  :global(:root[data-motion="off"]) .bps-seg i,
+  :global(:root[data-motion="off"]) .bps-typing i { animation: none; transition: none; }
 </style>

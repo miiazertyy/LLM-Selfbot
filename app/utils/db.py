@@ -1,6 +1,7 @@
 import sqlite3
 from contextlib import contextmanager
 
+from app.platforms import registry
 from app.utils.helpers import resource_path
 
 db_path = "config/bot_data.db"
@@ -158,6 +159,222 @@ def init_db():
             "CREATE INDEX IF NOT EXISTS idx_user_stats_snap_count "
             "ON user_stats_snap (message_count DESC)"
         )
+        # TikTok's people are "tt:" text ids, kept as Snapchat's are, in tables of their own.
+        cursor.execute("CREATE TABLE IF NOT EXISTS ignored_users_tiktok (id TEXT PRIMARY KEY)")
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS user_stats_tiktok (
+                chat_id       TEXT    PRIMARY KEY,
+                username      TEXT    NOT NULL DEFAULT '',
+                message_count INTEGER NOT NULL DEFAULT 0,
+                first_seen    REAL    NOT NULL
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS message_log_tiktok (
+                id       INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id  TEXT    NOT NULL,
+                username TEXT    NOT NULL,
+                ts       REAL    NOT NULL,
+                account  INTEGER
+            )
+            """
+        )
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_message_log_tiktok_ts ON message_log_tiktok (chat_id, ts)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_message_log_tiktok_tsonly ON message_log_tiktok (ts)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_stats_tiktok_count ON user_stats_tiktok (message_count DESC)")
+        # Instagram's people are "ig_" text ids, kept the same way again.
+        cursor.execute("CREATE TABLE IF NOT EXISTS ignored_users_instagram (id TEXT PRIMARY KEY)")
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS user_stats_instagram (
+                chat_id       TEXT    PRIMARY KEY,
+                username      TEXT    NOT NULL DEFAULT '',
+                message_count INTEGER NOT NULL DEFAULT 0,
+                first_seen    REAL    NOT NULL
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS message_log_instagram (
+                id       INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id  TEXT    NOT NULL,
+                username TEXT    NOT NULL,
+                ts       REAL    NOT NULL,
+                account  INTEGER
+            )
+            """
+        )
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_message_log_instagram_ts ON message_log_instagram (chat_id, ts)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_message_log_instagram_tsonly ON message_log_instagram (ts)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_stats_instagram_count "
+                       "ON user_stats_instagram (message_count DESC)")
+        # Minecraft's players are "mc_" text ids (their name in the game), kept the same way again.
+        cursor.execute("CREATE TABLE IF NOT EXISTS ignored_users_minecraft (id TEXT PRIMARY KEY)")
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS user_stats_minecraft (
+                chat_id       TEXT    PRIMARY KEY,
+                username      TEXT    NOT NULL DEFAULT '',
+                message_count INTEGER NOT NULL DEFAULT 0,
+                first_seen    REAL    NOT NULL
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS message_log_minecraft (
+                id       INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id  TEXT    NOT NULL,
+                username TEXT    NOT NULL,
+                ts       REAL    NOT NULL,
+                account  INTEGER
+            )
+            """
+        )
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_message_log_minecraft_ts ON message_log_minecraft (chat_id, ts)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_message_log_minecraft_tsonly ON message_log_minecraft (ts)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_stats_minecraft_count "
+                       "ON user_stats_minecraft (message_count DESC)")
+        # iMessage's people are "im_" text ids (their phone number or email) and its groups "img_", the same way again.
+        cursor.execute("CREATE TABLE IF NOT EXISTS ignored_users_imessage (id TEXT PRIMARY KEY)")
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS user_stats_imessage (
+                chat_id       TEXT    PRIMARY KEY,
+                username      TEXT    NOT NULL DEFAULT '',
+                message_count INTEGER NOT NULL DEFAULT 0,
+                first_seen    REAL    NOT NULL
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS message_log_imessage (
+                id       INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id  TEXT    NOT NULL,
+                username TEXT    NOT NULL,
+                ts       REAL    NOT NULL,
+                account  INTEGER
+            )
+            """
+        )
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_message_log_imessage_ts ON message_log_imessage (chat_id, ts)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_message_log_imessage_tsonly ON message_log_imessage (ts)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_stats_imessage_count "
+                       "ON user_stats_imessage (message_count DESC)")
+        # Telegram's people are "tg_" and their own id, its groups and channels "tgg_": text ids, never bare
+        # digits, which belong to Discord.
+        cursor.execute("CREATE TABLE IF NOT EXISTS ignored_users_telegram (id TEXT PRIMARY KEY)")
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS user_stats_telegram (
+                chat_id       TEXT    PRIMARY KEY,
+                username      TEXT    NOT NULL DEFAULT '',
+                message_count INTEGER NOT NULL DEFAULT 0,
+                first_seen    REAL    NOT NULL
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS message_log_telegram (
+                id       INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id  TEXT    NOT NULL,
+                username TEXT    NOT NULL,
+                ts       REAL    NOT NULL,
+                account  INTEGER
+            )
+            """
+        )
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_message_log_telegram_ts ON message_log_telegram (chat_id, ts)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_message_log_telegram_tsonly ON message_log_telegram (ts)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_stats_telegram_count "
+                       "ON user_stats_telegram (message_count DESC)")
+        # X's people are "x_" and their @handle, its group messages "xg_" and the conversation's own number.
+        cursor.execute("CREATE TABLE IF NOT EXISTS ignored_users_x (id TEXT PRIMARY KEY)")
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS user_stats_x (
+                chat_id       TEXT    PRIMARY KEY,
+                username      TEXT    NOT NULL DEFAULT '',
+                message_count INTEGER NOT NULL DEFAULT 0,
+                first_seen    REAL    NOT NULL
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS message_log_x (
+                id       INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id  TEXT    NOT NULL,
+                username TEXT    NOT NULL,
+                ts       REAL    NOT NULL,
+                account  INTEGER
+            )
+            """
+        )
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_message_log_x_ts ON message_log_x (chat_id, ts)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_message_log_x_tsonly ON message_log_x (ts)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_stats_x_count ON user_stats_x (message_count DESC)")
+        # Reddit's people are "rd_" and their username, its group chats "rdg_" and the room's own id.
+        cursor.execute("CREATE TABLE IF NOT EXISTS ignored_users_reddit (id TEXT PRIMARY KEY)")
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS user_stats_reddit (
+                chat_id       TEXT    PRIMARY KEY,
+                username      TEXT    NOT NULL DEFAULT '',
+                message_count INTEGER NOT NULL DEFAULT 0,
+                first_seen    REAL    NOT NULL
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS message_log_reddit (
+                id       INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id  TEXT    NOT NULL,
+                username TEXT    NOT NULL,
+                ts       REAL    NOT NULL,
+                account  INTEGER
+            )
+            """
+        )
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_message_log_reddit_ts ON message_log_reddit (chat_id, ts)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_message_log_reddit_tsonly ON message_log_reddit (ts)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_stats_reddit_count "
+                       "ON user_stats_reddit (message_count DESC)")
+        # WhatsApp's people are "wa_" and their number, its groups "wag_" and the group's own id.
+        cursor.execute("CREATE TABLE IF NOT EXISTS ignored_users_whatsapp (id TEXT PRIMARY KEY)")
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS user_stats_whatsapp (
+                chat_id       TEXT    PRIMARY KEY,
+                username      TEXT    NOT NULL DEFAULT '',
+                message_count INTEGER NOT NULL DEFAULT 0,
+                first_seen    REAL    NOT NULL
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS message_log_whatsapp (
+                id       INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id  TEXT    NOT NULL,
+                username TEXT    NOT NULL,
+                ts       REAL    NOT NULL,
+                account  INTEGER
+            )
+            """
+        )
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_message_log_whatsapp_ts "
+                       "ON message_log_whatsapp (chat_id, ts)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_message_log_whatsapp_tsonly ON message_log_whatsapp (ts)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_stats_whatsapp_count "
+                       "ON user_stats_whatsapp (message_count DESC)")
         ensure_account_columns(conn)
         ensure_picture_columns(conn)
     ensure_persona_schema()
@@ -338,7 +555,9 @@ def ensure_account_columns(conn) -> None:
     global _account_columns_checked
     if _account_columns_checked:
         return
-    for table in ("message_log", "message_log_snap"):
+    for table in ("message_log", "message_log_snap", "message_log_tiktok", "message_log_instagram",
+                  "message_log_minecraft", "message_log_imessage", "message_log_telegram", "message_log_x",
+                  "message_log_reddit", "message_log_whatsapp"):
         have = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
         # An empty answer means the table is not there yet, and the CREATE above already includes the column for when it is.
         if have and "account" not in have:
@@ -368,7 +587,7 @@ def ensure_picture_columns(conn) -> None:
 
 def renumber_account_replies(platform: str, removed: int) -> None:
     """Keep replies with the account that sent them when one is removed. Removing an account moves every later one up a number, but the replies they sent are tagged with their old number, so without this the account that became #1 would show the removed account's history as its own, and its own would belong to nobody. The removed account's replies are set to 0, which no account ever is: kept in the totals, shown on no card."""
-    table = "message_log_snap" if platform == "snapchat" else "message_log"
+    table = f"message_log_{WEB_TABLES[platform]}" if platform in WEB_TABLES else "message_log"
     with _connect() as conn:
         ensure_account_columns(conn)
         conn.execute(f"UPDATE {table} SET account = 0 WHERE account = ?", (removed,))
@@ -599,26 +818,37 @@ def get_ignored_users():
     return users
 
 
-# ── Snapchat ignore list (TEXT chat ids) ────────────────────────────────────
+# ── The browser platforms' ignore lists (TEXT chat ids) ─────────────────────
+# Snapchat's, TikTok's and Instagram's people have text ids, so each has tables of its own: ignored_users_<s>,
+# user_stats_<s>, message_log_<s>, by this suffix.
+WEB_TABLES = registry.TABLES
+
+
+def add_ignored_user_web(platform: str, chat_id: str):
+    with _connect() as conn:
+        conn.execute(f"INSERT OR IGNORE INTO ignored_users_{WEB_TABLES[platform]} (id) VALUES (?)", (str(chat_id),))
+
+
+def remove_ignored_user_web(platform: str, chat_id: str):
+    with _connect() as conn:
+        conn.execute(f"DELETE FROM ignored_users_{WEB_TABLES[platform]} WHERE id = ?", (str(chat_id),))
+
+
+def get_ignored_users_web(platform: str):
+    with _connect() as conn:
+        return [row[0] for row in conn.execute(f"SELECT id FROM ignored_users_{WEB_TABLES[platform]}")]
+
 
 def add_ignored_user_snap(chat_id: str):
-    with _connect() as conn:
-        cursor = conn.cursor()
-        cursor.execute("INSERT OR IGNORE INTO ignored_users_snap (id) VALUES (?)", (str(chat_id),))
+    add_ignored_user_web("snapchat", chat_id)
 
 
 def remove_ignored_user_snap(chat_id: str):
-    with _connect() as conn:
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM ignored_users_snap WHERE id = ?", (str(chat_id),))
+    remove_ignored_user_web("snapchat", chat_id)
 
 
 def get_ignored_users_snap():
-    with _connect() as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT id FROM ignored_users_snap")
-        users = [row[0] for row in cursor.fetchall()]
-    return users
+    return get_ignored_users_web("snapchat")
 
 
 # ── Pictures, description cache ──────────────────────────────────────────────
@@ -746,14 +976,20 @@ def record_user_message(user_id: int, username: str, account: int | None = None)
 
 def record_user_message_snap(chat_id: str, username: str, account: int | None = None):
     """Snapchat equivalent of record_user_message, keyed on the chat UUID."""
+    record_user_message_web("snapchat", chat_id, username, account)
+
+
+def record_user_message_web(platform: str, chat_id: str, username: str, account: int | None = None):
+    """A browser platform's equivalent of record_user_message (Snapchat's, TikTok's), keyed on the text chat id."""
     import time as _time
     now = _time.time()
+    t = WEB_TABLES[platform]
     with _connect() as conn:
         ensure_account_columns(conn)
         cursor = conn.cursor()
         cursor.execute(
-            """
-            INSERT INTO user_stats_snap (chat_id, username, message_count, first_seen)
+            f"""
+            INSERT INTO user_stats_{t} (chat_id, username, message_count, first_seen)
             VALUES (?, ?, 1, ?)
             ON CONFLICT(chat_id) DO UPDATE SET
                 message_count = message_count + 1,
@@ -762,20 +998,26 @@ def record_user_message_snap(chat_id: str, username: str, account: int | None = 
             (str(chat_id), username, now),
         )
         cursor.execute(
-            "INSERT INTO message_log_snap (chat_id, username, ts, account) VALUES (?, ?, ?, ?)",
+            f"INSERT INTO message_log_{t} (chat_id, username, ts, account) VALUES (?, ?, ?, ?)",
             (str(chat_id), username, now, account),
         )
 
 
 def get_leaderboard_snap(limit: int = 50, since: float | None = None) -> list[dict]:
     """Top Snapchat chats by message count. Mirrors get_leaderboard()."""
+    return get_leaderboard_web("snapchat", limit, since)
+
+
+def get_leaderboard_web(platform: str, limit: int = 50, since: float | None = None) -> list[dict]:
+    """Top chats of a browser platform by message count. Mirrors get_leaderboard()."""
+    t = WEB_TABLES[platform]
     with _connect() as conn:
         cursor = conn.cursor()
         if since is None:
             cursor.execute(
-                """
+                f"""
                 SELECT chat_id, username, message_count, first_seen
-                FROM user_stats_snap
+                FROM user_stats_{t}
                 ORDER BY message_count DESC
                 LIMIT ?
                 """,
@@ -783,14 +1025,14 @@ def get_leaderboard_snap(limit: int = 50, since: float | None = None) -> list[di
             )
         else:
             cursor.execute(
-                """
+                f"""
                 SELECT
                     ml.chat_id,
                     ml.username,
                     COUNT(*)                            AS message_count,
                     COALESCE(us.first_seen, MIN(ml.ts)) AS first_seen
-                FROM message_log_snap ml
-                LEFT JOIN user_stats_snap us ON us.chat_id = ml.chat_id
+                FROM message_log_{t} ml
+                LEFT JOIN user_stats_{t} us ON us.chat_id = ml.chat_id
                 WHERE ml.ts >= ?
                 GROUP BY ml.chat_id
                 ORDER BY message_count DESC

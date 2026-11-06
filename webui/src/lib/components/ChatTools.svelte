@@ -10,8 +10,10 @@
   import Icon from "./Icon.svelte";
   import ChatSearch from "./ChatSearch.svelte";
   import ChatShared from "./ChatShared.svelte";
+  import TheirTikToks from "./TheirTikToks.svelte";
+  import TheirPosts from "./TheirPosts.svelte";
 
-  type Tab = "search" | "media" | "files" | "links";
+  type Tab = "search" | "media" | "files" | "links" | "tiktoks" | "posts";
   type Side = { name: string; username?: string; avatar?: string };
 
   let {
@@ -36,13 +38,21 @@
     onclose: () => void;
   } = $props();
 
-  const TABS: { id: Tab; label: string; icon: string }[] = [
+  // A TikTok chat has one more: what they post (TheirTikToks). An Instagram one has their stories and posts.
+  const TABS = $derived<{ id: Tab; label: string; icon: string }[]>([
     { id: "search", label: "Search", icon: "search" },
     { id: "media", label: "Media", icon: "pictures" },
     { id: "files", label: "Files", icon: "file" },
     { id: "links", label: "Links", icon: "link" },
-  ];
+    ...(platform === "tiktok" && uid.startsWith("tt_") ? [{ id: "tiktoks" as Tab, label: "TikToks", icon: "tiktok" }] : []),
+    ...(platform === "instagram" && uid.startsWith("ig_")
+      ? [{ id: "posts" as Tab, label: "Their posts", icon: "instagram" }] : []),
+  ]);
   const at = $derived(Math.max(0, TABS.findIndex((t) => t.id === tab)));
+  // A tab this chat does not have (their TikToks, after moving to a Discord chat): back to the search.
+  $effect(() => {
+    if (!TABS.some((t) => t.id === tab)) tab = "search";
+  });
 
   // Tabs already opened stay mounted, hidden; the search takes the keyboard each time it is shown.
   let seen = $state<Record<string, true>>({});
@@ -68,7 +78,10 @@
     <div class="ct-tabs" role="tablist" style="--n: {TABS.length}; --at: {at}" data-sound="self">
       <span class="ct-pill" aria-hidden="true"></span>
       {#each TABS as t (t.id)}
-        <button type="button" role="tab" aria-selected={tab === t.id} class:is-on={tab === t.id} onclick={() => choose(t.id)}>
+        <!-- Five tabs (a TikTok chat's) do not fit with their words: their icons, and each word as its title. -->
+        <button type="button" role="tab" aria-selected={tab === t.id} class:is-on={tab === t.id}
+                class:is-quiet={TABS.length > 4} onclick={() => choose(t.id)}
+                title={TABS.length > 4 ? t.label : undefined} aria-label={t.label}>
           <Icon name={t.icon} size={13} /><span>{t.label}</span>
         </button>
       {/each}
@@ -82,6 +95,10 @@
       <div class="ct-body" class:is-hidden={tab !== t.id} role="tabpanel" aria-label={t.label}>
         {#if t.id === "search"}
           <ChatSearch {target} {uid} {platform} {them} {me} focusKey={searchFocus} {onjump} {onclose} />
+        {:else if t.id === "tiktoks"}
+          <TheirTikToks {target} {uid} {them} />
+        {:else if t.id === "posts"}
+          <TheirPosts {target} {uid} {them} />
         {:else}
           <ChatShared kind={t.id} {target} {uid} {platform} {them} {onjump} />
         {/if}
@@ -138,6 +155,7 @@
     transition: color 0.2s ease;
   }
   .ct-tabs button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ct-tabs button.is-quiet span { display: none; }
   .ct-tabs button:hover { color: var(--color-muted); }
   .ct-tabs button.is-on { color: var(--color-ink); }
   .ct-close {

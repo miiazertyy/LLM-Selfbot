@@ -14,6 +14,9 @@ Pillow
 pillow-heif
 davey
 python-telegram-bot
+# The persona's own Telegram account (app/platforms/telegram). 2.x is a different API, so the 1.x line is pinned.
+telethon~=1.45
+python-socks[asyncio]~=2.7
 fastapi
 uvicorn[standard]
 python-multipart

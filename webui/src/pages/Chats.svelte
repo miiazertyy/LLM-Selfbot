@@ -30,15 +30,16 @@
     chatAccounts, chatCache, chatsFocus, loadChatAccounts, refreshChats,
     replying as replyingStore, replyingAll as replyingAllStore, sendReply, sendReplyAll, stopReplyAll,
     replyAllProgress, cancelReply, toggleIgnore, setIgnored, loadMessage, conversations, convKey, loadConversation,
-    sendOwnMessage, typingNow, drafts, setDraft, loadDrafts, stagedFiles, loadEarlier, joinConversation,
-    reactTo, SNAP_REACTIONS,
-    type ChatUser, type ConvMessage, type StagedFile, type Reaction,
+    sendOwnMessage, typingNow, callsNow, drafts, setDraft, loadDrafts, stagedFiles, loadEarlier, joinConversation,
+    reactTo, ALL_CHATS, chatsView, waitingByAccount,
+    type ChatUser, type ConvMessage, type StagedFile, type Reaction, type ReplyTo, type Gift,
   } from "../lib/chats";
   import ReactPicker from "../lib/components/ReactPicker.svelte";
   import { fold, highlighted, splitWords } from "../lib/chatsearch";
   import { discordInline } from "../lib/discordmd";
   import { saveTextFile } from "../lib/window";
   import ChatTools from "../lib/components/ChatTools.svelte";
+  import ServerTree from "../lib/components/ServerTree.svelte";
   import Badge from "../lib/components/Badge.svelte";
   import Button from "../lib/components/Button.svelte";
   import Icon from "../lib/components/Icon.svelte";
@@ -47,7 +48,9 @@
   import Avatar from "../lib/components/Avatar.svelte";
   import ErrorNote from "../lib/components/ErrorNote.svelte";
   import { mentionNames, resolveMention } from "../lib/mentions";
+  import { platformOf, platformName, platformIcon } from "../lib/platforms";
   import { menu as contextMenu, copyText, openMenu, type MenuEntry } from "../lib/contextmenu";
+  import { fillHeight } from "../lib/fillheight";
 
   type Account = {
     id: string;
@@ -89,38 +92,117 @@
     id: string; name: string; username?: string; avatar?: string;
     messages: number; last_ts?: number;
   };
-  // Per account: a Snapchat account's are its own chats, not the Discord ones.
-  const pastRes = $derived(resource(`chatArchive:${target}`, () => api.chatArchive(100, target), { conversations: [] as Past[] }));
-  let pastList = $state<Past[]>([]);
-  $effect(() => {
-    const r = pastRes;
-    const stop = r.subscribe((s) => (pastList = s.data.conversations ?? []));
-    if (target) r.refresh({ maxAge: 30000, quiet: true });
-    return stop;
-  });
+  // Per account: a Snapchat or TikTok account's are its own chats, not the Discord ones. The account is fixed when its
+  // list is made: the list outlives this page, and fetching by whatever `target` was later filled one account's list
+  // with another's (the page that made it kept its own `target`, the account it was left on).
+  function pastOf(t: string) {
+    return resource(`chatArchive:${t}`, () => api.chatArchive(100, t), { conversations: [] as Past[] });
+  }
+  let pastBy = $state<Record<string, Past[]>>({});
   let showPast = $state(false);
 
   // ── Replies in flight ──────────────────────────────────────────────────
   // Held in the store, so a reply that takes two minutes still shows as
   // running after leaving the tab and coming back.
   const replying = $derived($replyingStore);
-  const replyingAll = $derived(!!$replyingAllStore[target]);
-  const allProgress = $derived($replyAllProgress[target]);
-  const busy = $derived(replyingAll);
 
   const accounts = $derived($chatAccounts);
+
+  // ── All chats ──────────────────────────────────────────────────────────
+  // `view` is what the list shows: one account, or ALL_CHATS, every account's waiting list in one. `target` stays what
+  // it always was, the account the open conversation and everything done to it belong to. In All chats it follows
+  // whoever is opened, so the conversation, sending, reactions and the tools work exactly as they do on one account.
+  let view = $state("");
+  const allView = $derived(view === ALL_CHATS && accounts.length > 1);
+
+  /**
+   * Who Reply to all would answer. On one account, that account; in All chats every account with somebody waiting,
+   * each answered by its own run, since each has its own pace and its own Stop.
+   */
+  const replyTargets = $derived(
+    allView ? accounts.filter((a) => ($chatCache[a.id]?.users ?? []).some((u) => !u.ignored)).map((a) => a.id)
+            : target ? [target] : [],
+  );
+  const replyingAll = $derived(replyTargets.some((t) => !!$replyingAllStore[t]));
+  /** The runs added up, so the button counts them all rather than one account's. */
+  const allProgress = $derived.by(() => {
+    const parts = replyTargets.map((t) => $replyAllProgress[t]).filter(Boolean);
+    if (!parts.length) return undefined;
+    return { done: parts.reduce((n, p) => n + p.done, 0), total: parts.reduce((n, p) => n + p.total, 0),
+             stopping: parts.some((p) => p.stopping) };
+  });
+  const busy = $derived(replyingAll);
+  /** A row, with the account it came from: in All chats that is not always the one open. */
+  type Row = ChatUser & { acc?: string };
+  const accOf = (u: Row): string => u.acc ?? target;
+  /** The same person can be waiting on two accounts at once, so a row is told apart by both. */
+  const keyOf = (u: Row): string => `${accOf(u)}:${u.id}`;
+  const accountOf = (id: string) => accounts.find((a) => a.id === id);
+  /** The platform a row is on: in All chats, its own account's, not the open one's. */
+  const platOfRow = (u: Row) => platformOf(accountOf(accOf(u))?.platform);
+  /** The accounts that can answer: asking a stopped one only waits out its timeout (see startChatPrefetch). */
+  const answering = (list: { id: string; state?: string }[]) => list.filter((a) => !a.state || a.state === "running");
+
   const entry = $derived($chatCache[target] ?? { users: [], fetched: 0, loading: false, error: "" });
-  const users = $derived(entry.users);
-  const loading = $derived(!accounts.length || (!entry.fetched && entry.loading));
-  const refreshing = $derived(entry.loading && entry.fetched > 0);
+  const users = $derived<Row[]>(
+    allView
+      ? accounts.flatMap((a) => ($chatCache[a.id]?.users ?? []).map((u) => ({ ...u, acc: a.id })))
+      : entry.users,
+  );
+  const loading = $derived(
+    !accounts.length
+    || (allView
+      ? accounts.every((a) => !$chatCache[a.id]?.fetched) && accounts.some((a) => !!$chatCache[a.id]?.loading)
+      : !entry.fetched && entry.loading),
+  );
+  const refreshing = $derived(
+    allView
+      ? accounts.some((a) => !!$chatCache[a.id]?.loading && ($chatCache[a.id]?.fetched ?? 0) > 0)
+      : entry.loading && entry.fetched > 0,
+  );
   const current = $derived(accounts.find((a) => a.id === target));
   const unread = $derived(users.reduce((n, u) => n + (u.count || 0), 0));
-  const isSnap = $derived(current?.platform === "snapchat");
+  // The platform of the account shown (lib/platforms.ts). isSnap: a browser account, Snapchat's or TikTok's: pictures
+  // only, its own few reactions, no user ids, its people known by chat ids.
+  const plat = $derived(platformOf(current?.platform));
+  const isSnap = $derived(plat.browser);
 
-  /** Anyone still waiting is in the list above, so they are not history yet. Nor is anyone ignored. */
-  const archived = $derived(
-    pastList.filter((c: Past) => !users.some((u) => u.id === c.id) && !ignoredIds.has(c.id)),
+  /** Whose archives to read: the open account's, or in All chats every one of them. */
+  const pastTargets = $derived(allView ? accounts.map((a) => a.id) : target ? [target] : []);
+  $effect(() => {
+    const targets = pastTargets;
+    // Untracked: a store calls back at once, as it is subscribed to and as refresh() marks it loading, so pastBy was
+    // read and written inside this effect, which ran it again, forever. Svelte stopped it with an error and the whole
+    // panel stopped changing pages (2026-10-31: "Accounts does nothing").
+    const stops = untrack(() => targets.map((t) => {
+      const r = pastOf(t);
+      const stop = r.subscribe((s) => {
+        pastBy = { ...pastBy, [t]: s.data.conversations ?? [] };
+      });
+      r.refresh({ maxAge: 30000, quiet: true });
+      return stop;
+    }));
+    return () => stops.forEach((s) => s());
+  });
+  /** One account's, flat; in All chats all of them, each conversation carrying the account it belongs to. */
+  const pastList = $derived<Past[]>(
+    allView
+      ? pastTargets.flatMap((t) => (pastBy[t] ?? []).map((c) => ({ ...c, acc: t })))
+      : pastBy[target] ?? [],
   );
+
+  /**
+   * Anyone still waiting is in the list above, so they are not history yet. Nor is anyone ignored.
+   *
+   * In All chats these come from every account at once, so a conversation is only "still waiting" when it is
+   * waiting *on its own account*: the same id can be a stranger on one and someone answered on another.
+   */
+  const archived = $derived(
+    pastList.filter((c: Past) => !users.some((u) => u.id === c.id && (!allView || accOf(u) === pastAcc(c)))
+                                 && !ignoredIds.has(c.id)),
+  );
+  /** Which account an answered conversation belongs to. */
+  const pastAcc = (c: Past) => (c as Past & { acc?: string }).acc ?? target;
 
   onMount(() => {
     void start();
@@ -131,6 +213,10 @@
     // no event describes, like messages that arrived while the bot was off.
     const t = setInterval(() => {
       if (document.hidden) return;
+      if (allView) {
+        for (const a of answering(accounts)) refreshChats(a.id, { maxAge: 30000, quiet: true });
+        return;
+      }
       refreshChats(target, { maxAge: 30000, quiet: true });
       loadFriends();
     }, 45000);
@@ -144,19 +230,32 @@
     try {
       const list = accounts.length ? accounts : await loadChatAccounts();
       const want = get(chatsFocus);
+      // Back where it was left: one account, or All chats. An account another page asked for wins over both.
+      const was = get(chatsView);
       if (want) {
         chatsFocus.set("");
         if (list.some((a) => a.id === want)) target = want;
+      } else if (was === ALL_CHATS && list.length > 1) {
+        view = ALL_CHATS;
+      } else if (was && list.some((a) => a.id === was)) {
+        target = was;
       }
       if (list.length && !target) target = list[0].id;
+      if (!view) view = target;
       await Promise.all([
-        refreshChats(target, { maxAge: 10000 }),
+        view === ALL_CHATS
+          ? Promise.all(answering(list).map((a) => refreshChats(a.id, { maxAge: 10000, quiet: true })))
+          : refreshChats(target, { maxAge: 10000 }),
         loadFriends(),
       ]);
     } catch (e: any) {
       loadError = e?.message || "Could not load";
     }
   }
+  // Remembered for the next visit: the page is rebuilt every time the tab is opened.
+  $effect(() => {
+    if (view) chatsView.set(view);
+  });
 
   async function loadFriends() {
     if (!target) return;
@@ -175,6 +274,88 @@
     }
   }
 
+  // ── Adding a friend, by username ───────────────────────────────────────
+  let addOpen = $state(false);
+  let addName = $state("");
+  /** iMessage's first message to someone new: what starts the conversation. */
+  let addText = $state("");
+  let adding = $state(false);
+  let addBox: HTMLInputElement | null = $state(null);
+  async function toggleAdd() {
+    addOpen = !addOpen;
+    if (!addOpen) return;
+    playSound("open");
+    await tick();
+    addBox?.focus();
+  }
+  $effect(() => {
+    if (!addOpen) return;
+    const off = (e: PointerEvent) => {
+      if (!(e.target as Element | null)?.closest?.("[data-add-friend]")) addOpen = false;
+    };
+    const t = setTimeout(() => window.addEventListener("pointerdown", off, true), 0);
+    return () => {
+      clearTimeout(t);
+      window.removeEventListener("pointerdown", off, true);
+    };
+  });
+  async function addFriend() {
+    const imsg = plat.id === "imessage";
+    // iMessage: a phone number as people type one ("+33 6 12 34 56 78"), sent as its digits; an email as it is.
+    const name = imsg
+      ? (addName.includes("@") ? addName.trim() : addName.replace(/[\s().-]/g, ""))
+      : addName.trim().replace(/^@/, "");
+    if (!name || adding || (imsg && !addText.trim())) return;
+    adding = true;
+    try {
+      const r = await api.friendAdd(name, target, imsg ? addText.trim() : "");
+      if (r?.ok) {
+        toast(plat.id === "tiktok" ? `Following ${name} on TikTok.`
+              : plat.id === "instagram" ? `Following ${name} on Instagram.`
+              : imsg ? `Texted ${name}${r.service === "SMS" ? ", as a text message (no iMessage there)" : ""}.`
+              : isSnap ? `Added ${name} on Snapchat.` : `Friend request sent to ${name}.`, "ok");
+        addName = "";
+        addText = "";
+        addOpen = false;
+      } else {
+        toast(r?.reason || `${plat.name} did not take it`, "err");
+      }
+    } catch (e: any) {
+      toast(e?.status === 504 ? "The account did not answer, it may be stopped" : e?.message || "Could not add them", "err");
+    }
+    adding = false;
+  }
+
+  // ── Nitro gifts, in Discord DMs ──────────────────────────────────────────
+  /** One nobody can take any more: used, run out, or gone from Discord. */
+  const GIFT_GONE = new Set(["taken", "expired", "gone"]);
+  let giftBusy = $state("");
+
+  function giftSays(g: Gift): string {
+    if (g.state === "accepted") return "Accepted";
+    if (g.state === "taken") return "Already used";
+    if (g.state === "expired") return "Ran out";
+    if (g.state === "gone") return "Not there any more";
+    return g.reason || "Waiting for you";
+  }
+
+  async function takeGift(m: ConvMessage) {
+    if (giftBusy || !m.gift?.code) return;
+    giftBusy = m.mid ?? "";
+    playSound("tap");
+    try {
+      const r: any = await api.giftAccept(m.gift.code, target, m.mid ?? "", selected?.id ?? "");
+      playSound(r?.ok ? "ok" : "err");
+      toast(r?.ok ? `Took ${r.what && r.what !== "a gift" ? r.what : "the gift"}.`
+                  : r?.reason || "Discord would not take it", r?.ok ? "ok" : "err");
+    } catch (e: any) {
+      playSound("err");
+      toast(e?.status === 504 ? "The account did not answer, it may be stopped"
+            : e?.message || "Could not take it", "err");
+    }
+    giftBusy = "";
+  }
+
   async function answerRequest(r: FriendRequest, action: "accept" | "decline") {
     friendBusy[r.id] = true;
     try {
@@ -183,7 +364,7 @@
         requests = requests.filter((x) => x.id !== r.id);
         toast(`${action === "accept" ? "Accepted" : "Declined"} ${r.display_name || r.username}.`, "ok");
       } else {
-        toast(res?.reason || `${isSnap ? "Snapchat" : "Discord"} refused that`, "err");
+        toast(res?.reason || `${plat.name} refused that`, "err");
       }
     } catch (e: any) {
       toast(e.message, "err");
@@ -196,7 +377,7 @@
     return a.display_name || a.username || slot(a);
   }
   function slot(a: Account): string {
-    const platform = a.platform === "discord" ? "Discord" : "Snapchat";
+    const platform = platformName(a.platform);
     return `${platform}${a.account ? ` #${a.account}` : ""}`;
   }
   const named = (a: Account) => who(a) !== slot(a);
@@ -205,8 +386,27 @@
 
   function choose(id: string) {
     picking = false;
-    if (id !== target) switchTarget(id);
+    if (id === ALL_CHATS) {
+      if (!allView) showAll();
+      return;
+    }
+    if (id !== target || allView) switchTarget(id);
   }
+  /** Every account's waiting chats in one list. */
+  async function showAll() {
+    view = ALL_CHATS;
+    failedReplies = new Set();
+    selectedId = "";
+    older = null;
+    showDetail = false;
+    await Promise.all(answering(accounts).map((a) => refreshChats(a.id, { maxAge: 10000, quiet: true })));
+  }
+  /** Waiting on a reply, per account, from what is cached (lib/chats.ts). */
+  const waitingOn = (id: string) => $waitingByAccount[id] ?? 0;
+  /** Everyone waiting everywhere, for All chats in the picker. */
+  const waitingAll = $derived(accounts.reduce((n, a) => n + waitingOn(a.id), 0));
+  /** Waiting on the accounts not on screen: the dot on the closed picker, so they are not missed. */
+  const waitingElsewhere = $derived(allView ? 0 : accounts.reduce((n, a) => n + (a.id === target ? 0 : waitingOn(a.id)), 0));
   function dismiss(event: MouseEvent) {
     const el = event.target as HTMLElement;
     if (picking && !el.closest?.("[data-account-picker]")) picking = false;
@@ -214,6 +414,7 @@
   }
   async function switchTarget(id: string) {
     target = id;
+    view = id;
     failedReplies = new Set();
     selectedId = "";
     older = null;
@@ -243,7 +444,9 @@
   // not go" rather than untouched. Cleared when the account changes.
   let failedReplies = $state<Set<string>>(new Set());
 
-  const statusOf = (u: ChatUser): Status => statusFor(u, { now, paused: entry.paused, failed: failedReplies });
+  // Paused is per account, so a row in All chats goes by its own.
+  const statusOf = (u: Row): Status =>
+    statusFor(u, { now, paused: ($chatCache[accOf(u)] ?? entry).paused, failed: failedReplies });
   /** How far through its wait a countdown is, 0 to 1. */
   const progress = (st: Status): number => progressOf(st, now);
 
@@ -295,17 +498,18 @@
     }),
   );
 
-  /** The X on a row: stop answering them, and stop trying, until they are let back in. */
-  async function ignorePerson(u: IgnoredPerson, e?: MouseEvent) {
+  /** The X on a row: stop answering them, and stop trying, until they are let back in. `acc` is the row's account. */
+  async function ignorePerson(u: IgnoredPerson, e?: MouseEvent, acc = target) {
     e?.stopPropagation();
     if (ignoreBusy[u.id]) return;
     ignoreBusy[u.id] = true;
     try {
-      await setIgnored(target, u.id, true);
-      if (!ignoredList.some((p) => p.id === u.id)) {
+      await setIgnored(acc, u.id, true);
+      // The Ignored list at the top is the open account's; one ignored on another account is that account's.
+      if (acc === target && !ignoredList.some((p) => p.id === u.id)) {
         ignoredList = [...ignoredList, { id: u.id, name: u.name, username: u.username, avatar: u.avatar }];
       }
-      if (selectedId === u.id && !showDetail) selectedId = "";
+      if (selectedId === u.id && acc === target && !showDetail) selectedId = "";
       toast(`Ignoring ${u.name}. Let them back in from Ignored at the top.`, "ok");
     } catch (err: any) {
       toast(err?.message || "Could not ignore them", "err");
@@ -343,37 +547,80 @@
   // Who is open on the right. Kept as a snapshot too: once they are answered
   // they leave the waiting list, and the conversation should stay open to show
   // the reply landing rather than vanish from under you.
-  type Person = ChatUser & { archived?: boolean };
+  type Person = ChatUser & {
+    archived?: boolean;
+    /** Opened from the servers list rather than because someone wrote: there is nothing waiting in it. */
+    browsed?: boolean;
+    /** A channel it may read but not write in. */
+    readonly?: boolean;
+    /** What the channel is for, as the server set it. */
+    topic?: string;
+  };
   let selectedId = $state("");
   let snapshot = $state<Person | null>(null);
   // On a narrow window the list and the conversation take turns.
   let showDetail = $state(false);
 
+  // Who is open is the person AND the account: in All chats one person can be waiting on two.
+  const isOpen = (u: Row) => u.id === selectedId && accOf(u) === target;
   $effect(() => {
-    const u = users.find((x) => x.id === selectedId);
+    const u = users.find(isOpen);
     if (u) snapshot = { ...u };
   });
   // Nothing open yet: open the first one, so the right side is never empty.
   $effect(() => {
-    if (!selectedId && flat.length) selectedId = flat[0].id;
+    if (!selectedId && flat.length) {
+      const first: Row = flat[0];
+      if (first.acc && first.acc !== target) target = first.acc;
+      selectedId = first.id;
+    }
   });
 
   const selected = $derived<Person | null>(
-    users.find((u) => u.id === selectedId) ?? (snapshot?.id === selectedId ? snapshot : null),
+    users.find(isOpen) ?? (snapshot?.id === selectedId ? snapshot : null),
   );
-  const answered = $derived(!!selected && !users.some((u) => u.id === selected.id));
+  const answered = $derived(!!selected && !users.some(isOpen));
   const st = $derived(selected && !answered ? statusOf(selected) : null);
 
   function select(id: string) {
     selectedId = id;
     showDetail = true;
   }
+  /**
+   * A channel picked from the servers list. One someone is waiting in is that row; any other is made up here, which
+   * is all the right-hand side needs: a channel's row id is "ch<id>", and reading it and typing in it already work
+   * through that (chat_routes.py `_server_row_id`).
+   */
+  function openChannel(ch: { id: string; name: string; topic: string; can_send: boolean },
+                       g: { name: string; icon: string }) {
+    const id = `ch${ch.id}`;
+    const already = users.find((u) => u.id === id && accOf(u) === target);
+    if (already) {
+      openRow(already);
+      return;
+    }
+    // Discord writes a channel with a "#" in front of it; a Telegram group is written as its name.
+    const named = plat.id === "discord" ? `#${ch.name}` : ch.name;
+    snapshot = { id, name: named, snippet: "", count: 0, ts: 0, kind: "server", channel_id: ch.id,
+                 avatar: g.icon, where: `${named} \u00b7 ${g.name}`, browsed: true,
+                 readonly: !ch.can_send, topic: ch.topic };
+    select(id);
+  }
+
+  /** A row in the list. In All chats its own account becomes the one the conversation is with. */
+  function openRow(u: Row) {
+    if (u.acc && u.acc !== target) {
+      target = u.acc;
+      older = null;
+    }
+    select(u.id);
+  }
 
   // ── Writing to them yourself ─────────────────────────────────────────────
   // What you are typing is a draft per conversation (lib/chats.ts): opening someone else, leaving the tab or
   // closing the app keeps it, and the list shows it under their name until it is sent.
   const draftKey = $derived(selected ? convKey(target, selected.id) : "");
-  const draftOf = (id: string) => ($drafts[convKey(target, id)] ?? "").replace(/\s+/g, " ").trim();
+  const draftOf = (id: string, acc = target) => ($drafts[convKey(acc, id)] ?? "").replace(/\s+/g, " ").trim();
   let sendingOwn = $state(false);
   let composer: HTMLTextAreaElement | null = $state(null);
   let filePick: HTMLInputElement | null = $state(null);
@@ -434,7 +681,7 @@
       }
       // Snapchat sends pictures from here, as a Snap; Discord takes the usual kinds of file.
       if (isSnap ? !(f.type || "").startsWith("image/") : !SENDABLE.test(f.name || "") && !(f.type || "").startsWith("image/")) {
-        toast(isSnap ? `${f.name}: Snapchat takes pictures from here.` : `${f.name}: that kind of file can't be sent.`, "err");
+        toast(isSnap ? `${f.name}: ${plat.name} takes pictures from here.` : `${f.name}: that kind of file can't be sent.`, "err");
         continue;
       }
       try {
@@ -519,22 +766,29 @@
     const text = ($drafts[k] ?? "").trim();
     const files = get(stagedFiles)[k] ?? [];
     if (!text && !files.length) return;
+    const answering = replyingTo[k] ?? null;
     sendingOwn = true;
     setDraft(k, "");
     setStaged(k, []);
+    if (answering) {
+      const { [k]: _sent, ...rest } = replyingTo;
+      replyingTo = rest;
+    }
     // What is sent goes at the bottom, where now is.
     if (older) older = null;
     await tick();
     grow();
-    const r = await sendOwnMessage(target, who.id, text, files);
+    const r = await sendOwnMessage(target, who.id, text, files, answering);
     sendingOwn = false;
     if (!r.ok) {
       setDraft(k, text);
       setStaged(k, files);
+      if (answering) replyingTo = { ...replyingTo, [k]: answering };
       toast(r.error || "Could not send it", "err");
     } else {
       playSound("send");
       if (r.dropped) toast(`Sent. The bot's reply to ${who.name} was dropped: you answered them yourself.`, "ok");
+      else if (r.notReply) toast(`Sent, as a plain message: ${plat.name} did not offer Reply on that one.`, "info");
     }
     await tick();
     grow();
@@ -543,6 +797,12 @@
   }
 
   function onComposerKey(e: KeyboardEvent) {
+    if (e.key === "Escape" && replyHere) {
+      e.preventDefault();
+      e.stopPropagation();
+      letGoOfReply();
+      return;
+    }
     if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
       sendDraft();
@@ -553,7 +813,38 @@
   const RECENT_FIRST = 12;
   let showAllRecent = $state(false);
 
+  // ── Calls ──────────────────────────────────────────────────────────────
+  /** This account's calls going on now: someone calling it, or in a call with it (lib/chats.ts callsNow). */
+  // In All chats, every account's: someone calling is not something to miss because another account is open.
+  const calls = $derived(Object.values($callsNow).filter((c) => allView || c.target === target)
+    .sort((a, b) => Number(b.state === "ringing") - Number(a.state === "ringing") || (a.since ?? 0) - (b.since ?? 0)));
+  const callOf = (id: string, acc = target) => $callsNow[convKey(acc, id)];
+  const callWords = (state: string) => (state === "ringing" ? "is calling" : state === "together" ? "on a call with you" : "in a call");
+  /** How long, as a call screen says it: 0:42, 12:05. */
+  const callFor = (since?: number) => {
+    const s = Math.max(0, Math.round(now - (since ?? now)));
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+  };
+  function openCall(c: { uid: string; target?: string; name?: string; avatar?: string }) {
+    playSound("select");
+    // A call on another account, from All chats: that account is the one the conversation is with.
+    if (c.target && c.target !== target) {
+      target = c.target;
+      older = null;
+    }
+    const row = users.find((u) => u.id === c.uid && accOf(u) === target);
+    if (row) select(row.id);
+    else openArchived({ id: c.uid, name: c.name || c.uid, avatar: c.avatar, messages: 0, last_ts: now });
+  }
+
   function openArchived(c: Past) {
+    // In All chats it belongs to one of the accounts, not the one that happens to be open: its conversation is
+    // read from that one, so the account changes with it, as it does for a row still waiting.
+    const acc = pastAcc(c);
+    if (acc && acc !== target) {
+      target = acc;
+      older = null;
+    }
     snapshot = { id: c.id, name: c.name, username: c.username, avatar: c.avatar, snippet: "", count: 0,
                  ts: c.last_ts, archived: true };
     select(c.id);
@@ -754,7 +1045,11 @@
   }
 
   // ── The panel beside the conversation: search, media, files, links ─────
-  type ToolTab = "search" | "media" | "files" | "links";
+  type ToolTab = "search" | "media" | "files" | "links" | "tiktoks" | "posts";
+  /** A TikTok person's chat (not a group): it has their TikToks beside it. */
+  const tiktokPerson = $derived(current?.platform === "tiktok" && !!selected?.id?.startsWith("tt_"));
+  /** An Instagram person's chat: their stories and posts beside it. */
+  const instaPerson = $derived(current?.platform === "instagram" && !!selected?.id?.startsWith("ig_"));
   let toolsOpen = $state(false);
   let toolsTab = $state<ToolTab>("search");
   let toolsFocus = $state(0);
@@ -847,7 +1142,7 @@
   }
 
   // ── Finding someone, or something said, from the list ──────────────────
-  type ListFilter = "all" | "unread" | "needs" | "live" | "answered" | "drafts" | "servers";
+  type ListFilter = "all" | "unread" | "needs" | "live" | "answered" | "drafts";
   let listQuery = $state("");
   let listFilter = $state<ListFilter>("all");
   const listWords = $derived(splitWords(listQuery).map(fold).filter(Boolean));
@@ -859,14 +1154,13 @@
     return listWords.every((w) => hay.includes(w));
   }
 
-  const hasDraft = (id: string) => !!draftOf(id);
-  function passes(u: ChatUser, section: string): boolean {
+  const hasDraft = (id: string, acc = target) => !!draftOf(id, acc);
+  function passes(u: Row, section: string): boolean {
     const f = listFilter;
     if (f === "unread" && !(u.count > 0)) return false;
     if ((f === "needs" || f === "live") && section !== f) return false;
     if (f === "answered") return false;
-    if (f === "drafts" && !hasDraft(u.id)) return false;
-    if (f === "servers" && u.kind !== "server") return false;
+    if (f === "drafts" && !hasDraft(u.id, accOf(u))) return false;
     return rowMatches(u.name, u.username, `${u.where ?? ""} ${preview(u)}`);
   }
 
@@ -884,6 +1178,26 @@
   /** With nobody waiting, the recent conversations, narrowed by the same search. */
   const recentShown = $derived(archived.filter((c: Past) => rowMatches(c.name, c.username, "")));
 
+  /** Which platforms have somewhere to go into: Discord's servers, Telegram's groups and channels. */
+  const hasServers = $derived(plat.id === "discord" || plat.id === "telegram");
+  /** Browsing those, rather than the list of who is waiting. */
+  let serversOpen = $state(false);
+  const browsingServers = $derived(serversOpen && !allView && hasServers);
+  /** Going in and coming back out, which is a different thing from narrowing the list. */
+  function toggleServers() {
+    playSound(serversOpen ? "undo" : "open");
+    serversOpen = !serversOpen;
+    listQuery = "";
+  }
+  // Switching to an account with none, or to All chats, leaves it: there would be nothing to show.
+  $effect(() => {
+    if (serversOpen && (allView || !hasServers)) serversOpen = false;
+  });
+  /** Channels someone is waiting in, so the servers list can mark them. */
+  const waitingChannels = $derived(
+    new Set(users.filter((u) => u.kind === "server" && u.channel_id).map((u) => String(u.channel_id))),
+  );
+
   const listChips = $derived.by(() => {
     const live = users.filter((u) => !u.ignored);
     const list: { id: ListFilter; label: string; n: number }[] = [
@@ -891,9 +1205,9 @@
       { id: "unread", label: "Unread", n: live.filter((u) => u.count > 0).length },
       { id: "needs", label: "Needs you", n: sections.find((s) => s.id === "needs")?.rows.length ?? 0 },
       { id: "live", label: "Being answered", n: sections.find((s) => s.id === "live")?.rows.length ?? 0 },
-      { id: "drafts", label: "Drafts", n: [...live.map((u) => u.id), ...archived.map((c: Past) => c.id)].filter(hasDraft).length },
+      { id: "drafts", label: "Drafts",
+        n: live.filter((u) => hasDraft(u.id, accOf(u))).length + archived.filter((c: Past) => hasDraft(c.id)).length },
       { id: "answered", label: "Answered", n: archived.length },
-      { id: "servers", label: "Servers", n: live.filter((u) => u.kind === "server").length },
     ];
     return list.filter((c) => c.id === "all" || c.id === listFilter || c.n > 0);
   });
@@ -940,7 +1254,9 @@
     const q = listQuery.trim();
     const t = target;
     clearTimeout(msgTimer);
-    if (q.length < 2 || !t) {
+    // The words of kept messages are searched one account at a time; All chats finds people by name and what they
+    // last said, which is what is in front of it.
+    if (q.length < 2 || !t || allView) {
       msgHits = { q: "", messages: [], people: {}, loading: false };
       return;
     }
@@ -1016,43 +1332,6 @@
     return fmtDate(d, DAY_LONG);
   }
 
-  /**
-   * Size the inbox to exactly the space left in the window, so the list and
-   * the conversation each scroll on their own and the Reply button is always
-   * on screen. It used to be a sticky panel taller than what was left below the
-   * header, so its bottom, with the buttons, started off screen.
-   */
-  function fillHeight(node: HTMLElement) {
-    const scroller = node.closest<HTMLElement>(".overflow-y-auto");
-    const wrap = node.parentElement;
-    let raf = 0;
-    const set = () => {
-      cancelAnimationFrame(raf);
-      raf = requestAnimationFrame(() => {
-        if (!scroller) return;
-        const pb = wrap ? parseFloat(getComputedStyle(wrap).paddingBottom) || 0 : 0;
-        node.style.marginBottom = `${16 - pb}px`;
-        const top = node.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
-        // A low floor: the pocket window is only about 600px tall, and a floor
-        // above what is left pushed the Reply button off the bottom.
-        node.style.setProperty("--inbox-h", `${Math.floor(Math.max(280, scroller.clientHeight - top - 16))}px`);
-      });
-    };
-    set();
-    // Anything above it (a notice, the friend requests) moves its top.
-    const ro = new ResizeObserver(set);
-    if (scroller) ro.observe(scroller);
-    if (wrap) ro.observe(wrap);
-    window.addEventListener("resize", set);
-    return {
-      destroy() {
-        ro.disconnect();
-        window.removeEventListener("resize", set);
-        cancelAnimationFrame(raf);
-      },
-    };
-  }
-
   // Keep the newest message in view as the conversation fills in: when it is opened, when you send, and while you
   // are at the bottom. Reading further up, a new message does not pull you down; reading back from a search or
   // jumping to a message, nothing does.
@@ -1085,10 +1364,10 @@
     (!!u.state && ["waiting", "writing", "cooldown", "queued"].includes(u.state.state))
     || (!u.state && !!u.reply_at && u.reply_at > now);
 
-  async function reply(u: ChatUser) {
+  async function reply(u: Row) {
     if (busy) return;
     try {
-      const res = await sendReply(target, u.id);
+      const res = await sendReply(accOf(u), u.id);
       if (res?.cancelled) return;             // stopped from the Cancel button, which says so itself
       if (res && res.success === false) {
         toast(res.dropped ? `${u.name}: ${res.reason}. Removed from the list.` : `${u.name}: ${res.reason}`, "err");
@@ -1100,16 +1379,17 @@
     }
   }
 
-  async function cancel(u: ChatUser) {
-    if (rowBusy[u.id]) return;
-    rowBusy[u.id] = "cancel";
+  async function cancel(u: Row) {
+    const k = keyOf(u);
+    if (rowBusy[k]) return;
+    rowBusy[k] = "cancel";
     try {
-      await cancelReply(target, u.id);
+      await cancelReply(accOf(u), u.id);
       toast(`Won't reply to ${u.name}. You can still answer by hand.`, "ok");
     } catch (e: any) {
       toast(e?.status === 504 ? "The account did not answer, it may be stopped" : e.message, "err");
     } finally {
-      delete rowBusy[u.id];
+      delete rowBusy[k];
     }
   }
 
@@ -1117,34 +1397,35 @@
   const personOf = (u: ChatUser): IgnoredPerson =>
     u.kind === "server" && u.author_id ? { id: u.author_id, name: u.name, username: u.username, avatar: u.avatar } : u;
 
-  async function flipIgnore(u: ChatUser) {
-    if (rowBusy[u.id]) return;
-    rowBusy[u.id] = "ignore";
+  async function flipIgnore(u: Row) {
+    const k = keyOf(u);
+    if (rowBusy[k]) return;
+    rowBusy[k] = "ignore";
     try {
-      const off = await toggleIgnore(target, personOf(u).id);
+      const off = await toggleIgnore(accOf(u), personOf(u).id);
       toast(off ? `The bot is off for ${u.name}.` : `The bot is on for ${u.name} again.`, "ok");
     } catch (e: any) {
       toast(e?.status === 504 ? "The account did not answer, it may be stopped" : e.message, "err");
     } finally {
-      delete rowBusy[u.id];
+      delete rowBusy[k];
     }
   }
 
   /** Right-click on someone waiting: open them, answer now or not at all, or stop answering them. */
-  function rowMenu(u: ChatUser): MenuEntry[] {
+  function rowMenu(u: Row): MenuEntry[] {
     const who = personOf(u);
     return [
       { title: u.name },
-      { label: "Open", icon: "chats", run: () => select(u.id) },
-      u.kind !== "server" && { label: "Search in this chat", icon: "search", run: () => { select(u.id); openTools("search"); } },
+      { label: "Open", icon: "chats", run: () => openRow(u) },
+      u.kind !== "server" && { label: "Search in this chat", icon: "search", run: () => { openRow(u); openTools("search"); } },
       { label: "Reply now", icon: "send", disabled: busy, run: () => reply(u) },
       cancellable(u) && { label: "Don't reply", icon: "stop", run: () => cancel(u) },
       "sep",
       { label: "Copy name", icon: "copy", run: () => copyText(u.name, "Copied the name.") },
       u.username && u.username !== u.name && { label: `Copy @${u.username}`, icon: "copy", run: () => copyText(u.username ?? "", "Copied the username.") },
-      who.id && !isSnap && { label: "Copy user ID", icon: "copy", run: () => copyText(String(who.id), "Copied the ID.") },
+      who.id && !platOfRow(u).browser && { label: "Copy user ID", icon: "copy", run: () => copyText(String(who.id), "Copied the ID.") },
       "sep",
-      { label: `Ignore ${who.name}`, icon: "close", danger: true, run: () => ignorePerson(who) },
+      { label: `Ignore ${who.name}`, icon: "close", danger: true, run: () => ignorePerson(who, undefined, accOf(u)) },
     ];
   }
 
@@ -1172,6 +1453,7 @@
     const words = (picked || m.text || "").replace(/\s+/g, " ").trim();
     const reactButton = bubble?.querySelector<HTMLElement>(".cd-react-add");
     return [
+      reactable(m) && { label: "Reply", icon: "reply", run: () => startReply(m) },
       reactable(m) && reactButton && {
         label: "React", icon: "smilePlus", run: () => (reactingTo = { mid: String(m.mid), anchor: reactButton }),
       },
@@ -1185,6 +1467,55 @@
         run: () => addRefusal(words),
       },
     ];
+  }
+
+  // ── The picture of whoever is open ──────────────────────────────────────
+  // A row that came in without one (a message arriving live, an old row) used to leave the header on the
+  // placeholder while their card, which asks for them, had it: the header asks the same way, once a person.
+  let foundAvatar = $state<Record<string, string>>({});
+  const asked = new Set<string>();
+  $effect(() => {
+    const s = selected;
+    if (!s || s.avatar || s.kind === "server" || asked.has(`${target}:${s.id}`)) return;
+    asked.add(`${target}:${s.id}`);
+    const id = s.id;
+    api.person(String(id)).then((p: any) => {
+      if (p?.avatar) foundAvatar = { ...foundAvatar, [id]: p.avatar };
+    }).catch(() => {});
+  });
+  const headAvatar = $derived(selected ? selected.avatar || foundAvatar[selected.id] || "" : "");
+
+  // ── Replying to one message ─────────────────────────────────────────────
+  // Reply on a message (beside it as the pointer passes, or in its right-click menu): what is typed next goes as
+  // its answer, as Discord's reply, Snapchat's and TikTok's own Reply. One per conversation, until sent or let go.
+  let replyingTo = $state<Record<string, ReplyTo & { mid: string }>>({});
+  const replyHere = $derived(draftKey ? replyingTo[draftKey] : undefined);
+
+  /** What a message is, in a few words, for the bar over the message box. */
+  function gist(m: ConvMessage): string {
+    const t = (m.text ?? "").replace(/\s+/g, " ").trim();
+    // A gift is its link in words, which reads as nothing: say what it is instead.
+    if (m.gift) return m.gift.what && m.gift.what !== "a gift" ? `A gift: ${m.gift.what}` : "A Nitro gift";
+    if (t && !/^\[[^\]]+\]$/.test(t)) return t.slice(0, 120);
+    if (m.attachments?.length) return "A picture";
+    if (m.stickers?.length) return "A sticker";
+    if (m.kind === "video" || m.embeds?.length) return "A video";
+    return "A message";
+  }
+
+  function startReply(m: ConvMessage) {
+    if (!selected || !draftKey || !reactable(m)) return;
+    replyingTo = { ...replyingTo, [draftKey]: { mid: String(m.mid), text: gist(m),
+                                                name: m.mine ? "yourself" : (m.author?.name ?? selected.name) } };
+    playSound("select");
+    tick().then(() => composer?.focus());
+  }
+
+  function letGoOfReply() {
+    if (!draftKey || !replyingTo[draftKey]) return;
+    const { [draftKey]: _gone, ...rest } = replyingTo;
+    replyingTo = rest;
+    playSound("off");
   }
 
   // ── Reacting ───────────────────────────────────────────────────────────
@@ -1213,7 +1544,7 @@
 
   /** A reaction under a message, pressed: the account's own taken back, anyone else's added as its own too. */
   function toggleReaction(m: ConvMessage, r: Reaction) {
-    if (isSnap && !SNAP_REACTIONS.includes(r.name)) return;
+    if (isSnap && !plat.reactions.includes(r.name)) return;
     playSound(r.mine ? "off" : "select");
     void react(m, r, !r.mine);
   }
@@ -1233,18 +1564,30 @@
   async function replyAll() {
     if (replyingAll) {
       // Stop: the reply being written and any waiting to be sent are cancelled too;
-      // the run ends as they come back, and says what it did.
-      void stopReplyAll(target);
+      // the run ends as they come back, and says what it did. Every account's, in All chats.
+      for (const t of replyTargets) void stopReplyAll(t);
       return;
     }
-    if (busy) return;
+    if (busy || !replyTargets.length) return;
     try {
-      const res = await sendReplyAll(target);
-      if (!res) return;
-      const results = (res?.results || []) as any[];
+      // Each account answers at its own pace, so they run together rather than one after the other.
+      const runs = await Promise.all(replyTargets.map((t) => sendReplyAll(t).catch((e) => ({ error: e }) as any)));
+      const got = runs.filter((r) => r && !r.error);
+      const failed = runs.find((r) => r && r.error);
+      if (!got.length) {
+        if (failed) throw failed.error;
+        return;
+      }
+      const res = {
+        results: got.flatMap((r: any) => (r.results || []) as any[]),
+        total: got.reduce((n: number, r: any) => n + (r.total ?? 0), 0),
+        of: got.reduce((n: number, r: any) => n + (r.of ?? r.total ?? 0), 0),
+        stopped: got.some((r: any) => r.stopped),
+      };
+      const results = res.results;
       const stuck = results.filter((r) => !r.success && !r.dropped && !r.cancelled);
       failedReplies = new Set(stuck.map((r) => String(r.id)));
-      const n = res?.total ?? users.length;
+      const n = res.total || users.length;
       const done = n - results.filter((r) => !r.success).length;
       if (res.stopped) {
         toast(done ? `Stopped. ${done} of ${res.of} answered before that.` : "Stopped. Nobody was answered.", "info");
@@ -1272,6 +1615,7 @@
 
   /** A one-line preview for the list, as plain text: no markdown, mentions as names. */
   function preview(u: ChatUser): string {
+    if (u.gift) return u.gift.state === "accepted" ? "A Nitro gift, taken" : "Sent a Nitro gift";
     const t = (u.text ?? u.snippet ?? "")
       .replace(/<@!?(\d+)>/g, (_, id) => `@${$mentionNames[id] || "someone"}`)
       .replace(/<a?:(\w+):\d+>/g, ":$1:")
@@ -1281,10 +1625,12 @@
       .replace(/[*_~`]/g, "")
       .replace(/\s+/g, " ")
       .trim();
-    if (t && !/^\[(attachment|image|video|file|link|voice message|snap|call|\d+ attachments|sticker.*)\]$/i.test(t)) return t;
+    if (t && !/^\[(attachment|image|video|file|link|voice message|voice|photo|live|unsupported|snap|call|\d+ attachments|sticker.*)\]$/i.test(t)) return t;
     // Snapchat's kinds of message, said the way Snapchat says them.
     const said: Record<string, string> = { "[snap]": "Sent a Snap", "[call]": "A call", "[voice message]": "Voice message",
-                                           "[image]": "Sent a picture", "[video]": "Sent a video", "[sticker]": "Sent a sticker" };
+                                           "[image]": "Sent a picture", "[video]": "Sent a video", "[sticker]": "Sent a sticker",
+                                           "[photo]": "Sent a photo", "[voice]": "Voice message", "[live]": "Shared a LIVE",
+                                           "[unsupported]": "Only shows in the TikTok app" };
     if (said[t.toLowerCase()]) return said[t.toLowerCase()];
     if (u.attachments?.length) return u.attachments.length > 1 ? `${u.attachments.length} attachments` : "Sent a picture";
     if (u.stickers?.length) return `Sticker: ${u.stickers[0].name}`;
@@ -1312,24 +1658,40 @@
       onclick={multiple ? () => (picking = !picking) : undefined}
       class="ch-account {multiple ? 'is-button' : ''} {picking ? 'is-open' : ''}"
     >
-      {#if current?.avatar}
+      {#if allView}
+        <!-- Every account at once: their pictures stacked, the way a group shows its members. -->
+        <span class="ch-stack" aria-hidden="true">
+          {#each accounts.slice(0, 3) as a (a.id)}
+            {#if a.avatar}<img src={a.avatar} alt="" />{:else}<span><Icon name={a.platform === "discord" ? "accounts" : platformIcon(a.platform)} size={11} /></span>{/if}
+          {/each}
+        </span>
+      {:else if current?.avatar}
         <img src={current.avatar} alt="" class="h-9 w-9 shrink-0 rounded-full object-cover ring-1 ring-edge" />
       {:else}
         <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/[0.06] text-accent">
-          <Icon name={current?.platform === "snapchat" ? "snapchat" : "accounts"} size={17} />
+          <Icon name={plat.id === "discord" ? "accounts" : plat.icon} size={17} />
         </span>
       {/if}
       <span class="min-w-0">
         <span class="flex min-w-0 items-center gap-2">
-          <span class="truncate text-[14px] font-semibold text-ink">{current ? who(current) : "No account"}</span>
-          {#if current && named(current)}
-            <span class="shrink-0 rounded-md bg-white/[0.06] px-1.5 py-0.5 text-[10px] text-faint">{slot(current)}</span>
+          <span class="ch-acc-name truncate text-[14px] font-semibold text-ink">
+            {allView ? "All chats" : current ? who(current) : "No account"}
+          </span>
+          {#if allView}
+            <span class="ch-slot-chip shrink-0 rounded-md bg-white/[0.06] px-1.5 py-0.5 text-[10px] text-faint">{accounts.length} accounts</span>
+          {:else if current && named(current)}
+            <span class="ch-slot-chip shrink-0 rounded-md bg-white/[0.06] px-1.5 py-0.5 text-[10px] text-faint">{slot(current)}</span>
           {/if}
         </span>
         <span class="block truncate text-[11px] text-faint">
-          {multiple ? "Answering as this account, click to switch" : "Answering as this account"}
+          {allView ? "Every account at once, click to switch"
+            : multiple ? "Answering as this account, click to switch" : "Answering as this account"}
         </span>
       </span>
+      {#if waitingElsewhere}
+        <!-- People waiting on the other accounts, so they are not missed while this one is open. -->
+        <span class="ch-elsewhere" title="{waitingElsewhere} waiting on your other accounts">{waitingElsewhere > 99 ? "99+" : waitingElsewhere}</span>
+      {/if}
       {#if multiple}
         <span class="ml-1 shrink-0 text-faint transition-transform duration-200" style="transform: rotate({picking ? 180 : 0}deg)">
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
@@ -1342,15 +1704,34 @@
     {#if picking}
       <div role="listbox" aria-label="Account to answer as"
            class="glass floating absolute left-0 top-full z-30 mt-1 w-72 overflow-hidden rounded-xl p-1 shadow-xl">
+        <!-- Every account's waiting chats in one list. -->
+        <button role="option" aria-selected={allView} onclick={() => choose(ALL_CHATS)}
+                class="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left transition-colors
+                  {allView ? 'bg-accent/10' : 'hover:bg-white/[0.05]'}">
+          <span class="ch-stack is-small" aria-hidden="true">
+            {#each accounts.slice(0, 3) as a (a.id)}
+              {#if a.avatar}<img src={a.avatar} alt="" />{:else}<span><Icon name={a.platform === "discord" ? "accounts" : platformIcon(a.platform)} size={10} /></span>{/if}
+            {/each}
+          </span>
+          <span class="min-w-0 flex-1">
+            <span class="block truncate text-[13px] text-ink">All chats</span>
+            <span class="block truncate text-[11px] text-faint">Every account at once</span>
+          </span>
+          {#if waitingAll}<span class="ch-waiting" title="{waitingAll} waiting on a reply">{waitingAll > 99 ? "99+" : waitingAll}</span>{/if}
+          {#if allView}<span class="shrink-0 text-accent"><Icon name="check" size={14} /></span>{/if}
+        </button>
+        <div class="ch-pick-sep" aria-hidden="true"></div>
         {#each accounts as a (a.id)}
-          <button role="option" aria-selected={a.id === target} onclick={() => choose(a.id)}
+          {@const on = !allView && a.id === target}
+          {@const n = waitingOn(a.id)}
+          <button role="option" aria-selected={on} onclick={() => choose(a.id)}
                   class="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left transition-colors
-                    {a.id === target ? 'bg-accent/10' : 'hover:bg-white/[0.05]'}">
+                    {on ? 'bg-accent/10' : 'hover:bg-white/[0.05]'}">
             {#if a.avatar}
               <img src={a.avatar} alt="" class="h-8 w-8 shrink-0 rounded-full object-cover ring-1 ring-edge" />
             {:else}
               <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/[0.06] text-accent">
-                <Icon name={a.platform === "snapchat" ? "snapchat" : "accounts"} size={15} />
+                <Icon name={a.platform === "discord" ? "accounts" : platformIcon(a.platform)} size={15} />
               </span>
             {/if}
             <span class="min-w-0 flex-1">
@@ -1360,7 +1741,8 @@
               </span>
             </span>
             {#if a.state && a.state !== "running"}<span class="shrink-0"><Badge tone="muted">{a.state}</Badge></span>{/if}
-            {#if a.id === target}<span class="shrink-0 text-accent"><Icon name="check" size={14} /></span>{/if}
+            {#if n}<span class="ch-waiting" title="{n} waiting on a reply">{n > 99 ? "99+" : n}</span>{/if}
+            {#if on}<span class="shrink-0 text-accent"><Icon name="check" size={14} /></span>{/if}
           </button>
         {/each}
       </div>
@@ -1377,10 +1759,13 @@
   {/if}
 
   <div class="ch-top-actions ml-auto flex shrink-0 items-center gap-2">
+    <!-- Who is ignored, adding a friend and replying to everyone are each one account's: in All chats they wait for
+         that account to be chosen, rather than quietly acting on whichever was open last. -->
+    {#if !allView}
     <div class="relative" data-ignored-panel>
       <button class="ch-ignored-btn" class:is-open={ignoredOpen} onclick={() => { ignoredOpen = !ignoredOpen; if (ignoredOpen) loadIgnored(); }}
-              title="People the bot does not answer" aria-expanded={ignoredOpen}>
-        <Icon name="eyeOff" size={13} />Ignored{#if ignoredCount}<b>{ignoredCount}</b>{/if}
+              title="People the bot does not answer" aria-label="Ignored" aria-expanded={ignoredOpen}>
+        <Icon name="eyeOff" size={13} /><span class="ch-btn-label">Ignored</span>{#if ignoredCount}<b>{ignoredCount}</b>{/if}
       </button>
       {#if ignoredOpen}
         <div class="ch-ignored glass floating" role="dialog" aria-label="Ignored people">
@@ -1413,11 +1798,51 @@
         </div>
       {/if}
     </div>
+    <!-- Adding a friend: their username, sent from this account. Not where there is nobody to add (a game). -->
+    {#if plat.add}
+    <div class="relative" data-add-friend>
+      <button class="ch-ignored-btn" class:is-open={addOpen} onclick={toggleAdd}
+              title={plat.id === "imessage" ? "Text someone new, by number or email"
+                : plat.add === "Follow" ? "Follow someone by username" : "Send a friend request by username"}
+              aria-label={plat.add} aria-expanded={addOpen}>
+        <Icon name={plat.id === "imessage" ? "edit" : "userPlus"} size={13} /><span class="ch-btn-label">{plat.add}</span>
+      </button>
+      {#if addOpen}
+        <form class="ch-add glass floating" class:is-text={plat.id === "imessage"}
+              onsubmit={(e) => { e.preventDefault(); addFriend(); }}>
+          {#if plat.id === "imessage"}
+            <!-- iMessage: anyone can be texted, by their number or email; the first message starts it. -->
+            <span class="ch-add-head">Text someone new</span>
+            <label class="ch-add-box is-who">
+              <input bind:this={addBox} bind:value={addName} placeholder="+1 555 123 4567 or name@icloud.com"
+                     spellcheck="false" autocomplete="off" aria-label="Their number or email"
+                     onkeydown={(e) => { if (e.key === "Escape") addOpen = false; }} />
+            </label>
+            <label class="ch-add-box">
+              <input bind:value={addText} placeholder="Your message" autocomplete="off" aria-label="The first message"
+                     onkeydown={(e) => { if (e.key === "Escape") addOpen = false; }} />
+            </label>
+            <Button size="sm" loading={adding} disabled={!addName.trim() || !addText.trim()}>Send</Button>
+          {:else}
+            <span class="ch-add-head">{plat.add === "Follow" ? `Follow someone on ${plat.name}` : `Add a friend on ${plat.name}`}</span>
+            <label class="ch-add-box">
+              <span class="ch-add-at">@</span>
+              <input bind:this={addBox} bind:value={addName} placeholder="username" spellcheck="false" autocomplete="off"
+                     aria-label="Their username" onkeydown={(e) => { if (e.key === "Escape") addOpen = false; }} />
+            </label>
+            <Button size="sm" loading={adding} disabled={!addName.trim()}>{plat.add === "Follow" ? "Follow" : "Add"}</Button>
+          {/if}
+        </form>
+      {/if}
+    </div>
+    {/if}
+    {/if}
     <span class="ch-livebadge" title="New messages and every step of a reply show up here as they happen">
       <i class:is-busy={refreshing}></i>{refreshing ? "Checking" : "Live"}
     </span>
     <Button kind={replyingAll ? "ghost" : "good"} onclick={replyAll}
-            disabled={(!replyingAll && users.length === 0) || !!allProgress?.stopping} loading={!!allProgress?.stopping}>
+            disabled={(!replyingAll && !replyTargets.length) || !!allProgress?.stopping}
+            loading={!!allProgress?.stopping}>
       {#if allProgress?.stopping}
         Stopping
       {:else if replyingAll && allProgress}
@@ -1425,17 +1850,39 @@
       {:else if replyingAll}
         <Icon name="stop" size={11} />Stop
       {:else}
-        <Icon name="chats" size={13} />Reply to all
+        <!-- In All chats it answers every account's, so it says so rather than looking like one account's. -->
+        <Icon name="chats" size={13} />{allView && replyTargets.length > 1
+          ? `Reply to all (${replyTargets.length} accounts)` : "Reply to all"}
       {/if}
     </Button>
   </div>
 </div>
 
+<!-- ── Calls: someone calling the account, or in a call with it, live ─────── -->
+{#if calls.length}
+  <div class="ch-calls" class:narrow-hide={showDetail && !!selected}>
+    {#each calls as c (c.uid)}
+      <button class="ch-call" class:is-ringing={c.state === "ringing"} onclick={() => openCall(c)}
+              transition:fade={{ duration: 180 }} title="Open the conversation">
+        <span class="ch-call-av">
+          <span class="ch-call-ring" aria-hidden="true"></span><span class="ch-call-ring is-late" aria-hidden="true"></span>
+          <Avatar src={c.avatar} name={c.name || "?"} size={34} zoom={false} silhouette={plat.silhouette} />
+        </span>
+        <span class="ch-call-text">
+          <b>{c.name || "Someone"}</b>
+          <small><span class="ch-call-icon"><Icon name="phone" size={11} /></span><span>{callWords(c.state)}{#if c.since}{" · "}{callFor(c.since)}{/if}</span></small>
+          {#if c.live && c.last}<small class="ch-call-live">{c.last}</small>{/if}
+        </span>
+      </button>
+    {/each}
+  </div>
+{/if}
+
 <!-- ── Friend requests: a strip, not a block ──────────────────────────────── -->
-{#if incoming.length || (friendsError && friendsSupported)}
+{#if !allView && (incoming.length || (friendsError && friendsSupported))}
   <div class="ch-friends" class:narrow-hide={showDetail && !!selected}>
     <span class="ch-friends-label">
-      <Icon name="accounts" size={13} />Friend requests
+      <Icon name="accounts" size={13} />{plat.requests}
       {#if incoming.length}<b>{incoming.length}</b>{/if}
     </span>
     {#if friendsError && friendsSupported && !incoming.length}
@@ -1444,8 +1891,8 @@
     {/if}
     <div class="ch-friends-list domino" use:domino={{ step: 70 }}>
       {#each incoming as r (r.id)}
-        <div class="ch-fr" title={isSnap ? "Accept adds them as a friend." : "Accepted over hours on its own so it does not look scripted. Accept does it now."}>
-          <Avatar src={r.avatar} name={r.display_name || r.username} size={30} silhouette={isSnap} />
+        <div class="ch-fr" title={plat.requests === "Message requests" ? "Accept lets them message it. Delete turns it down." : isSnap ? "Accept adds them as a friend." : "Accepted over hours on its own so it does not look scripted. Accept does it now."}>
+          <Avatar src={r.avatar} name={r.display_name || r.username} size={30} silhouette={plat.silhouette} />
           <span class="min-w-0">
             <span class="block truncate text-[12.5px] font-medium text-ink">{r.display_name || r.username}</span>
             <span class="block truncate text-[10.5px] text-faint">
@@ -1473,15 +1920,21 @@
     </div>
     <div class="ch-detail glass"><div class="m-5 h-40 animate-pulse rounded-2xl bg-white/[0.03]"></div></div>
   </div>
-{:else if !users.length && !selected}
+{:else if !users.length && !selected && !browsingServers}
   <!-- ── Inbox zero ─────────────────────────────────────────────────────── -->
   <div class="ch-zero glass" class:is-compact={archived.length > 0}>
     <span class="ch-zero-mark" use:chime={"done"}><Icon name="check" size={26} /></span>
     <div class="text-[18px] font-semibold tracking-tight text-ink">Everyone has been answered</div>
     <p class="max-w-md text-[12.5px] leading-relaxed text-muted">
-      Anyone who messages this account and has not had a reply shows up here the moment they do,
-      with where the bot is with their reply.
+      Anyone who messages {allView ? "any of your accounts" : "this account"} and has not had a reply shows up here
+      the moment they do, with where the bot is with their reply.
     </p>
+    {#if !allView && hasServers}
+      <!-- Nobody waiting is when you are most likely to want to go and say something in one yourself. -->
+      <Button kind="ghost" onclick={() => (serversOpen = true)}>
+        <Icon name="globe" size={13} />{plat.id === "telegram" ? "Go into its groups" : "Go into its servers"}
+      </Button>
+    {/if}
   </div>
 
   <!-- The conversations already answered stay in reach: it used to be one
@@ -1508,7 +1961,7 @@
         {#each recentShown.slice(0, showAllRecent || searchingList ? recentShown.length : RECENT_FIRST) as c (c.id)}
           <div class="ch-item-wrap ch-recent-wrap">
             <button class="ch-recent-card" onclick={() => openArchived(c)}>
-              <span class="halo ch-recent-av"><Avatar src={c.avatar} name={c.name} size={40} zoom={false} silhouette={isSnap} /></span>
+              <span class="halo ch-recent-av"><Avatar src={c.avatar} name={c.name} size={40} zoom={false} silhouette={plat.silhouette} /></span>
               <span class="min-w-0 flex-1 text-left">
                 <span class="block truncate text-[13.5px] font-medium text-ink">{c.name}</span>
                 <span class="block truncate text-[11.5px] text-faint">
@@ -1536,7 +1989,7 @@
           {#each msgHits.messages as m (`${m.uid}:${m.mid}`)}
             {@const p = personFor(String(m.uid))}
             <button type="button" class="ch-hit" onclick={() => openFromSearch(p, String(m.mid))}>
-              <Avatar src={p.avatar} name={p.name} size={32} zoom={false} silhouette={isSnap} />
+              <Avatar src={p.avatar} name={p.name} size={32} zoom={false} silhouette={plat.silhouette} />
               <span class="ch-hit-main">
                 <span class="ch-hit-top"><b>{p.name}</b><time>{whenSent(m.ts)}</time></span>
                 <span class="ch-hit-text">
@@ -1566,7 +2019,9 @@
       <div class="ch-find">
         <label class="ch-find-box">
           <Icon name="search" size={13} />
-          <input bind:value={listQuery} placeholder="Search chats" spellcheck="false" autocomplete="off" aria-label="Search chats"
+          <input bind:value={listQuery} placeholder={browsingServers ? "Search channels" : "Search chats"}
+                 spellcheck="false" autocomplete="off"
+                 aria-label={browsingServers ? "Search channels" : "Search chats"}
                  onkeydown={(e) => { if (e.key === "Escape" && listQuery) { e.stopPropagation(); listQuery = ""; } }} />
           {#if listQuery}
             <button type="button" class="ch-find-x" onclick={() => (listQuery = "")} aria-label="Clear the search">
@@ -1574,7 +2029,18 @@
             </button>
           {/if}
         </label>
-        {#if listChips.length > 1}
+        {#if hasServers && !allView}
+          <!-- Not a filter: it puts the account's servers in the column instead of who is waiting, so it is a
+               button of its own above them rather than one more pill among them. -->
+          <button type="button" class="ch-go" class:is-on={browsingServers} data-sound="self" onclick={toggleServers}>
+            <span class="ch-go-i"><Icon name={browsingServers ? "chevron" : "globe"} size={14} /></span>
+            <span class="ch-go-t">{browsingServers
+              ? "Back to chats"
+              : plat.id === "telegram" ? "Its groups and channels" : "Its servers and channels"}</span>
+            {#if !browsingServers}<span class="ch-go-go"><Icon name="chevron" size={12} /></span>{/if}
+          </button>
+        {/if}
+        {#if listChips.length > 1 && !browsingServers}
           <div class="ch-chips" role="tablist" aria-label="Show" bind:this={chipBox}>
             <!-- One pill, sliding to the chip chosen, the way the app's other choices move. -->
             <span class="ch-chip-pill" class:is-shown={pill.shown} class:is-moving={pillMoves} aria-hidden="true"
@@ -1588,18 +2054,30 @@
           </div>
         {/if}
       </div>
+      {#if browsingServers}
+        <ServerTree {target} open={selectedId} query={listQuery} waiting={waitingChannels} onpick={openChannel}
+                    word={plat.id === "telegram" ? "group" : "server"} />
+      {:else}
       <div class="ch-list domino" use:domino={{ step: 40, max: 12 }}>
       {#each shownSections as sec (sec.id)}
         <div class="ch-sec" data-tone={sec.tone}>
           <span class="ch-sec-dot"></span>{sec.title}<span class="ch-sec-n">{sec.rows.length}</span>
         </div>
-        {#each sec.rows as { u, st: s } (u.id)}
+        {#each sec.rows as { u, st: s } (keyOf(u))}
+          {@const acc = accOf(u)}
+          {@const via = allView ? accountOf(acc) : undefined}
           <div class="ch-item-wrap" class:is-bad={s.tone === "bad"} animate:flip={{ duration: 260 }} use:contextMenu={() => rowMenu(u)}>
-          <button class="ch-item" class:is-sel={u.id === selectedId} data-tone={s.tone} data-phase={s.phase}
-                  onclick={() => select(u.id)}>
+          <button class="ch-item" class:is-sel={isOpen(u)} data-tone={s.tone} data-phase={s.phase}
+                  onclick={() => openRow(u)}>
             <span class="ch-av halo" class:is-live={s.phase === "live"} class:is-fast={s.step === 2 || s.step === 4}>
-              <Avatar src={u.avatar} name={u.name} size={42} zoom={false} silhouette={isSnap} />
+              <Avatar src={u.avatar} name={u.name} size={42} zoom={false} silhouette={platOfRow(u).silhouette} />
               {#if u.count > 1}<span class="ch-badge">{u.count}</span>{/if}
+              {#if via}
+                <!-- Which of your accounts they wrote to: its picture, or its platform when it has none. -->
+                <span class="ch-via" title="To {who(via)}{named(via) ? ` · ${slot(via)}` : ''}">
+                  {#if via.avatar}<img src={via.avatar} alt="" />{:else}<Icon name={via.platform === "discord" ? "accounts" : platformIcon(via.platform)} size={9} />{/if}
+                </span>
+              {/if}
             </span>
             <span class="ch-item-main">
               <span class="ch-item-top">
@@ -1608,12 +2086,17 @@
                 <span class="ch-time">{ago(u.ts)}</span>
               </span>
               <span class="ch-preview">
-                {#if $typingNow[convKey(target, u.id)]}
+                {#if callOf(u.id, acc)}
+                  <!-- Calling the account, or in a call: said where the last message would be. -->
+                  <span class="ch-call-tag" class:is-ringing={callOf(u.id, acc).state === "ringing"}>
+                    <Icon name="phone" size={11} />{callOf(u.id, acc).state === "ringing" ? "Calling" : "In a call"}
+                  </span>
+                {:else if $typingNow[convKey(acc, u.id)]}
                   <!-- They are writing to it right now. -->
                   <span class="ch-typing">typing<i></i><i></i><i></i></span>
-                {:else if u.id !== selectedId && hasDraft(u.id)}
+                {:else if !isOpen(u) && hasDraft(u.id, acc)}
                   <!-- Something you started writing to them and have not sent. -->
-                  <span class="ch-draft">Draft:</span><span class="ch-draft-text">{draftOf(u.id)}</span>
+                  <span class="ch-draft">Draft:</span><span class="ch-draft-text">{draftOf(u.id, acc)}</span>
                 {:else}
                   {#if hasMedia(u)}<span class="ch-preview-icon"><Icon name="pictures" size={11} /></span>{/if}
                   {preview(u)}
@@ -1632,7 +2115,7 @@
           </button>
           <!-- Stop answering them, and stop trying, until they are let back in.
                On every row: it used to be only where a reply had failed. -->
-          <button class="ch-x" onclick={(e) => ignorePerson(personOf(u), e)} disabled={!!ignoreBusy[personOf(u).id]}
+          <button class="ch-x" onclick={(e) => ignorePerson(personOf(u), e, acc)} disabled={!!ignoreBusy[personOf(u).id]}
                   title="Ignore {u.name}: the bot stops answering them until you unignore them" aria-label="Ignore {u.name}">
             <Icon name="close" size={11} />
           </button>
@@ -1649,9 +2132,20 @@
         </button>
         {#if pastOpen}
           {#each shownArchived as c (c.id)}
+            {@const pacc = allView ? accountOf(pastAcc(c)) : undefined}
             <div class="ch-item-wrap" use:contextMenu={() => pastMenu(c)}>
-              <button class="ch-item is-past" class:is-sel={c.id === selectedId} onclick={() => openArchived(c)}>
-                <span class="ch-av"><Avatar src={c.avatar} name={c.name} size={34} zoom={false} silhouette={isSnap} /></span>
+              <button class="ch-item is-past" class:is-sel={c.id === selectedId && pastAcc(c) === target}
+                      onclick={() => openArchived(c)}>
+                <span class="ch-av">
+                  <Avatar src={c.avatar} name={c.name} size={34} zoom={false}
+                          silhouette={platformOf(pacc?.platform ?? current?.platform).silhouette} />
+                  {#if pacc}
+                    <!-- Which of your accounts answered them. -->
+                    <span class="ch-via" title="To {who(pacc)}{named(pacc) ? ` \u00b7 ${slot(pacc)}` : ''}">
+                      {#if pacc.avatar}<img src={pacc.avatar} alt="" />{:else}<Icon name={pacc.platform === "discord" ? "accounts" : platformIcon(pacc.platform)} size={9} />{/if}
+                    </span>
+                  {/if}
+                </span>
                 <span class="ch-item-main">
                   <span class="ch-item-top">
                     <span class="ch-name">{c.name}</span>
@@ -1684,7 +2178,7 @@
         {#each msgHits.messages as m (`${m.uid}:${m.mid}`)}
           {@const p = personFor(String(m.uid))}
           <button type="button" class="ch-hit" onclick={() => openFromSearch(p, String(m.mid))}>
-            <Avatar src={p.avatar} name={p.name} size={32} zoom={false} silhouette={isSnap} />
+            <Avatar src={p.avatar} name={p.name} size={32} zoom={false} silhouette={plat.silhouette} />
             <span class="ch-hit-main">
               <span class="ch-hit-top"><b>{p.name}</b><time>{whenSent(m.ts)}</time></span>
               <span class="ch-hit-text">
@@ -1702,6 +2196,7 @@
         </div>
       {/if}
       </div>
+      {/if}
     </div>
 
     <!-- ── The conversation ─────────────────────────────────────────────── -->
@@ -1714,17 +2209,27 @@
             <Icon name="chevron" size={14} />
           </button>
           <span class="cd-av halo" class:is-live={st?.phase === "live"} class:is-fast={st?.step === 2 || st?.step === 4}>
-            <Avatar src={selected.avatar} name={selected.name} size={48} silhouette={isSnap} />
+            <Avatar src={headAvatar} name={selected.name} size={48} silhouette={plat.silhouette} />
           </span>
           <div class="min-w-0 flex-1">
             <div class="flex min-w-0 items-center gap-2">
               <UserChip id={selected.id} name={selected.name} size="md" />
               {#if selected.count > 1 && !answered}<span class="cd-unread">{selected.count} unread</span>{/if}
+              {#if callOf(selected.id)}
+                {@const sc = callOf(selected.id)}
+                <span class="cd-call" class:is-ringing={sc.state === "ringing"} title="As {plat.name} says it">
+                  <Icon name="phone" size={11} /><span>{sc.state === "ringing" ? "Calling" : sc.state === "together" ? "On a call with you" : "In a call"}{#if sc.since}{" · "}{callFor(sc.since)}{/if}</span>
+                </span>
+              {/if}
             </div>
             <div class="truncate text-[11.5px] text-faint">
-              {#if selected.username && selected.username !== selected.name}<span class="selectable">@{selected.username}</span> · {/if}
-              {selected.kind === "server" && selected.where ? `${selected.where} · ` : ""}{selected.archived ? "answered" : `last message ${ago(selected.ts) === "now" ? "just now" : `${ago(selected.ts)} ago`}`}
-              {#if selected.ts} · {at(selected.ts)}{/if}
+              {#if selected.username && selected.username !== selected.name}<span class="selectable">@{selected.username}</span>{" · "}{/if}
+              {#if selected.browsed}
+                {selected.where}{selected.topic ? ` · ${selected.topic}` : ""}
+              {:else}
+                {selected.kind === "server" && selected.where ? `${selected.where} · ` : ""}{selected.archived ? "answered" : `last message ${ago(selected.ts) === "now" ? "just now" : `${ago(selected.ts)} ago`}`}
+                {#if selected.ts}{" · "}{at(selected.ts)}{/if}
+              {/if}
             </div>
           </div>
           {#if canTools}
@@ -1748,6 +2253,19 @@
                   <Icon name="link" size={15} />
                 </button>
               {/if}
+              {#if tiktokPerson}
+                <button type="button" class="cd-tool" class:is-on={toolsOpen && toolsTab === "tiktoks"} onclick={() => toggleTools("tiktoks")}
+                        title="Their TikToks" aria-label="Their TikToks" aria-pressed={toolsOpen && toolsTab === "tiktoks"}>
+                  <Icon name="tiktok" size={15} />
+                </button>
+              {/if}
+              {#if instaPerson}
+                <button type="button" class="cd-tool" class:is-on={toolsOpen && toolsTab === "posts"} onclick={() => toggleTools("posts")}
+                        title="Their stories and posts" aria-label="Their stories and posts"
+                        aria-pressed={toolsOpen && toolsTab === "posts"}>
+                  <Icon name="instagram" size={15} />
+                </button>
+              {/if}
               <button type="button" class="cd-tool" onclick={moreMenu} title="More" aria-label="More">
                 <Icon name="more" size={15} />
               </button>
@@ -1755,7 +2273,7 @@
           {/if}
           {#if !selected.archived}
             <button class="cd-toggle" class:is-off={selected.ignored} onclick={() => flipIgnore(selected!)}
-                    disabled={!!rowBusy[selected.id]}
+                    disabled={!!rowBusy[keyOf(selected)]}
                     title={selected.ignored ? "Let the bot answer them again" : "Stop the bot answering this person at all"}>
               <span class="cd-toggle-knob"></span>
               {selected.ignored ? "Bot off" : "Bot on"}
@@ -1767,7 +2285,9 @@
         <div class="cd-main">
         <!-- Where the reply is. The tracker when the bot has it in hand, a
              callout when it needs you, a tick once it is answered. -->
-        {#if answered}
+        {#if selected.browsed}
+          <!-- Walked into from the servers list: nothing is waiting, so there is no reply to report on. -->
+        {:else if answered}
           <div class="cd-strip is-done" title={selected.archived ? "Nothing is waiting in this conversation" : "The reply went out"}>
             <span class="cd-strip-mark"><Icon name="check" size={11} /></span>
             <span class="cd-strip-text"><b>{selected.archived ? "Answered" : "Answered just now"}</b>
@@ -1840,16 +2360,42 @@
                      person speaking rather than a column of the same face. -->
                 <span class="cd-msg-av">
                   {#if d.last}
-                    <Avatar src={d.m.author?.avatar ?? selected.avatar}
-                            name={d.m.author?.name ?? selected.name} size={26} zoom={false} silhouette={isSnap} />
+                    <Avatar src={d.m.author?.avatar ?? headAvatar}
+                            name={d.m.author?.name ?? selected.name} size={26} zoom={false} silhouette={plat.silhouette} />
                   {/if}
                 </span>
               {/if}
               <div class="cd-wrap">
                 <div class="cd-bubble">
+                  {#if d.m.reply_to && (d.m.reply_to.text || d.m.reply_to.name)}
+                    <!-- What it answers, as the apps show a reply: the quoted message, small, above it. Pressed, the
+                         conversation goes to it, when it is one this conversation has. -->
+                    <button type="button" class="cd-quote" title={d.m.reply_to.text}
+                            disabled={!d.m.reply_to.mid}
+                            onclick={() => { if (d.m.reply_to?.mid) { playSound("tap"); void jumpTo(d.m.reply_to.mid); } }}>
+                      <Icon name="reply" size={11} />
+                      {#if d.m.reply_to.name}<b>{d.m.reply_to.name}</b>{/if}
+                      <span class="truncate">{d.m.reply_to.text || "a message"}</span>
+                    </button>
+                  {/if}
                   <MessageBody text={d.m.text ?? ""} attachments={d.m.attachments ?? []} stickers={d.m.stickers ?? []}
                                embeds={d.m.embeds ?? []}
                                onreveal={!d.m.mine && !selected.archived && !isSnap ? () => loadMessage(target, selected!.id) : undefined} />
+                  {#if d.m.gift}
+                    <!-- A Nitro gift link: what it is for and whether it is still there, with the button that
+                         takes it. The account redeems it itself, so it lands on the account it was sent to. -->
+                    {@const g = d.m.gift}
+                    <div class="cd-gift" class:is-done={g.state === "accepted"} class:is-gone={GIFT_GONE.has(g.state ?? "")}>
+                      <span class="cd-gift-mark"><Icon name="gift" size={15} /></span>
+                      <span class="min-w-0 flex-1">
+                        <b class="cd-gift-what">{g.what && g.what !== "a gift" ? g.what : "Nitro gift"}</b>
+                        <span class="cd-gift-says">{giftSays(g)}</span>
+                      </span>
+                      {#if !d.m.mine && !GIFT_GONE.has(g.state ?? "") && g.state !== "accepted"}
+                        <Button size="sm" loading={giftBusy === d.m.mid} onclick={() => takeGift(d.m)}>Accept</Button>
+                      {/if}
+                    </div>
+                  {/if}
                   {#if d.m.deleted}
                     <!-- Deleted on Discord, and kept here (app/utils/chatlog.py): a bin on its corner says so. -->
                     <span class="cd-bin" title="{d.m.mine ? 'You deleted this' : `${d.m.author?.name ?? selected.name} deleted this`} · {fmtDate(d.m.deleted * 1000, FULL_WHEN)}">
@@ -1867,7 +2413,7 @@
                   <div class="cd-reacts">
                     {#each d.m.reactions as r (r.url || r.name)}
                       <button type="button" class="cd-react" class:is-mine={r.mine} data-sound="self"
-                              disabled={!reactable(d.m) || (isSnap && !SNAP_REACTIONS.includes(r.name))}
+                              disabled={!reactable(d.m) || (isSnap && !plat.reactions.includes(r.name))}
                               onclick={() => toggleReaction(d.m, r)}
                               title="{r.count} {r.count === 1 ? 'person' : 'people'} reacted with {r.name || 'this'}{r.mine ? ', including this account. Press to take it back' : '. Press to add yours'}">
                         {#if r.url}
@@ -1887,6 +2433,10 @@
                         onclick={(e) => openReact(d.m, e)} title="React" aria-label="React to this message">
                   <Icon name="smilePlus" size={15} />
                 </button>
+                <button type="button" class="cd-react-add cd-reply-add" class:is-open={replyHere?.mid === String(d.m.mid)}
+                        onclick={() => startReply(d.m)} title="Reply" aria-label="Reply to this message">
+                  <Icon name="reply" size={14} />
+                </button>
               {/if}
               <!-- When it was sent, beside it as the pointer passes. The last of
                    a run already says so underneath. -->
@@ -1897,14 +2447,14 @@
             {#if d.last}
               <div class="cd-meta" class:is-mine={d.m.mine} class:is-failed={d.m.failed}
                    title={d.m.ts ? fmtDate(d.m.ts * 1000, FULL_WHEN) : undefined}>
-                {d.m.mine ? "You" : (d.m.author?.name ?? selected.name)}{#if d.m.pending} · sending{:else if d.m.failed} · not sent{:else if !d.m.approx} · {at(d.m.ts)}{/if}
+                {d.m.mine ? "You" : (d.m.author?.name ?? selected.name)}{#if d.m.pending}{" · "}sending{:else if d.m.failed}{" · "}not sent{:else if !d.m.approx}{" · "}{at(d.m.ts)}{/if}
               </div>
             {/if}
           {/each}
           {#if $typingNow[convKey(target, selected.id)] && !selected.archived}
             <!-- They are typing to it right now: the same dots as the bot's, on their side. -->
             <div class="cd-msg is-first is-last cd-their-typing">
-              <span class="cd-msg-av"><Avatar src={selected.avatar} name={selected.name} size={26} zoom={false} /></span>
+              <span class="cd-msg-av"><Avatar src={headAvatar} name={selected.name} size={26} zoom={false} /></span>
               <div class="cd-bubble cd-typing" title="{selected.name} is typing"><i></i><i></i><i></i></div>
             </div>
           {/if}
@@ -1939,15 +2489,31 @@
             </Button>
             {#if (cancellable(selected) || replying[selected.id]) && !selected.ignored}
               <!-- There while a reply is being written by hand too: it stops it, and whatever went out already stays. -->
-              <Button kind="ghost" onclick={() => cancel(selected!)} disabled={!!rowBusy[selected.id]}>
+              <Button kind="ghost" onclick={() => cancel(selected!)} disabled={!!rowBusy[keyOf(selected)]}>
                 <Icon name="close" size={12} />Cancel the reply
               </Button>
             {/if}
           </footer>
         {/if}
-        {#if selected}
+        {#if selected?.readonly}
+          <!-- A channel of a server where this account may read but not post: said here rather than letting you
+               write something Discord would refuse. -->
+          <p class="cd-readonly">
+            <Icon name="eye" size={13} />It can read this channel, not post in it.
+          </p>
+        {:else if selected}
           <!-- Write to them yourself, as the account. A reply the bot had lined up is dropped when you do. -->
           <form class="cd-compose" onsubmit={(e) => { e.preventDefault(); sendDraft(); }}>
+            {#if replyHere}
+              <div class="cd-replying" transition:fade={{ duration: $motionEnabled ? 140 : 0 }}>
+                <Icon name="reply" size={13} />
+                <span class="min-w-0 flex-1 truncate">Replying to <b>{replyHere.name}</b> · {replyHere.text}</span>
+                <button type="button" class="cd-replying-x" onclick={letGoOfReply} aria-label="Do not reply to it"
+                        title="Not a reply (Esc)">
+                  <Icon name="close" size={10} />
+                </button>
+              </div>
+            {/if}
             {#if stagedHere.length}
               <!-- Pasted pictures, before they go. -->
               <div class="cd-staged">
@@ -1967,11 +2533,14 @@
               </div>
             {/if}
             <div class="cd-compose-row">
+              <!-- Nothing to attach where the chat is words only (a game's). -->
+              {#if plat.media !== false}
               <button type="button" class="cd-attach" onclick={() => filePick?.click()}
                       aria-label={isSnap ? "Attach a picture" : "Attach files"}
                       title={isSnap ? "Attach a picture. You can also paste or drop one" : "Attach files. You can also paste or drop them"}>
                 <Icon name={isSnap ? "pictures" : "plus"} size={15} />
               </button>
+              {/if}
               <input bind:this={filePick} type="file" multiple accept={isSnap ? "image/*" : ACCEPT}
                      class="hidden" onchange={(e) => {
                        const t = e.currentTarget as HTMLInputElement;
@@ -1998,7 +2567,7 @@
             <div class="cd-side-in">
               {#key `${target}:${selected.id}`}
                 <ChatTools bind:tab={toolsTab} {target} uid={selected.id} platform={current?.platform ?? "discord"}
-                           them={{ name: selected.name, username: selected.username, avatar: selected.avatar }}
+                           them={{ name: selected.name, username: selected.username, avatar: headAvatar }}
                            me={{ name: current ? who(current) : "You", avatar: current?.avatar }}
                            focusKey={toolsFocus} onjump={jumpTo} onclose={() => (toolsOpen = false)} />
               {/key}
@@ -2030,7 +2599,8 @@
 {#if reactingTo && selected}
   {@const rm = shownMsgs.find((x) => String(x.mid) === reactingTo?.mid)}
   {#if rm}
-    <ReactPicker anchor={reactingTo.anchor} snap={isSnap}
+    <ReactPicker anchor={reactingTo.anchor} snap={isSnap} set={isSnap ? plat.reactions : undefined}
+                 any={!!plat.anyReaction}
                  mine={(rm.reactions ?? []).filter((r) => r.mine).map((r) => r.name)}
                  onpick={(emoji, add) => react(rm, { name: emoji }, add)} onclose={() => (reactingTo = null)} />
   {/if}
@@ -2049,6 +2619,9 @@
     display: flex;
     align-items: center;
     gap: 10px;
+    /* No wider than the space it is given: a button is as wide as its words, and in a narrow window they ran on
+       under the buttons beside it instead of being cut short. */
+    max-width: 100%;
     padding: 6px 10px 6px 6px;
     border-radius: 14px;
     text-align: left;
@@ -2091,6 +2664,105 @@
     box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-good) 16%, transparent);
   }
   .ch-livebadge i.is-busy { background: var(--color-accent); animation: ch-pulse 1s ease-in-out infinite; }
+
+  /* ── Calls ───────────────────────────────────────────────────────── */
+  .ch-calls { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+  .ch-call {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 14px 6px 6px;
+    border-radius: 999px;
+    text-align: left;
+    color: var(--color-ink);
+    background: color-mix(in srgb, var(--color-good) 10%, var(--color-card));
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-good) 35%, transparent), 0 10px 26px -16px var(--color-good);
+    transition: transform 0.35s var(--jelly), box-shadow 0.2s ease;
+    animation: ch-call-in 0.45s var(--jelly);
+  }
+  @keyframes ch-call-in { from { opacity: 0; transform: translateY(-6px) scale(0.94); } }
+  .ch-call:hover { transform: translateY(-1px); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-good) 60%, transparent), 0 14px 30px -14px var(--color-good); }
+  .ch-call-av { position: relative; display: grid; place-items: center; }
+  /* Ringing: rings go out from their picture, as a phone's call screen. */
+  .ch-call-ring {
+    position: absolute;
+    inset: 0;
+    border-radius: 999px;
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-good) 70%, transparent);
+    opacity: 0;
+  }
+  .ch-call.is-ringing .ch-call-ring { animation: ch-call-ring 1.6s ease-out infinite; }
+  .ch-call.is-ringing .ch-call-ring.is-late { animation-delay: 0.8s; }
+  @keyframes ch-call-ring { from { opacity: 0.9; transform: scale(1); } to { opacity: 0; transform: scale(1.7); } }
+  .ch-call-text { display: flex; min-width: 0; flex-direction: column; line-height: 1.25; }
+  .ch-call-text b { font-size: 12.5px; font-weight: 650; }
+  .ch-call-text small { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--color-good);
+                        font-variant-numeric: tabular-nums; }
+  /* The last thing said on a live call, as a call screen shows it. */
+  .ch-call-live { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+                  color: var(--color-text, inherit); opacity: 0.85; }
+  .ch-call-icon { display: grid; }
+  .ch-call.is-ringing .ch-call-icon { animation: ch-call-shake 1.2s ease-in-out infinite; transform-origin: 50% 60%; }
+  @keyframes ch-call-shake { 0%, 50%, 100% { transform: rotate(0); } 10%, 30% { transform: rotate(-16deg); } 20%, 40% { transform: rotate(16deg); } }
+  .ch-call-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-weight: 600;
+    color: var(--color-good);
+  }
+  .ch-call-tag.is-ringing :global(svg) { animation: ch-call-shake 1.2s ease-in-out infinite; transform-origin: 50% 60%; }
+  .cd-call {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 9px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 650;
+    font-variant-numeric: tabular-nums;
+    color: var(--color-good);
+    background: color-mix(in srgb, var(--color-good) 13%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-good) 30%, transparent);
+    animation: ch-call-in 0.4s var(--jelly);
+  }
+  .cd-call.is-ringing :global(svg) { animation: ch-call-shake 1.2s ease-in-out infinite; transform-origin: 50% 60%; }
+
+  /* ── Adding a friend ─────────────────────────────────────────────── */
+  .ch-add {
+    position: absolute;
+    right: 0;
+    top: calc(100% + 6px);
+    z-index: 40;
+    display: flex;
+    width: 290px;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    padding: 12px;
+    border-radius: 16px;
+    animation: ch-add-in 0.25s var(--jelly);
+  }
+  @keyframes ch-add-in { from { opacity: 0; transform: translateY(-4px) scale(0.96); } }
+  .ch-add-head { width: 100%; font-size: 11px; font-weight: 650; letter-spacing: 0.08em; text-transform: uppercase; color: var(--color-faint); }
+  .ch-add-box {
+    display: flex;
+    min-width: 0;
+    flex: 1;
+    align-items: center;
+    gap: 2px;
+    padding: 0 10px;
+    border-radius: 10px;
+    background: rgb(0 0 0 / 0.22);
+    box-shadow: inset 0 0 0 1px var(--color-edge);
+  }
+  .ch-add-box:focus-within { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 60%, transparent),
+                                         0 0 0 3px color-mix(in srgb, var(--color-accent) 14%, transparent); }
+  .ch-add-at { font-size: 13px; color: var(--color-faint); }
+  .ch-add-box input { min-width: 0; flex: 1; padding: 7px 0; font-size: 13px; color: var(--color-ink); background: transparent; outline: none; }
+  /* iMessage's: their number or email on a line of its own, the first message and Send under it. */
+  .ch-add.is-text { width: min(340px, calc(100vw - 32px)); }
+  .ch-add.is-text .ch-add-box.is-who { flex-basis: 100%; }
 
   /* ── Friend requests ─────────────────────────────────────────────── */
   .ch-friends {
@@ -2155,7 +2827,9 @@
   /* ── The inbox ───────────────────────────────────────────────────── */
   .ch-inbox {
     display: grid;
-    height: var(--inbox-h, calc(100dvh - 120px));
+    /* Exactly the space left in the window (lib/fillheight.ts): the list and the conversation each scroll on their
+       own, and the Reply button is always on screen. */
+    height: var(--fill-h, calc(100dvh - 120px));
     grid-template-columns: minmax(270px, 340px) minmax(0, 1fr);
     gap: 14px;
   }
@@ -2236,6 +2910,71 @@
     background: var(--color-accent);
     box-shadow: 0 0 0 2px var(--color-surface);
   }
+  /* All chats: which of your accounts a row was written to, on the other corner of its picture from the count. */
+  .ch-via {
+    position: absolute;
+    left: -3px;
+    bottom: -3px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    overflow: hidden;
+    border-radius: 999px;
+    color: var(--color-accent);
+    background: var(--color-card);
+    box-shadow: 0 0 0 2px var(--color-surface);
+  }
+  .ch-via img { width: 100%; height: 100%; object-fit: cover; }
+
+  /* All chats in the picker: the accounts' pictures in a cluster, the way a group shows its members, in the same
+     square a single account's picture takes so the names beside them line up. */
+  .ch-stack { position: relative; flex-shrink: 0; width: 36px; height: 36px; }
+  .ch-stack > * {
+    position: absolute;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 999px;
+    object-fit: cover;
+    color: var(--color-accent);
+    background: rgb(255 255 255 / 0.06);
+    box-shadow: 0 0 0 2px var(--color-card);
+  }
+  .ch-stack > :nth-child(1) { left: 0; top: 2px; }
+  .ch-stack > :nth-child(2) { right: 0; top: 2px; }
+  .ch-stack > :nth-child(3) { left: 7px; bottom: 0; z-index: 1; }
+  /* Two accounts sit side by side, centred, rather than in the top half of the square. */
+  .ch-stack > :nth-child(1):nth-last-child(2), .ch-stack > :nth-child(2):nth-last-child(1) { top: 7px; }
+  .ch-stack.is-small { width: 32px; height: 32px; }
+  .ch-stack.is-small > * { width: 19px; height: 19px; }
+  .ch-stack.is-small > :nth-child(3) { left: 6.5px; }
+  .ch-stack.is-small > :nth-child(1):nth-last-child(2), .ch-stack.is-small > :nth-child(2):nth-last-child(1) { top: 6.5px; }
+
+  /* People waiting on a reply: per account in the picker, and on the closed picker for the accounts not on screen.
+     The same solid accent as the counts on the list's own pictures. */
+  .ch-waiting, .ch-elsewhere {
+    flex-shrink: 0;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: 999px;
+    font-size: 10px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    line-height: 18px;
+    text-align: center;
+    color: var(--color-bg);
+    background: var(--color-accent);
+    box-shadow: 0 4px 12px -5px color-mix(in srgb, var(--color-accent) 75%, transparent);
+    animation: ch-pop 0.45s var(--spring) both;
+  }
+  .ch-elsewhere { margin-left: 6px; }
+  :global(:root[data-motion="off"]) .ch-waiting, :global(:root[data-motion="off"]) .ch-elsewhere { animation: none; }
+  .ch-pick-sep { height: 1px; margin: 3px 8px; background: var(--color-edge); }
   .ch-item-main { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 1px; }
   .ch-item-top { display: flex; align-items: baseline; gap: 8px; }
   /* "#channel · Server", on a server conversation's row. */
@@ -2434,6 +3173,32 @@
     transition: color 0.15s ease, background-color 0.15s ease, transform 0.2s var(--spring);
   }
   .ch-find-x:hover { color: var(--color-ink); background: rgb(255 255 255 / 0.15); transform: rotate(90deg); }
+  /* The way into the account's servers. A button, not a pill: it changes what the column is, and the chevron says
+     it opens onto something rather than filtering what is already there. */
+  .ch-go {
+    display: flex; width: 100%; align-items: center; gap: 9px; border-radius: 12px; padding: 8px 10px;
+    font-size: 12.5px; font-weight: 600; color: var(--color-muted);
+    background: rgb(255 255 255 / 0.035);
+    box-shadow: inset 0 0 0 1px var(--color-edge);
+    transition: color 0.16s ease, background-color 0.16s ease, box-shadow 0.2s ease, transform 0.18s var(--jelly);
+  }
+  .ch-go:hover { color: var(--color-ink); background: rgb(255 255 255 / 0.07); transform: translateY(-1px); }
+  .ch-go:active { transform: scale(0.99); }
+  .ch-go.is-on {
+    color: var(--color-ink);
+    background: color-mix(in srgb, var(--color-accent) 14%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 34%, transparent);
+  }
+  .ch-go-i { display: flex; color: var(--color-accent); }
+  .ch-go.is-on .ch-go-i { transform: rotate(180deg); }
+  .ch-go-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ch-go-go { margin-left: auto; display: flex; color: var(--color-faint); }
+  .ch-go:hover .ch-go-go { color: var(--color-muted); transform: translateX(2px); }
+  .ch-go-go, .ch-go-i { transition: transform 0.2s var(--jelly), color 0.16s ease; }
+  :global(:root[data-motion="off"]) .ch-go,
+  :global(:root[data-motion="off"]) .ch-go-go,
+  :global(:root[data-motion="off"]) .ch-go-i { transition: none; }
+
   .ch-chips { position: relative; display: flex; flex-wrap: wrap; gap: 6px; }
   .ch-chip-pill {
     position: absolute;
@@ -2895,6 +3660,86 @@
   .cd-react-add:focus-visible { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 45%, transparent); }
   :global(:root[data-motion="off"]) .cd-react,
   :global(:root[data-motion="off"]) .cd-react-add { transition: none; animation: none; }
+  /* A Nitro gift in a DM: what it is for, where it stands, and the button that takes it. Nitro's own blurple,
+     lit from within rather than a flat panel, and green once it is on the account. */
+  .cd-gift {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    margin-top: 6px;
+    padding: 8px 9px 8px 11px;
+    border-radius: 13px;
+    background:
+      radial-gradient(120% 140% at 0% 0%, color-mix(in srgb, #5865f2 28%, transparent), transparent 70%),
+      rgb(255 255 255 / 0.04);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, #5865f2 35%, transparent);
+  }
+  .cd-gift.is-done {
+    background:
+      radial-gradient(120% 140% at 0% 0%, color-mix(in srgb, var(--color-good) 26%, transparent), transparent 70%),
+      rgb(255 255 255 / 0.04);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-good) 35%, transparent);
+  }
+  .cd-gift.is-gone { opacity: 0.6; }
+  .cd-gift-mark {
+    display: grid;
+    width: 28px;
+    height: 28px;
+    flex-shrink: 0;
+    place-items: center;
+    border-radius: 9px;
+    color: #c7ccfb;
+    background: color-mix(in srgb, #5865f2 42%, transparent);
+  }
+  .cd-gift.is-done .cd-gift-mark { color: var(--color-good); background: color-mix(in srgb, var(--color-good) 28%, transparent); }
+  .cd-gift-what { display: block; font-size: 12.5px; font-weight: 650; color: var(--color-ink); }
+  .cd-gift-says { display: block; font-size: 11px; color: var(--color-muted); }
+
+  .cd-quote {
+    display: flex;
+    max-width: 320px;
+    align-items: center;
+    gap: 5px;
+    margin-bottom: 4px;
+    padding: 3px 8px;
+    overflow: hidden;
+    border-radius: 7px;
+    font-size: 11.5px;
+    white-space: nowrap;
+    text-align: left;
+    color: var(--color-muted);
+    background: rgb(255 255 255 / 0.05);
+    box-shadow: inset 2px 0 0 color-mix(in srgb, var(--color-accent) 55%, transparent);
+    transition: background-color 0.15s ease, color 0.15s ease;
+  }
+  .cd-quote b { flex-shrink: 0; font-weight: 650; color: var(--color-ink); }
+  .cd-quote:not(:disabled):hover { color: var(--color-ink); background: rgb(255 255 255 / 0.09); }
+  .cd-quote:disabled { cursor: default; }
+  /* Replying to one message: a slim bar over the message box, with what it answers and a way out. */
+  .cd-replying {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0 4px 6px;
+    padding: 6px 8px 6px 10px;
+    border-radius: 10px;
+    font-size: 12px;
+    color: var(--color-muted);
+    background: color-mix(in srgb, var(--color-accent) 9%, rgb(255 255 255 / 0.03));
+    box-shadow: inset 2px 0 0 color-mix(in srgb, var(--color-accent) 70%, transparent);
+  }
+  .cd-replying b { font-weight: 650; color: var(--color-ink); }
+  .cd-replying-x {
+    display: grid;
+    width: 20px;
+    height: 20px;
+    flex-shrink: 0;
+    place-items: center;
+    border-radius: 999px;
+    color: var(--color-faint);
+    transition: background-color 0.15s ease, color 0.15s ease;
+  }
+  .cd-replying-x:hover { color: var(--color-ink); background: rgb(255 255 255 / 0.08); }
   .cd-bubble {
     min-width: 0;
     padding: 8px 12px;
@@ -2979,6 +3824,11 @@
   .cd-note { margin-top: 10px; font-size: 11px; text-align: center; color: var(--color-faint); }
 
   /* A column now: staged pictures sit above the row you type in. */
+  .cd-readonly {
+    display: flex; align-items: center; justify-content: center; gap: 7px;
+    border-top: 1px solid var(--color-edge); padding: 14px 16px;
+    font-size: 12px; color: var(--color-faint);
+  }
   .cd-compose {
     display: flex;
     flex-direction: column;
@@ -3124,6 +3974,9 @@
     grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
     gap: 8px;
   }
+  /* Tinted with the theme like every button (app.css, "Buttons with depth"): its fill, its light and its glow are
+     that layer's, so the card adds only a breath of fill and its lift. No ring of its own: an outline here read as
+     an old bordered button. */
   .ch-recent-card {
     display: flex;
     width: 100%;
@@ -3131,15 +3984,13 @@
     gap: 12px;
     padding: 10px 12px;
     border-radius: 16px;
-    background: rgb(255 255 255 / 0.03);
-    box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.05);
-    transition: background-color 0.18s ease, box-shadow 0.18s ease, transform 0.25s var(--spring);
+    background: rgb(255 255 255 / 0.02);
+    transition: background-color 0.25s var(--swift), transform 0.3s var(--swift);
   }
-  /* Pressed: squashed a little, as everything you press is. */
-  .ch-recent-card:active { transform: scale(0.96); transition-duration: 0.08s; }
+  /* Pressed: it gives a little, as everything you press does. */
+  .ch-recent-card:active { transform: scale(0.98); transition-duration: 0.08s; }
   .ch-recent-card:hover {
-    background: rgb(255 255 255 / 0.06);
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 30%, transparent);
+    background: rgb(255 255 255 / 0.035);
     transform: translateY(-1px);
   }
   .ch-recent-card:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
@@ -3174,6 +4025,13 @@
   :global(:root[data-motion="off"]) .cd-step.is-now,
   :global(:root[data-motion="off"]) .cd-strip-mark,
   :global(:root[data-motion="off"]) .cd-bubble,
+  :global(:root[data-motion="off"]) .ch-call,
+  :global(:root[data-motion="off"]) .ch-call-ring,
+  :global(:root[data-motion="off"]) .ch-call-icon,
+  :global(:root[data-motion="off"]) .ch-call-tag :global(svg),
+  :global(:root[data-motion="off"]) .cd-call,
+  :global(:root[data-motion="off"]) .cd-call :global(svg),
+  :global(:root[data-motion="off"]) .ch-add,
   :global(:root[data-motion="off"]) .cd-typing i,
   :global(:root[data-motion="off"]) .ch-typing i,
   :global(:root[data-motion="off"]) .cd-their-typing,
@@ -3188,10 +4046,24 @@
   @media (max-width: 860px) {
     .ch-top.narrow-hide, .ch-friends.narrow-hide { display: none; }
     /* Account and Reply to all share the first row; the counts are one line
-       below that scrolls sideways, rather than wrapping into three. */
+       below that scrolls sideways, rather than wrapping into three. Ignored
+       and Add friend are their icons here (Ignored keeps its count), and the
+       account keeps room for its name: with no room of its own it shrank to
+       nothing and its name ran under the buttons. Narrower still, the
+       buttons go to a row of their own. */
     .ch-top { gap: 8px 10px; margin-bottom: 10px; }
-    .ch-top-account { order: 1; flex: 1; }
-    .ch-top-actions { order: 2; }
+    .ch-top-account { order: 1; flex: 1 1 9rem; }
+    .ch-top-actions { order: 2; position: relative; }
+    /* Their panels hang from the row's right edge, not their own button's: from a button mid-row, one wider than
+       the room to its left ran off the screen (iMessage's new message form, 340px, on a phone). */
+    .ch-top-actions > [data-add-friend], .ch-top-actions > [data-ignored-panel] { position: static; }
+    .ch-top-actions .ch-btn-label { display: none; }
+    .ch-top-actions .ch-ignored-btn { padding: 7px 9px; }
+    /* The name before the "Discord #1" tag: here the tag goes (the picture,
+       the name and the list it opens say which account it is), where it had
+       pushed the name down to nothing. */
+    .ch-acc-name { min-width: 3rem; }
+    .ch-slot-chip { display: none; }
     .ch-stats { order: 3; width: 100%; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
     .ch-stats::-webkit-scrollbar { display: none; }
     .ch-stat { flex-shrink: 0; }

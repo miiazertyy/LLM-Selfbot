@@ -14,6 +14,7 @@ from pathlib import Path
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 
+from app.platforms import registry
 from app.utils.paths import APP_DIR, DATA_DIR, is_portable
 from app.version import __version__, is_newer
 from app.utils.procs import quiet_kwargs
@@ -186,11 +187,13 @@ def _doctor_checks(supervisor):
     """Every dependency, with a way to act on the ones that are missing. A red row that only says "not found" leaves you nowhere; each check carries a plain explanation of what it is for, and an action the panel can render: a button that installs it, a link to where you get it, or a jump to the settings page that fixes it."""
     checks = []
 
-    def add(cid, name, ok, detail="", why="", fix="", action=None):
+    def add(cid, name, ok, detail="", why="", fix="", action=None, places=()):
         checks.append({
             "id": cid, "name": name, "ok": bool(ok), "detail": detail,
             "why": why, "fix": "" if ok else fix,
             "action": None if ok else action,
+            # The Settings subtabs that change it ("tab/sub"), each a button. For when there are several.
+            "places": [] if ok else list(places),
         })
 
     try:
@@ -210,28 +213,54 @@ def _doctor_checks(supervisor):
     if device.is_phone(here):
         return _doctor_rest(checks, add, supervisor)
 
+    # Named by the socials that need them and are switched on: one switched off is shown nowhere
+    # (app/utils/socials.py), and with none of them on there is nothing here to need.
+    from app.utils import socials
+    on = socials.on()
+    # Telegram's client is Python, so Node is nothing to it.
+    on_node = [registry.name_of(k) for k in registry.BRIDGED if k != "telegram" and on.get(k)]
+    on_browser = [registry.name_of(k) for k in registry.WEBSITES if on.get(k)]
+    # WhatsApp needs no browser and still needs that npm install: baileys sits in the same node_modules.
+    on_packages = on_browser + (["WhatsApp"] if on.get("whatsapp") else [])
+
+    def said(items):
+        return items[0] if len(items) == 1 else f"{', '.join(items[:-1])} and {items[-1]}"
+
     node = _which("node")
     npm = _which("npm")
-    add("node", "Node.js", bool(node), node or "not found",
-        "Only Snapchat needs it. It drives the browser Snapchat runs in.",
-        "Install Node.js, then reopen the app so it is found on PATH. "
-        "Discord works fine without it.",
-        {"kind": "link", "label": "Get Node.js", "url": "https://nodejs.org/en/download"})
-    add("npm", "npm", bool(npm), npm or "not found",
-        "Ships with Node.js and installs the Snapchat packages.",
-        "npm comes with Node.js, so installing Node fixes this too.",
-        {"kind": "link", "label": "Get Node.js", "url": "https://nodejs.org/en/download"})
+    if on_node:
+        add("node", "Node.js", bool(node), node or "not found",
+            f"{said(on_node)} {'runs' if len(on_node) == 1 else 'run'} on it.",
+            "Install Node.js, then reopen the app so it is found on PATH. "
+            "Discord works fine without it.",
+            {"kind": "link", "label": "Get Node.js", "url": "https://nodejs.org/en/download"})
+        add("npm", "npm", bool(npm), npm or "not found",
+            "Ships with Node.js and installs the packages they need.",
+            "npm comes with Node.js, so installing Node fixes this too.",
+            {"kind": "link", "label": "Get Node.js", "url": "https://nodejs.org/en/download"})
 
-    snap_ready = ((SNAP_DIR / "node_modules").is_dir()
-                  or (APP_DIR / "app" / "platforms" / "snapchat" / "node_modules").is_dir())
-    add("snap", "Snapchat packages", snap_ready,
-        "installed" if snap_ready else "not installed",
-        "Puppeteer and its stealth plugins. Uses the browser you have, or "
-        "downloads one.",
-        "Install them from Settings, under Snapchat. Skip this if you only "
-        "use Discord.",
-        {"kind": "goto", "label": "Open Snapchat setup", "route": "settings",
-         "section": "Snapchat setup"})
+    if on_packages:
+        snap_ready = ((SNAP_DIR / "node_modules").is_dir()
+                      or (APP_DIR / "app" / "platforms" / "snapchat" / "node_modules").is_dir())
+        first = on_packages[0]
+        # The persona's own browser for the web (app/utils/web/browser.py) runs on them too.
+        try:
+            from app.utils.web import settings as web_settings
+            ws = web_settings()
+            uses = on_browser + (["browsing the web"] if ws["enabled"] or ws["links"] or ws["free_time"] else [])
+        except Exception:
+            uses = on_browser
+        why = (f"Puppeteer and its stealth plugins, for {said(uses)}. Uses the browser you have, or "
+               "downloads one." if on_browser else "")
+        if on.get("whatsapp"):
+            why = f"{why} Baileys too, which is how WhatsApp is spoken to." if why else \
+                   "Baileys, which is how WhatsApp is spoken to."
+        add("snap", f"{first} packages" if len(on_packages) == 1 else "Browser packages", snap_ready,
+            "installed" if snap_ready else "not installed",
+            why,
+            f"Install them from Settings, under {first}. Skip this if you only use Discord.",
+            {"kind": "goto", "label": f"Open {first} setup", "route": "settings",
+             "section": f"{first} setup"})
 
     from app.utils import binaries
     ffmpeg = binaries.find("ffmpeg")
@@ -254,6 +283,29 @@ def _doctor_checks(supervisor):
         "Reads the length of a voice clip. Without it the length is estimated "
         "from the file header instead.",
         "Comes with ffmpeg, so installing ffmpeg fixes this too.", ffmpeg_act)
+
+    opus = binaries.opus_status().get("dll") or ""
+    if family == "windows":
+        opus_fix = "One click downloads it into the app data folder."
+        opus_act = {"kind": "install", "label": "Install opus", "target": "opus"}
+    else:
+        opus_fix = "Install it with " + ("brew install opus" if family == "macos" else "sudo apt install libopus0") \
+            + ", then reopen the app."
+        opus_act = None
+    add("opus", "opus", bool(opus), opus or "not found",
+        "Hears and speaks in voice channels. Live Discord calls need it; the app "
+        "fetches it on its own the first time a call is answered.",
+        opus_fix, opus_act)
+
+    # ── Under the radar: how the accounts look to the platforms (app/utils/stealth.py) ──
+    try:
+        from app.utils import stealth
+        for row in stealth.report():
+            # By name, not by place in the list: a row put away ("Don't show again") stays put away by this.
+            add("stealth-" + row["name"].lower().replace(" ", "-"), row["name"], row["ok"], row["detail"],
+                row["why"] if not row["ok"] else "", places=row["where"])
+    except Exception:
+        pass
 
     return _doctor_rest(checks, add, supervisor)
 
@@ -683,6 +735,10 @@ def _export_members():
             continue
         if path.suffix.lower() in _EXPORT_SKIP_SUFFIXES:
             continue
+        # Downloads kept to be fetched again (the community catalog, watched videos), and the GitHub sign-in, which is
+        # this computer's alone and is never handed to anything.
+        if (rel.parts and rel.parts[0] == "cache") or rel.as_posix() == "config/github_auth.json":
+            continue
         # A downloaded browser is ~500 MB and is not configuration.
         if rel.parts and rel.parts[0] == "snapchat" and len(rel.parts) > 1:
             if rel.parts[1] in ("chrome", "chrome-headless-shell"):
@@ -927,6 +983,16 @@ async def snap_status(request: Request):
         "dir": str(SNAP_DIR),
         # What each runner is actually doing. "Running" used to mean only that the process existed, so an account sitting on a verification screen looked identical to one answering messages.
         "runners": await asyncio.to_thread(_snap_runner_states),
+        # TikTok runs on the same install: its runners, for its own Settings tab.
+        "tiktok_runners": await asyncio.to_thread(_snap_runner_states, "tiktok"),
+        # And Instagram's, the same way.
+        "instagram_runners": await asyncio.to_thread(_snap_runner_states, "insta"),
+        # And X's.
+        "x_runners": await asyncio.to_thread(_snap_runner_states, "x"),
+        # And Reddit's.
+        "reddit_runners": await asyncio.to_thread(_snap_runner_states, "reddit"),
+        # And WhatsApp's, which run on the same packages without needing the browser.
+        "whatsapp_runners": await asyncio.to_thread(_snap_runner_states, "wa"),
     }
 
 
@@ -934,14 +1000,15 @@ async def snap_status(request: Request):
 _SNAP_STATE_STALE = 180.0
 
 
-def _snap_runner_states() -> list[dict]:
-    """Each Snapchat runner's self-reported state, newest write first."""
+def _snap_runner_states(prefix: str = "snap") -> list[dict]:
+    """Each Snapchat runner's self-reported state, newest write first. prefix="tiktok" or "insta": that
+    platform's runners."""
     import json
     from app.utils.paths import DATA_DIR
     out = []
     ipc_dir = DATA_DIR / "ipc"
     try:
-        paths = sorted(ipc_dir.glob("snap_state*.json"))
+        paths = sorted(ipc_dir.glob(f"{prefix}_state*.json"))
     except Exception:
         return out
     for path in paths:
@@ -957,6 +1024,10 @@ def _snap_runner_states() -> list[dict]:
             "at": at,
             # The panel should not present a state from an hour ago as current.
             "stale": (time.time() - at) > _SNAP_STATE_STALE if at else True,
+            # Minecraft's: what it is doing in the game (minecraft_runner.mjs reportGame).
+            **({"game": data["game"]} if isinstance(data.get("game"), dict) else {}),
+            # What it can no longer find on its website's pages (sitewatch.js).
+            **({"site": data["site"]} if isinstance(data.get("site"), dict) else {}),
         })
     out.sort(key=lambda r: r["at"], reverse=True)
     return out
@@ -1086,6 +1157,38 @@ async def ffmpeg_install(request: Request):
             _ffmpeg_lock.release()
 
     threading.Thread(target=_run, daemon=True, name="ffmpeg-install").start()
+    return {"ok": True, "queued": True}
+
+
+# ── opus on-demand installer (live voice calls) ───────────────────────────────
+_opus_lock = threading.Lock()
+
+
+@router.get("/api/system/opus")
+async def opus_status(request: Request):
+    from app.utils import binaries
+    return {**binaries.opus_status(), "installing": _opus_lock.locked()}
+
+
+@router.post("/api/system/opus/install")
+async def opus_install(request: Request):
+    from app.utils import binaries
+    if not _opus_lock.acquire(blocking=False):
+        return {"ok": False, "reason": "install already in progress"}
+
+    def _run():
+        try:
+            result = binaries.install_opus(
+                progress=lambda m: bus.append("opus-install", m)
+            )
+            if result.get("ok"):
+                bus.append("opus-install", "opus ready - voice calls enabled.")
+            else:
+                bus.append("opus-install", f"Install failed: {result.get('reason')}", "error")
+        finally:
+            _opus_lock.release()
+
+    threading.Thread(target=_run, daemon=True, name="opus-install").start()
     return {"ok": True, "queued": True}
 
 

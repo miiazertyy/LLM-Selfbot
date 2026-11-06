@@ -1,0 +1,34 @@
+name: Report a community profile
+description: Something in a profile someone shared that shouldn't be there.
+title: "Profile report: "
+labels: [profile-report]
+body:
+  - type: input
+    id: slug
+    attributes:
+      label: Which profile
+      description: Its short name, as the app shows it (letters, numbers and dashes).
+      placeholder: juniper
+    validations:
+      required: true
+  - type: dropdown
+    id: reason
+    attributes:
+      label: Why
+      options:
+        - A scam or a trick
+        - Someone's private info
+        - A real person without their consent
+        - Hate or harassment
+        - Sexual content involving minors
+        - Copied from someone else
+        - Something else
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: What's wrong
+      description: A line or two helps. Don't paste anything private.
+    validations:
+      required: false

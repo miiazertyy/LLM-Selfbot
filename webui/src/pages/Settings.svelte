@@ -51,6 +51,9 @@
   import { glide } from "../lib/glide";
   import FootNote from "../lib/components/FootNote.svelte";
   import SnapchatSetup from "../lib/components/SnapchatSetup.svelte";
+  import MinecraftSetup from "../lib/components/MinecraftSetup.svelte";
+  import ImessageSetup from "../lib/components/ImessageSetup.svelte";
+  import PlatformReady from "../lib/components/PlatformReady.svelte";
   import TelegramPanel from "../lib/components/TelegramPanel.svelte";
   import SwitchDemo from "../lib/components/SwitchDemo.svelte";
   import { hasDemo } from "../lib/switchdemos";
@@ -60,14 +63,18 @@
   import { sweep } from "../lib/arrive";
   import NotHere from "../lib/components/NotHere.svelte";
   import LocalAI from "../lib/components/LocalAI.svelte";
+  import CallSetup from "../lib/components/CallSetup.svelte";
   import ModelsPanel from "../lib/components/ModelsPanel.svelte";
   import ModelsHero from "../lib/components/ModelsHero.svelte";
   import ProvidersPanel from "../lib/components/ProvidersPanel.svelte";
   import UsagePanel from "../lib/components/UsagePanel.svelte";
   import PicturesPanel from "../lib/components/PicturesPanel.svelte";
   import TypingPreview from "../lib/components/TypingPreview.svelte";
+  import LiveDemo from "../lib/components/LiveDemo.svelte";
   import { resource } from "../lib/resource";
   import { lastUsed, startUseLive } from "../lib/settinguse";
+  import { platformOn, refreshSocials, socialsOn } from "../lib/socials";
+  import { PLATFORMS, type PlatformId } from "../lib/platforms";
 
   type FieldDef = {
     key: string;
@@ -175,7 +182,15 @@
     settingsPath.set(path);
   });
 
-  const tab = $derived(TABS.find((t) => t.id === path.split("/")[0]) ?? TABS[0]);
+  /** The tabs shown: a social switched off has none (lib/socials.ts). Its tab's id is the platform's. */
+  const tabs = $derived(TABS.filter((t) => platformOn($socialsOn, t.id)));
+  /** The tabs that open a run (settingsmap's ORDER): a hairline above each sets the runs apart. Computed over the
+      tabs actually shown, so a social switched off never leaves a hairline with nothing under it. */
+  const runStarts = $derived(
+    new Set(tabs.filter((t, i) => i > 0 && t.group !== tabs[i - 1].group).map((t) => t.id)),
+  );
+  const tabShown = (id: string | undefined) => !!id && tabs.some((t) => t.id === id);
+  const tab = $derived(tabs.find((t) => t.id === path.split("/")[0]) ?? tabs[0]);
   const sub = $derived(tab.subs.find((s) => s.id === path.split("/")[1]) ?? tab.subs[0]);
 
   const changed = $derived(Object.keys(dirty).length);
@@ -223,6 +238,26 @@
   const BOTH: Record<string, string> = {
     "services.discord.enabled": "discord.enabled",
     "services.snapchat.enabled": "snapchat.enabled",
+    "services.tiktok.enabled": "tiktok.enabled",
+    "services.instagram.enabled": "instagram.enabled",
+    "services.x.enabled": "x.enabled",
+    "services.reddit.enabled": "reddit.enabled",
+    "services.whatsapp.enabled": "whatsapp.enabled",
+    "services.minecraft.enabled": "minecraft.enabled",
+    "services.imessage.enabled": "imessage.enabled",
+    "services.telegram_accounts.enabled": "telegram.enabled",
+  };
+  /** Which social a switch is: its row has the social's own mark beside it. */
+  const SOCIAL_OF: Record<string, PlatformId> = Object.fromEntries(Object.entries(BOTH).flatMap(([a, b]) => {
+    const id = b.split(".")[0] as PlatformId;
+    return [[a, id], [b, id]];
+  }));
+  /** The other rows of What runs, with a mark of their own so the column of names lines up. */
+  const RUN_MARK: Record<string, string> = {
+    "services.telegram.enabled": "chats",
+    "services.webui.enabled": "monitor",
+    "services.webui.port": "link",
+    "services.webui.bind": "globe",
   };
   const PARTNER: Record<string, string> = {
     ...BOTH, ...Object.fromEntries(Object.entries(BOTH).map(([a, b]) => [b, a])),
@@ -244,13 +279,17 @@
   const drawnRows = $derived(grown.path === path ? grown.n : FIRST_ROWS);
   $effect(() => {
     const p = path;
-    let n = FIRST_ROWS;
+    // Tracked, this one: the settings arrive after this first runs. It used to be read inside the loop, found none, and
+    // stopped there for good, so the subtab Settings opened on showed six rows until another was picked.
+    const total = rowsOf(shown).length;
+    let n = untrack(() => (grown.path === p ? grown.n : FIRST_ROWS));
     let raf = 0;
     untrack(() => (grown = { path: p, n }));
+    if (n >= total) return;
     const more = () => {
       n += 2;
       grown = { path: p, n };
-      if (n < rowsOf(fieldsFor(tab, sub)).length) raf = requestAnimationFrame(more);
+      if (n < total) raf = requestAnimationFrame(more);
     };
     // After the first frame with the first rows is on screen.
     raf = requestAnimationFrame(() => (raf = requestAnimationFrame(more)));
@@ -265,14 +304,19 @@
     tokens: "key", keys: "key", logins: "key", env: "key",
     replies: "chats", followups: "chats", telegram: "chats",
     triggers: "terminal", friends: "accounts", profiles: "accounts",
-    presence: "eye", fingerprint: "system", browser: "system", local: "monitor",
+    presence: "eye", fingerprint: "system", browser: "system", local: "monitor", comments: "chats", live: "speaker",
+    "live-answers": "chats", "live-style": "sparkle", "live-overlay": "monitor",
+    watching: "eye", engage: "heart", visits: "external", foryou: "play", posting: "send", videos: "play",
     setup: "upload", pacing: "refresh", timing: "refresh",
     models: "sparkle", summaries: "sparkle", motion: "sparkle",
     style: "persona", human: "memory", media: "pictures", typing: "keyboard",
     services: "play", panel: "dashboard", alerts: "alert", usage: "stats",
     theme: "palette", typeface: "edit", rest: "more",
+    texting: "chats", who: "accounts", pace: "refresh", mac: "monitor", itself: "persona", web: "globe",
   };
   const subIcon = (t: Tab, s: Sub) => SUB_ICONS[s.id] ?? t.icon;
+  /** The TikTok subtabs of its own LIVE: the practice LIVE is under each of them. */
+  const LIVE_SUBS = new Set(["live", "live-answers", "live-style", "live-overlay"]);
 
   /** How many settings a subtab holds; null for the ones that are a panel. */
   function subCount(t: Tab, s: Sub): number | null {
@@ -323,18 +367,33 @@
       max: "snapchat.max_send_gap_ms", label: "Gap between sends", names: ["At least", "At most"], hint: "random in between",
       description: "How long it leaves between two sends.",
     },
+    "tiktok.min_send_gap_ms": {
+      max: "tiktok.max_send_gap_ms", label: "Gap between sends", names: ["At least", "At most"], hint: "random in between",
+      description: "How long it leaves between two sends. TikTok limits fast senders.",
+    },
   };
   /** The far end of each pair, to its near end. */
   const NEAR_OF: Record<string, string> = Object.fromEntries(Object.entries(PAIRS).map(([k, p]) => [p.max, k]));
   /** A pair drawn as one row, when both its ends are settings this config has. */
   const pairOf = (f: FieldDef) => (PAIRS[f.key] && byKey[PAIRS[f.key].max] ? PAIRS[f.key] : null);
   /** The rows of a list: a pair is one row, where the first of its two ends comes, even when only one matched a search. */
+  /**
+   * A row that only means something given another's value, and is left out otherwise: under Automatic, the box for
+   * Discord's build number is a number nobody should touch, sitting right under the choice that says not to.
+   */
+  const ONLY_IF: Record<string, () => boolean> = {
+    "bot.desktop.build_number": () => {
+      const source = byKey["bot.desktop.build_source"];
+      return !source || value(source) === "custom";
+    },
+  };
+
   function rowsOf(list: FieldDef[]): FieldDef[] {
     const out: FieldDef[] = [];
     const seen = new Set<string>();
     for (const f of list) {
       const near = NEAR_OF[f.key] && byKey[NEAR_OF[f.key]] ? byKey[NEAR_OF[f.key]] : f;
-      if (seen.has(near.key)) continue;
+      if (seen.has(near.key) || ONLY_IF[near.key]?.() === false) continue;
       seen.add(near.key);
       out.push(near);
     }
@@ -350,11 +409,29 @@
     "bot.late_reply.threshold": 3600,
     "snapchat.verify_wait_ms": 600000,
     "snapchat.reload_interval_ms": 7200000,
+    "tiktok.reload_interval_ms": 7200000,
   };
   /** Counts on a dial, and what they count. */
   const COUNTS: Record<string, { one: string; many: string; hint: string }> = {
     "snapchat.max_recipients": { one: "chat", many: "chats", hint: "each look" },
+    "bot.web.per_hour": { one: "lookup", many: "lookups", hint: "an hour, at most" },
+    "bot.web.sessions_per_day": { one: "visit", many: "visits", hint: "a day" },
     "snapchat.max_sends_per_hour": { one: "send", many: "sends", hint: "an hour, at most" },
+    "tiktok.max_recipients": { one: "chat", many: "chats", hint: "each look" },
+    "tiktok.max_sends_per_hour": { one: "send", many: "sends", hint: "an hour, at most" },
+    "tiktok.comments.per_hour": { one: "reply", many: "replies", hint: "an hour, at most" },
+    "tiktok.comments.videos": { one: "video", many: "videos", hint: "its newest" },
+    "tiktok.live.per_minute": { one: "answer", many: "answers", hint: "a minute, at most" },
+    "tiktok.live.gift_min_coins": { one: "coin", many: "coins", hint: "a gift, at least" },
+    "tiktok.live.max_per_viewer": { one: "answer", many: "answers", hint: "a viewer, each LIVE" },
+    "tiktok.live.max_words": { one: "word", many: "words", hint: "an answer, at most" },
+    "tiktok.engage.likes_per_day": { one: "like", many: "likes", hint: "a day, at most" },
+    "tiktok.engage.comments_per_day": { one: "comment", many: "comments", hint: "a day, at most" },
+    "tiktok.visits.lines_per_5min": { one: "line", many: "lines", hint: "every 5 minutes, at most" },
+    "tiktok.visits.per_day": { one: "visit", many: "visits", hint: "a day, at most" },
+    "tiktok.foryou.sessions_per_day": { one: "time", many: "times", hint: "a day, at most" },
+    "tiktok.foryou.like_percent": { one: "in 100", many: "in 100", hint: "liked" },
+    "tiktok.posting.per_day": { one: "post", many: "posts", hint: "a day, at most" },
     "bot.pictures.video_max_mb": { one: "MB", many: "MB", hint: "per video, at most" },
   };
   /**
@@ -370,12 +447,18 @@
   const onTape = (f: FieldDef) => f.type === "int" && (f.key in TAPES
     || (f.max == null && !unitOf(f) && !NOT_AMOUNTS.has(f.key) && !f.key.endsWith("_id")));
 
+  /** Quiet hours, wherever there are any: all on the same clock, and on this computer's time as all of them read it. */
+  const QUIET_KEYS = new Set(["snapchat.quiet_hours", "tiktok.quiet_hours", "instagram.quiet_hours",
+                              "x.quiet_hours", "reddit.quiet_hours", "whatsapp.quiet_hours",
+                              "telegram.quiet_hours", "imessage.quiet_hours", "bot.calls.quiet_hours"]);
   /** Snapchat's quiet hours, said as what they are rather than as a night. */
   const QUIET_WORDS = {
     label: "Quiet hours", what: "quiet", none: "No quiet hours", on: "Quiet", off: "Sending",
     goesOn: "quiet", goesOff: "sends", starts: "Quiet from", ends: "Quiet until",
     moves: "Drag to move the whole quiet spell",
   };
+  /** The same, for calls: outside its quiet hours it picks up rather than sends. */
+  const CALL_QUIET_WORDS = { ...QUIET_WORDS, off: "Picking up", goesOff: "picks up" };
 
   /** The hours nudges may be sent in, said as a window rather than a night. */
   const NUDGE_WORDS = {
@@ -389,6 +472,9 @@
     "bot.memory_summary.refresh_minutes": "Never reused",
     "snapchat.verify_wait_ms": "No limit",
     "snapchat.reload_interval_ms": "Off",
+    "tiktok.reload_interval_ms": "Off",
+    "tiktok.live.reply_delay": "At once",
+    "tiktok.live.viewer_cooldown": "Any time",
   };
   const num = (v: any) => (isFinite(Number(v)) ? Number(v) : 0);
   /** Both ends of a pair from its dial, writing only the end that moved. */
@@ -459,9 +545,10 @@
     return fields
       .filter(
         (f) =>
-          f.label.toLowerCase().includes(q) ||
-          f.key.toLowerCase().includes(q) ||
-          (f.description || "").toLowerCase().includes(q),
+          (f.label.toLowerCase().includes(q) ||
+            f.key.toLowerCase().includes(q) ||
+            (f.description || "").toLowerCase().includes(q))
+          && tabShown((homeOf(f.key) ?? restHomeOf(f.key) ?? "app/").split("/")[0]),
       )
       .slice(0, 60);
   });
@@ -496,8 +583,10 @@
     return out;
   });
   /** Parts of Settings that are the app's, not a persona's: the same whichever is shown. */
-  const GLOBAL_PANELS = new Set(["env", "local", "usage", "providers", "telegram", "snapchat-setup", "theme", "typeface",
-                                 "interface", "profiles"]);
+  const GLOBAL_PANELS = new Set(["env", "local", "usage", "providers", "telegram", "snapchat-setup", "tiktok-setup",
+                                 "instagram-setup", "x-setup", "reddit-setup", "whatsapp-setup",
+                                 "minecraft-setup", "imessage-setup", "discord-setup", "telegram-setup", "theme", "typeface", "interface",
+                                 "profiles"]);
 
   /** A persona's own value given up: it has everyone's again (a pair's two ends go together). */
   async function useEveryones(f: FieldDef, far: FieldDef | null) {
@@ -608,6 +697,20 @@
       { value: "auto", label: "Automatic", hint: "Discord's current build, looked up", icon: "refresh" },
       { value: "custom", label: "Custom", hint: "The number you put in below", icon: "edit" },
     ],
+    "telegram.gifts": [
+      { value: "notify", label: "Tell me", hint: "It waits in Chats for you to accept", icon: "alert" },
+      { value: "accept", label: "Accept it", hint: "Taken as it lands", icon: "check" },
+      { value: "off", label: "Leave them", hint: "Nothing is said and nothing is taken", icon: "eyeOff" },
+    ],
+    "discord.gifts.mode": [
+      { value: "notify", label: "Tell me", hint: "It waits in Chats for you to accept", icon: "alert" },
+      { value: "accept", label: "Accept it", hint: "Taken as it lands, before it expires", icon: "check" },
+      { value: "off", label: "Leave them", hint: "Nothing is said and nothing is taken", icon: "eyeOff" },
+    ],
+    "reddit.posting.where": [
+      { value: "profile", label: "Its own profile", hint: "Always takes a post, whatever its karma", icon: "accounts" },
+      { value: "subreddits", label: "The subreddits above", hint: "A young account may be refused", icon: "chats" },
+    ],
     "bot.memory_summary.length": [
       { value: "short", label: "Short", hint: "A line or two", icon: "minimize" },
       { value: "medium", label: "Medium", hint: "A short paragraph", icon: "order" },
@@ -624,14 +727,85 @@
       { value: "ar", label: "Arabic", mark: "🇸🇦" },
       { value: "nl", label: "Dutch", mark: "🇳🇱" },
     ],
+    "bot.calls.answer": [
+      { value: "known", label: "People it knows", hint: "Anyone it has talked to", icon: "accounts" },
+      { value: "anyone", label: "Anyone", hint: "Strangers too", icon: "globe" },
+      { value: "nobody", label: "Nobody", hint: "Every call rings out", icon: "eyeOff" },
+    ],
     "bot.message_style.mode": [
       { value: "short", label: "Short", hint: "One line, like a text", icon: "send" },
       { value: "balanced", label: "Balanced", hint: "A few sentences", icon: "chats" },
       { value: "chatty", label: "Chatty", hint: "Longer, several messages", icon: "sparkle" },
     ],
+    "bot.web.search_with": [
+      { value: "auto", label: "Automatic", hint: "Google, then DuckDuckGo. Free", icon: "globe" },
+      { value: "google", label: "Google", hint: "In its own hidden browser", icon: "search" },
+      { value: "duckduckgo", label: "DuckDuckGo", hint: "No browser needed", icon: "search" },
+      { value: "brave", label: "Brave", hint: "Needs BRAVE_API_KEY", icon: "key" },
+      { value: "tavily", label: "Tavily", hint: "Needs TAVILY_API_KEY", icon: "key" },
+    ],
     "bot.client_profile": [
       { value: "web", label: "Web browser", hint: "Looks like Discord in Chrome", icon: "globe" },
       { value: "desktop", label: "Desktop app", hint: "Looks like the Discord app", icon: "monitor" },
+    ],
+    "tiktok.live.answer_mode": [
+      { value: "all", label: "All of them", hint: "Any comment, at its pace", icon: "chats" },
+      { value: "questions", label: "Questions", hint: "Questions, and lines that name it", icon: "info" },
+      { value: "named", label: "When named", hint: "Only lines that name it", icon: "persona" },
+    ],
+    "tiktok.live.tone": [
+      { value: "persona", label: "Its usual self", hint: "As the persona is", icon: "persona" },
+      { value: "hype", label: "Hype", hint: "Loud and excited", mark: "🔥" },
+      { value: "chill", label: "Chill", hint: "Calm and easy", mark: "🌙" },
+      { value: "funny", label: "Funny", hint: "Jokes around", mark: "😂" },
+      { value: "sweet", label: "Sweet", hint: "Warm and soft", mark: "🌸" },
+    ],
+    "tiktok.live.language": [
+      { value: "viewer", label: "Theirs", hint: "Each viewer's own language", icon: "chats" },
+      { value: "persona", label: "Its own", hint: "Always the persona's language", icon: "persona" },
+    ],
+    "tiktok.live.overlay_position": [
+      { value: "bottom", label: "Bottom", hint: "Along the bottom", icon: "download" },
+      { value: "middle", label: "Middle", hint: "In the middle", icon: "minimize" },
+      { value: "top", label: "Top", hint: "Along the top", icon: "upload" },
+    ],
+    "tiktok.live.overlay_size": [
+      { value: "small", label: "Small", hint: "Out of the way" },
+      { value: "medium", label: "Medium", hint: "Easy to read" },
+      { value: "large", label: "Large", hint: "Big and bold" },
+    ],
+    "tiktok.live.overlay_theme": [
+      { value: "dark", label: "Dark", hint: "Dark glass, white text", mark: "⬛" },
+      { value: "light", label: "Light", hint: "White card, dark text", mark: "⬜" },
+      { value: "tiktok", label: "TikTok", hint: "Like TikTok's own chat", icon: "tiktok" },
+    ],
+    "tiktok.posting.privacy": [
+      { value: "everyone", label: "Everyone", hint: "Anyone on TikTok", icon: "globe" },
+      { value: "friends", label: "Friends", hint: "Followers it follows back", icon: "accounts" },
+      { value: "only_me", label: "Only me", hint: "Nobody else", icon: "key" },
+    ],
+    "minecraft.auth": [
+      { value: "offline", label: "No account", hint: "A LAN world, or online mode off", icon: "globe" },
+      { value: "microsoft", label: "Microsoft", hint: "A real server, signed in once", icon: "key" },
+    ],
+    "minecraft.translate_versions": [
+      { value: "auto", label: "When needed", hint: "Through ViaProxy for servers not on 1.21", icon: "refresh" },
+      { value: "always", label: "Always", hint: "Every server through ViaProxy", icon: "globe" },
+      { value: "off", label: "Never", hint: "Join every server directly", icon: "close" },
+    ],
+    "minecraft.persona": [
+      { value: "brief", label: "Brief", hint: "A short telling, fits free models", icon: "minimize" },
+      { value: "full", label: "Full", hint: "The whole persona, every time", icon: "persona" },
+    ],
+    "imessage.thread_replies": [
+      { value: "late", label: "When needed", hint: "When others wrote since", icon: "chats" },
+      { value: "always", label: "Always", hint: "Every answer in a thread", icon: "undo" },
+      { value: "never", label: "Never", hint: "Always in the chat", icon: "close" },
+    ],
+    "imessage.send_method": [
+      { value: "auto", label: "Automatic", hint: "The best the Mac has", icon: "refresh" },
+      { value: "private-api", label: "Private API", hint: "Needs it on the Mac", icon: "key" },
+      { value: "apple-script", label: "AppleScript", hint: "Works without it", icon: "terminal" },
     ],
     "services.webui.bind": [
       { value: "127.0.0.1", label: "This computer", hint: "Only this computer can open the panel", icon: "monitor" },
@@ -708,6 +882,11 @@
     path = `${t.id}/${first.id}`;
     query = "";
   }
+  // On a social that has just been switched off, or was when this was last open: the first tab instead.
+  $effect(() => {
+    const id = path.split("/")[0];
+    if (tabs.length && !tabShown(id)) untrack(() => pickTab(tabs[0]));
+  });
 
   onMount(load);
   // The prefixes' rows light up when they are used, like the models' rows.
@@ -735,6 +914,31 @@
   }
 
   const value = (f: FieldDef) => (f.key in dirty ? dirty[f.key] : f.current);
+
+  /**
+   * The versions the Minecraft bot plays (mineflayer's tested ones, 1.8.8 to 26.1), newest first, for its Game
+   * version: the server's own when it says, each of these, or one typed in (Custom). A value typed earlier that is
+   * not on the list shows as Custom, with it in the box.
+   */
+  const MC_VERSIONS: Choice[] = [
+    { value: "auto", label: "Match the server", hint: "1.21.4, and ViaProxy for other servers", icon: "refresh" },
+    { value: "26.1", label: "26.1", hint: "The newest it plays" },
+    { value: "1.21.11", label: "1.21.11" },
+    { value: "1.21.8", label: "1.21.8" },
+    { value: "1.21.4", label: "1.21.4", hint: "The one it knows best" },
+    { value: "1.21.1", label: "1.21.1" },
+    { value: "1.20.6", label: "1.20.6" },
+    { value: "1.20.4", label: "1.20.4" },
+    { value: "1.20.1", label: "1.20.1" },
+    { value: "1.19.4", label: "1.19.4" },
+    { value: "1.18.2", label: "1.18.2" },
+    { value: "1.17.1", label: "1.17.1" },
+    { value: "1.16.5", label: "1.16.5" },
+    { value: "1.12.2", label: "1.12.2" },
+    { value: "1.8.8", label: "1.8.8", hint: "And 1.8.9 servers" },
+    { value: "custom", label: "Custom", hint: "Type the version", icon: "edit" },
+  ];
+  const mcKnown = (v: string) => MC_VERSIONS.some((c) => c.value === v && c.value !== "custom");
 
   /** A value the way it reads in a row, for copying. */
   const plain = (v: unknown) => (v === null || v === undefined ? "" : typeof v === "string" ? v : JSON.stringify(v));
@@ -854,6 +1058,8 @@
       }
     }
     if (persona) reloadPersonas();
+    // A social switched on or off: shown or hidden everywhere now, its accounts with it (App.svelte asks for them).
+    if (Object.keys(dirty).some((k) => k in SOCIAL_OF)) refreshSocials();
     // The edited values stay on screen until the saved ones are read back: cleared first, the rows showed the
     // values from before the save for a moment (and for as long as 15s, while the held answer counted as fresh).
     await load(true);
@@ -947,8 +1153,19 @@
        The hover rail is there so a row reads as one object rather than as
        paragraphs that happen to be near each other. -->
   <div class="settings-row group flex flex-wrap items-center gap-x-4 gap-y-2.5 sm:flex-nowrap"
-       class:is-switch={f.type === "bool" || (f.key === "snapchat.quiet_hours" && !value(f))}
+       class:is-switch={f.type === "bool" || (QUIET_KEYS.has(f.key) && !value(f))}
        use:contextMenu={() => rowMenu(f, far)}>
+    <!-- A social's switch has its mark beside it, in its own colour; the rest of What runs a quiet one. -->
+    {#if SOCIAL_OF[f.key]}
+      {@const p = PLATFORMS[SOCIAL_OF[f.key]]}
+      {@const lit = !!value(f) && (!partnerOf(f) || !!value(partnerOf(f)!))}
+      <span class="settings-mark is-social is-{p.id}" class:is-off={!lit} style="--tone: {p.tone}" title={p.name}
+            aria-hidden="true">
+        <Icon name={p.icon} size={19} />
+      </span>
+    {:else if RUN_MARK[f.key]}
+      <span class="settings-mark" aria-hidden="true"><Icon name={RUN_MARK[f.key]} size={15} /></span>
+    {/if}
     <!-- Just used (a command run with this prefix): the row lights, as a model's does when it answers. -->
     {#if used}{#key used.n}<span class="settings-used" aria-hidden="true"></span>{/key}{/if}
     <div class="settings-text min-w-0 flex-1 basis-60">
@@ -997,7 +1214,7 @@
          example of what it does plays there (SwitchDemo), when the row is
          wide enough. Every switch row has the slot, so the switches still
          line up down the page. -->
-    {#if f.type === "bool" || (f.key === "snapchat.quiet_hours" && !value(f))}
+    {#if f.type === "bool" || (QUIET_KEYS.has(f.key) && !value(f))}
       <div class="settings-demo">
         {#if hasDemo(f.key)}
           <SwitchDemo key={f.key} on={!!value(f) && (!partnerOf(f) || !!value(partnerOf(f)!))} />
@@ -1049,14 +1266,22 @@
         {@const pairOf = Array.isArray(value(f)) ? value(f) : [10, 22]}
         <HourRange value={`${Number(pairOf[0]) || 0}-${Number(pairOf[1]) || 0}`} timezone={localZone()} words={NUDGE_WORDS}
                    onchange={(v) => { const [a, b] = v.split("-").map(Number); setValue(f, [a, b]); }} />
-      {:else if f.key === "snapchat.quiet_hours"}
+      {:else if QUIET_KEYS.has(f.key)}
         {@const on = !!String(value(f) ?? "").trim()}
         <div class="flex flex-col items-end gap-3">
           <Toggle checked={on} name="Quiet hours" onchange={(v) => setValue(f, v ? "2-9" : "")} />
           {#if on}
-            <HourRange value={value(f)} timezone={localZone()} words={QUIET_WORDS} onchange={(v) => setValue(f, v)} />
+            <HourRange value={value(f)} timezone={localZone()}
+                       words={f.key === "bot.calls.quiet_hours" ? CALL_QUIET_WORDS : QUIET_WORDS}
+                       onchange={(v) => setValue(f, v)} />
           {/if}
         </div>
+      <!-- How long a call rings: one setting holding both ends, on the dial the two-setting ranges use. Sorted because
+           the call reads a pair written the wrong way round (voice/session.py), and a dial should show it the same. -->
+      {:else if f.key === "bot.calls.ring_seconds"}
+        {@const span = Array.isArray(value(f)) && value(f).length >= 2 ? [num(value(f)[0]), num(value(f)[1])] : [2, 7]}
+        <Dial values={[Math.min(...span), Math.max(...span)]} scale={timeScale("s", { min: 0, max: 30, integer: true })}
+              names={["At least", "At most"]} hint="random in between" onchange={(v) => setValue(f, v)} />
       {:else if f.key in COUNTS && (f.type === "int" || f.type === "float")}
         <Dial values={[num(value(f))]} scale={countScale({ min: f.min, max: f.max, ...COUNTS[f.key] })}
               hint={COUNTS[f.key].hint} names={[f.label, f.label]} onchange={([v]) => setValue(f, v)} />
@@ -1200,6 +1425,17 @@
             <span class="text-[11px] text-faint">= {human(f, value(f))}</span>
           {/if}
         </span>
+      {:else if f.key === "minecraft.version"}
+        <!-- A dropdown of the versions it plays, and a box for any other. -->
+        {@const v = String(value(f) ?? "auto").trim()}
+        <span class="flex w-full flex-wrap items-center gap-2 sm:w-auto">
+          <Select value={mcKnown(v) ? v : "custom"} options={MC_VERSIONS} width="w-full sm:w-64"
+                  onchange={(n) => setValue(f, n === "custom" ? (mcKnown(v) ? "" : v) : n)} />
+          {#if !mcKnown(v)}
+            <input class="field w-full font-mono sm:w-28" placeholder="1.19.2" aria-label="The version" spellcheck="false"
+                   value={v} oninput={(e) => setValue(f, e.currentTarget.value.trim())} />
+          {/if}
+        </span>
       {:else if f.key in CHOICES}
         <Select
           value={value(f)}
@@ -1265,7 +1501,7 @@
         <ListEditor
           value={value(f)}
           onchange={(list) => setValue(f, list)}
-          placeholder="Add a word or phrase"
+          placeholder={f.key === "tiktok.live.ignore_viewers" ? "Add a name or @handle" : "Add a word or phrase"}
         />
       {:else if f.type === "json"}
         <textarea
@@ -1323,7 +1559,8 @@
          where vertical space is the scarce thing. -->
     <div class="hscroll">
     <nav class="settings-rail" aria-label="Settings" use:hscroll>
-      {#each TABS as t (t.id)}
+      {#each tabs as t (t.id)}
+        {#if runStarts.has(t.id)}<span class="settings-rail-sep" role="separator"></span>{/if}
         <button
           onclick={() => pickTab(t)}
           aria-current={tab.id === t.id && !searching}
@@ -1421,14 +1658,24 @@
               <p class="settings-scope-note"><Icon name="layers" size={12} />Same for every profile.</p>
             {/if}
 
-            <!-- Snapchat drives Chrome: on a phone, none of this tab can run. -->
-            {#if tab.id === "snapchat"}<NotHere feature="snapchat" />{/if}
+            <!-- Snapchat, TikTok, Instagram, X and Reddit drive Chrome: on a phone, none of these tabs can run. -->
+            {#if tab.id === "snapchat" || tab.id === "tiktok" || tab.id === "instagram" || tab.id === "x"
+                 || tab.id === "reddit" || tab.id === "whatsapp"}
+              <NotHere feature={tab.id} />
+            {/if}
 
-            {#if (tab.id === "discord" || tab.id === "snapchat") && sub.id === tab.subs[0].id}
+            {#if (tab.id === "discord" || tab.id === "snapchat" || tab.id === "tiktok" || tab.id === "instagram"
+                  || tab.id === "x" || tab.id === "reddit" || tab.id === "whatsapp")
+              && sub.id === tab.subs[0].id}
               <a class="settings-pointer" href="#/accounts">
                 <Icon name="accounts" size={14} />
                 <span class="min-w-0 flex-1">
-                  {tab.id === "discord" ? "Discord accounts, their tokens and proxies" : "Snapchat logins"} are on the Accounts page.
+                  {tab.id === "discord" ? "Discord accounts, their tokens and proxies"
+                    : tab.id === "tiktok" ? "TikTok sign-ins"
+                    : tab.id === "instagram" ? "Instagram logins"
+                    : tab.id === "x" ? "X logins"
+                    : tab.id === "reddit" ? "Reddit sign-ins"
+                    : tab.id === "whatsapp" ? "WhatsApp numbers" : "Snapchat logins"} are on the Accounts page.
                 </span>
                 <span class="settings-pointer-go">Open Accounts <Icon name="chevron" size={11} /></span>
               </a>
@@ -1468,6 +1715,64 @@
                   {@render row(byKey["snapchat.enabled"], false)}
                 </div>
               {/if}
+            {:else if sub.panel === "tiktok-setup"}
+              <SnapchatSetup platform="tiktok" />
+              {#if byKey["tiktok.enabled"]}
+                <div class="settings-card mt-6">
+                  {@render row(byKey["tiktok.enabled"], false)}
+                </div>
+              {/if}
+            {:else if sub.panel === "instagram-setup"}
+              <SnapchatSetup platform="instagram" />
+              {#if byKey["instagram.enabled"]}
+                <div class="settings-card mt-6">
+                  {@render row(byKey["instagram.enabled"], false)}
+                </div>
+              {/if}
+            {:else if sub.panel === "x-setup"}
+              <SnapchatSetup platform="x" />
+              {#if byKey["x.enabled"]}
+                <div class="settings-card mt-6">
+                  {@render row(byKey["x.enabled"], false)}
+                </div>
+              {/if}
+            {:else if sub.panel === "reddit-setup"}
+              <SnapchatSetup platform="reddit" />
+              {#if byKey["reddit.enabled"]}
+                <div class="settings-card mt-6">
+                  {@render row(byKey["reddit.enabled"], false)}
+                </div>
+              {/if}
+            {:else if sub.panel === "whatsapp-setup"}
+              <SnapchatSetup platform="whatsapp" />
+              {#if byKey["whatsapp.enabled"]}
+                <div class="settings-card mt-6">
+                  {@render row(byKey["whatsapp.enabled"], false)}
+                </div>
+              {/if}
+            {:else if sub.panel === "minecraft-setup"}
+              <MinecraftSetup />
+              {#if byKey["minecraft.enabled"]}
+                <div class="settings-card mt-6">
+                  {@render row(byKey["minecraft.enabled"], false)}
+                </div>
+              {/if}
+            {:else if sub.panel === "discord-setup"}
+              <PlatformReady platform="discord" />
+            {:else if sub.panel === "telegram-setup"}
+              <PlatformReady platform="telegram" />
+              {#if byKey["telegram.enabled"]}
+                <div class="settings-card mt-6">
+                  {@render row(byKey["telegram.enabled"], false)}
+                </div>
+              {/if}
+            {:else if sub.panel === "imessage-setup"}
+              <ImessageSetup />
+              {#if byKey["imessage.enabled"]}
+                <div class="settings-card mt-6">
+                  {@render row(byKey["imessage.enabled"], false)}
+                </div>
+              {/if}
             <!-- Colours, background, panels, typeface, motion: shown, not described (Appearance.svelte). -->
             {:else if sub.panel === "theme" || sub.panel === "typeface" || sub.panel === "interface"}
               <Appearance which={sub.panel} />
@@ -1482,6 +1787,27 @@
                 </div>
               {/if}
               <PicturesPanel />
+            {:else if sub.panel === "calls"}
+              <!-- How it talks, what does the work and its voice are the panel's own controls (with Hear it, Time a
+                   turn and Try a call). Picking up is its own subtab now. Anything else listed here still draws as
+                   an ordinary row under the panel, and saves with the same button. -->
+              {@const own = new Set(["bot.calls.engine", "bot.calls.realtime_provider", "bot.calls.realtime_voice",
+                                     "bot.calls.speaker", "bot.calls.voice", "bot.calls.hear", "bot.calls.think",
+                                     "bot.calls.speak"])}
+              <!-- Which version of a voice model is a row, not a panel control, but it says nothing at all when
+                   the call is on its own brain, so it waits until a voice model is the one talking. -->
+              {@const callRows = rowsOf(fieldsFor(tab, sub)).filter((f) => !own.has(f.key)
+                && !(f.key === "bot.calls.realtime_model"
+                     && (byKey["bot.calls.engine"] ? value(byKey["bot.calls.engine"]) : "realtime") !== "realtime"))}
+              <CallSetup {scope} get={(k: string) => (byKey[k] ? value(byKey[k]) : undefined)}
+                         set={(k: string, v: any) => { if (byKey[k]) setValue(byKey[k], v); }} />
+              {#if callRows.length}
+                <div class="settings-card mt-6">
+                  {#each callRows as f (f.key)}
+                    {@render row(f, false)}
+                  {/each}
+                </div>
+              {/if}
             {:else if sub.panel === "profiles"}
               <div class="settings-card">
                 {#if byKey["bot.profile_cache.enabled"]}
@@ -1513,6 +1839,12 @@
             {/if}
           </div>
         {/key}
+
+        {#if tab.id === "tiktok" && LIVE_SUBS.has(sub.id)}
+          <!-- A practice LIVE, answered with the settings above as they are on the page, saved or not. Outside the
+               subtab's own block, so a LIVE going on stays on from one LIVE subtab to the next. -->
+          <LiveDemo get={(k) => (byKey[k] ? value(byKey[k]) : undefined)} persona={scope} />
+        {/if}
 
         <!-- Appearance applies as it is clicked: nothing there is saved, so nothing to say about saving. -->
         {#if !(sub.panel === "theme" || sub.panel === "typeface" || sub.panel === "interface")}

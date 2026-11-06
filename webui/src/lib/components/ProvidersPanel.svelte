@@ -12,7 +12,7 @@
   import Icon from "./Icon.svelte";
   import KeyForm from "./KeyForm.svelte";
   import ProviderTile from "./ProviderTile.svelte";
-  import EnvEditor from "./EnvEditor.svelte";
+  import KeyList from "./KeyList.svelte";
 
   onMount(() => {
     loadProviders().catch((e) => toast(e?.message || "Could not load the providers", "err"));
@@ -20,7 +20,8 @@
 
   let open = $state<Record<string, boolean>>({});
   let removing = $state<Record<string, boolean>>({});
-  let groqKeys = $state(false);
+  /** The cards with their keys open. */
+  let manage = $state<Record<string, boolean>>({});
 
   const CAN: Record<string, string> = { chat: "Writes", vision: "Sees", stt: "Hears", tts: "Speaks" };
 
@@ -55,7 +56,7 @@
           {#if p.ready}
             <span class="pp-pill is-good">
               <span class="pp-dot"></span>
-              {p.id === "local" ? "on this computer" : p.multi && p.keys > 1 ? `${p.keys} keys` : "connected"}
+              {p.id === "local" ? "on this computer" : p.keys > 1 ? `${p.keys} keys` : "connected"}
             </span>
           {/if}
         </div>
@@ -74,17 +75,17 @@
       {:else if !p.ready}
         <KeyForm provider={p} label="Connect" />
       {:else if open[p.id]}
-        <KeyForm provider={p} label={p.multi ? "Add key" : "Replace"} onsaved={() => (open[p.id] = false)} />
+        <KeyForm provider={p} label="Add key" onsaved={() => (open[p.id] = false)} />
       {:else}
         <div class="flex flex-wrap items-center gap-1">
           <button class="pp-link" onclick={() => (open[p.id] = true)}>
-            <Icon name={p.multi ? "plus" : "key"} size={11} />{p.multi ? "Add another key" : "Replace key"}
+            <Icon name="plus" size={11} />Add another key
           </button>
-          {#if p.multi}
-            <button class="pp-link" onclick={() => (groqKeys = !groqKeys)}>
-              <Icon name="edit" size={11} />{groqKeys ? "Hide keys" : "Manage keys"}
-            </button>
-          {:else}
+          <button class="pp-link" onclick={() => (manage[p.id] = !manage[p.id])}>
+            <Icon name="edit" size={11} />{manage[p.id] ? "Hide keys" : "Manage keys"}
+          </button>
+          <!-- With several, one wrong press should not lose them all: they go one at a time, under Manage keys. -->
+          {#if p.keys <= 1}
             <button class="pp-link pp-danger" onclick={() => remove(p)} disabled={!!removing[p.id]}>
               <Icon name="trash" size={11} />Disconnect
             </button>
@@ -94,12 +95,12 @@
           </a>
         </div>
       {/if}
-      {#if p.multi && groqKeys}
+      {#if p.ready && manage[p.id] && p.id !== "local"}
         <div class="mt-3 rounded-xl bg-black/20 p-3">
           <p class="mb-2 text-[11.5px] text-faint">
             When one key hits its rate limit the next one takes over, before moving on to the next model.
           </p>
-          <EnvEditor sections={["Groq API"]} keyLists={["groq"]} extras={false} />
+          <KeyList name={p.id} accounts={false} stamp={p.keys} onchange={() => loadProviders()} />
         </div>
       {/if}
     </div>

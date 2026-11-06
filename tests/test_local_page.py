@@ -174,8 +174,8 @@ check("a bin that asks once, on itself, then removes", "askRemove(m)" in ui and 
 check("the download in words, with its speed and time left", "function stage(" in ui and '"Downloading"' in ui
       and "speed(rate)" in ui and "timeLeft(" in ui)
 check("and a way to stop it", "api.localPullCancel()" in ui and "if (l.cancelled) toast(" in ui)
-check("typed while one downloads, the next waits its turn: the box stays open, its button says Queue",
-      'disabled={asking}\n          aria-label="Model to download"' in ui and '{pull?.active ? "Queue" : "Download"}' in ui
+check("asked for while one downloads, the next waits its turn, and the search stays open for another",
+      "if (r.queued) {" in ui and "between={underway}" in ui
       and "api.localPullUnqueue(model)" in ui and '<ol class="lc-queue">' in ui)
 check("each that ends is said once, even when the queue moves straight on", "async function sayEnded(p: Pull)" in ui
       and "l.at <= lastSaid" in ui)
