@@ -1,0 +1,54 @@
+{
+  "banned": [],
+  "banned_words": [],
+  "limits": {
+    "account_age_days": 7,
+    "live_profiles": 10,
+    "requests_per_day": 6
+  },
+  "min_app": "",
+  "moderators": [
+    156575850
+  ],
+  "reserved_slugs": [
+    "admin",
+    "all",
+    "community",
+    "default",
+    "everyone",
+    "help",
+    "llmselfbot",
+    "mod",
+    "moderator",
+    "new",
+    "official",
+    "owner",
+    "staff",
+    "support",
+    "test"
+  ],
+  "schema": 1,
+  "submissions_open": true,
+  "tags": [
+    "chill",
+    "funny",
+    "flirty",
+    "sweet",
+    "sarcastic",
+    "wholesome",
+    "dramatic",
+    "shy",
+    "chaotic",
+    "gamer",
+    "anime",
+    "student",
+    "artist",
+    "music",
+    "sports",
+    "roleplay",
+    "friendly",
+    "mysterious",
+    "romantic",
+    "nerdy"
+  ]
+}
