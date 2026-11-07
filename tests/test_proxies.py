@@ -147,7 +147,15 @@ check("sign-ins go through what was typed", all(s in page for s in ("api.tiktokB
 check("changing it says to restart the account", 'hasProxy && fProxy.trim() !== (editing?.proxy ?? "")' in page)
 
 print("\n== the connection, through real sockets ==")
-node = subprocess.run(["node", "tests/proxy_connect_logic.mjs"], cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+try:
+    node = subprocess.run(["node", "tests/proxy_connect_logic.mjs"], cwd=ROOT, capture_output=True, text=True,
+                          encoding="utf-8", errors="replace", timeout=120)
+except subprocess.TimeoutExpired as e:
+    # Still running after two minutes (macOS, 2026-11-07: something it opened was left open): a failure that says how
+    # far it got, rather than this whole file stopping on a traceback.
+    said = e.stdout.decode("utf-8", "replace") if isinstance(e.stdout, bytes) else (e.stdout or "")
+    node = subprocess.CompletedProcess(e.cmd, 1, said, "still running after 120s; its last lines: "
+                                       + " | ".join(said.strip().splitlines()[-3:]))
 for line in node.stdout.splitlines():
     if "FAIL" in line:
         print(line)

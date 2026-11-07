@@ -11,14 +11,41 @@ const check = (name, ok, extra = "") => {
   console.log(`  ${ok ? "PASS" : "FAIL"}  ${name}${extra && !ok ? `  [${extra}]` : ""}`);
 };
 
+/**
+ * A server on this computer, every connection of which goes with it when it is stopped: one left open keeps Node, and
+ * so this test, running. On macOS it ran until test_proxies.py gave up on it after two minutes (2026-11-07).
+ */
+async function serve(handler) {
+  const open = new Set();
+  const server = net.createServer((s) => {
+    open.add(s);
+    s.on("close", () => open.delete(s));
+    s.on("error", () => {});
+    handler(s);
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  return { server, port: server.address().port, stop: () => { for (const s of open) s.destroy(); server.close(); } };
+}
+
+/**
+ * Both ways between two sockets, and both closed when either is. A pipe ends the other side only on a clean end, and a
+ * socket closed with something still unread in it goes with a reset instead (macOS and Linux do that; Windows does not),
+ * which left the proxy's side to the server open for good.
+ */
+function relay(a, b) {
+  a.pipe(b);
+  b.pipe(a);
+  const both = () => { a.destroy(); b.destroy(); };
+  a.once("close", both);
+  b.once("close", both);
+}
+
 /** A server that says who it is, then echoes. What comes through a proxy has to reach this. */
-const target = net.createServer((s) => {
+const target = await serve((s) => {
   s.write("SERVER:");
   s.on("data", (d) => s.write(d));
-  s.on("error", () => {});
 });
-await new Promise((r) => target.listen(0, "127.0.0.1", r));
-const targetPort = target.address().port;
+const targetPort = target.port;
 
 function collect(socket, n, read = (b) => b) {
   return new Promise((resolve, reject) => {
@@ -60,8 +87,7 @@ function taker(socket) {
  *  a byte at a time when asked to, which is how they may come. */
 function socksProxy({ login = null, refuse = 0, slow = false } = {}) {
   const seen = { greeted: 0, user: "", pass: "", host: "", port: 0 };
-  const server = net.createServer((client) => {
-    client.on("error", () => {});
+  return serve((client) => {
     const say = async (buf) => {
       if (!slow) return client.write(buf);
       for (const b of buf) {
@@ -98,18 +124,15 @@ function socksProxy({ login = null, refuse = 0, slow = false } = {}) {
       await new Promise((r) => up.once("connect", r));
       await say(Buffer.from([0x05, 0x00, 0x00, 0x01, 127, 0, 0, 1, 0, 80]));
       from.stop();
-      client.pipe(up);
-      up.pipe(client);
+      relay(client, up);
     })().catch(() => client.destroy());
-  });
-  return new Promise((r) => server.listen(0, "127.0.0.1", () => r({ server, seen, port: server.address().port })));
+  }).then((s) => ({ ...s, seen }));
 }
 
 /** An HTTP proxy that takes CONNECT, saying nothing else at first, or a status it is told to. */
 function httpProxy({ status = 200, wantLogin = "" } = {}) {
   const seen = { first: "", login: "" };
-  const server = net.createServer((client) => {
-    client.on("error", () => {});
+  return serve((client) => {
     let held = "";
     const on = (d) => {
       held += d.toString("latin1");
@@ -125,13 +148,11 @@ function httpProxy({ status = 200, wantLogin = "" } = {}) {
       up.on("error", () => client.destroy());
       up.once("connect", () => {
         client.write("HTTP/1.1 200 Connection established\r\n\r\n");
-        client.pipe(up);
-        up.pipe(client);
+        relay(client, up);
       });
     };
     client.on("data", on);
-  });
-  return new Promise((r) => server.listen(0, "127.0.0.1", () => r({ server, seen, port: server.address().port })));
+  }).then((s) => ({ ...s, seen }));
 }
 
 const through = (url, host = "mc.example.net", port = 25565) => new Promise((resolve) => {
@@ -161,13 +182,13 @@ check("nothing said: an http one", !p.socks && p.port === 8080);
   check("through SOCKS5, with no login", !error && socket, String(error));
   check("asked for the server by name, so the proxy looks it up", px.seen.host === "mc.example.net" && px.seen.port === 25565, JSON.stringify(px.seen));
   check("and it talks both ways, the server's first words too", await talks(socket));
-  px.server.close();
+  px.stop();
 }
 {
   const px = await socksProxy({ slow: true });
   const { error, socket } = await through(`socks5://127.0.0.1:${px.port}`);
   check("its answers coming a byte at a time make no difference", !error && (await talks(socket)), String(error));
-  px.server.close();
+  px.stop();
 }
 {
   const px = await socksProxy({ login: { user: "me", pass: "pw" } });
@@ -177,13 +198,13 @@ check("nothing said: an http one", !p.socks && p.port === 8080);
   check("a wrong one says so", /refused its login/.test(String(wrong.error?.message)), String(wrong.error));
   const none = await through(`socks5://127.0.0.1:${px.port}`);
   check("and none at all, when it wants one, says that", /wants a login/.test(String(none.error?.message)), String(none.error));
-  px.server.close();
+  px.stop();
 }
 {
   const px = await socksProxy({ refuse: 5 });
   const { error } = await through(`socks5://127.0.0.1:${px.port}`);
   check("a server it cannot reach is said in words", /connection refused/.test(String(error?.message)), String(error));
-  px.server.close();
+  px.stop();
 }
 
 // HTTP CONNECT.
@@ -191,7 +212,7 @@ check("nothing said: an http one", !p.socks && p.port === 8080);
   const px = await httpProxy();
   const { error, socket } = await through(`http://127.0.0.1:${px.port}`);
   check("through an http proxy", !error && px.seen.first === "CONNECT mc.example.net:25565 HTTP/1.1" && (await talks(socket)), `${error} ${px.seen.first}`);
-  px.server.close();
+  px.stop();
 }
 {
   const want = `Basic ${Buffer.from("me:pw").toString("base64")}`;
@@ -200,7 +221,7 @@ check("nothing said: an http one", !p.socks && p.port === 8080);
   check("with a login", !error && px.seen.login === want && (await talks(socket)), String(error));
   const wrong = await through(`http://127.0.0.1:${px.port}`);
   check("refused, it says what it was told", /407/.test(String(wrong.error?.message)), String(wrong.error));
-  px.server.close();
+  px.stop();
 }
 
 // Nothing there.
@@ -214,13 +235,12 @@ check("nothing said: an http one", !p.socks && p.port === 8080);
 }
 
 {
-  const silent = net.createServer((s) => s.on("error", () => {}));
-  await new Promise((r) => silent.listen(0, "127.0.0.1", r));
+  const silent = await serve(() => {});
   const error = await new Promise((resolve) => {
-    openThrough(`socks5://127.0.0.1:${silent.address().port}`, "mc.example.net", 25565, (e) => resolve(e), 150);
+    openThrough(`socks5://127.0.0.1:${silent.port}`, "mc.example.net", 25565, (e) => resolve(e), 150);
   });
   check("one that takes the connection and says nothing is given up on", /did not answer/.test(String(error?.message)), String(error));
-  silent.close();
+  silent.stop();
 }
 
 // As minecraft-protocol uses it.
@@ -235,7 +255,7 @@ check("nothing said: an http one", !p.socks && p.port === 8080);
   check("handed to the client, then told it is connected", events.join(",") === "socket,connect", events.join(","));
   check("on the port of the server", px.seen.port === 25570);
   client.socket.destroy();
-  px.server.close();
+  px.stop();
 }
 
 // A server's SRV record, as the library looks one up when left to itself. Stood in for here, so nothing leaves this computer.
@@ -246,7 +266,7 @@ async function joinWith(options, resolver) {
   const client = { setSocket(s) { this.socket = s; }, emit() { this.done?.(); } };
   await new Promise((resolve) => { client.done = resolve; connectThrough(`socks5://127.0.0.1:${px.port}`, options, lookup)(client); });
   client.socket.destroy();
-  px.server.close();
+  px.stop();
   return { looked, host: px.seen.host, port: px.seen.port };
 }
 {
@@ -283,6 +303,6 @@ async function joinWith(options, resolver) {
   check("nor over a connection someone already chose", throughProxy(own, "socks5://1.2.3.4:1080") === own);
 }
 
-target.close();
+target.stop();
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exitCode = failed ? 1 : 0;
