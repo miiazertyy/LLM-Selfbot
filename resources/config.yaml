@@ -315,13 +315,13 @@ bot:
   # --- Careful mode ---
   # For a new or precious account: everything below its usual pace, and nothing
   # public at all (no likes, comments, posts, follows, statuses, notes, friend
-  # requests or voice calls) until the date passes. Empty until = on until you
-  # switch it off. The platforms' own limits stay as written; this scales them.
+  # requests or voice calls). Empty until = on until you switch it off. The
+  # platforms' own limits stay as written; this scales them.
   conservative:
     enabled: false
-    until: ""            # "2026-12-01" - the morning after, it is off by itself
-    reply_scale: 0.4     # sends-per-hour at this fraction of the settings
-    wait_scale: 1.5      # waits between actions stretched this much
+    until: ""            # "2026-12-01" - the day it switches itself off
+    reply_scale: 0.4     # replies an hour: 0.4 = 40% of the usual
+    wait_scale: 1.5      # waits: 1.5 = half as long again
 
   # --- Message style (verbosity) ---
   # short: terse 1-2 sentence replies. balanced (recommended): casual, one

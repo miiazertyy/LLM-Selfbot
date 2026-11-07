@@ -21,6 +21,7 @@
   import { colorOf, shortValue } from "../lib/personas/logic";
   import { loadProviders, planPersona } from "../lib/providers";
   import { play } from "../lib/uisound";
+  import { fmtDate } from "../lib/fmt";
   import StatusDot from "../lib/components/StatusDot.svelte";
   import Appearance from "../lib/components/Appearance.svelte";
   import { TABS, PATHS, homeOf, restHomeOf, resolveTarget, type Tab, type Sub } from "../lib/settingsmap";
@@ -386,7 +387,47 @@
       const source = byKey["bot.desktop.build_source"];
       return !source || value(source) === "custom";
     },
+    // Careful mode's day and pace only mean something while it is on.
+    "bot.conservative.until": () => carefulOn(),
+    "bot.conservative.reply_scale": () => carefulOn(),
+    "bot.conservative.wait_scale": () => carefulOn(),
   };
+  function carefulOn(): boolean {
+    const on = byKey["bot.conservative.enabled"];
+    return !on || value(on) === true;
+  }
+
+  /**
+   * Numbers that are a share or a multiple of what happens usually, said that way. Careful mode's showed "0.4" and
+   * "1.5", which said nothing: now "40%" of the usual replies, and waits "1.5× longer".
+   */
+  const SCALES: Record<string, (v: number) => string> = {
+    "bot.conservative.reply_scale": (v) => (v >= 1 ? "Usual" : `${Math.round(v * 100)}%`),
+    "bot.conservative.wait_scale": (v) => (v <= 1 ? "Usual" : `${+v.toFixed(2)}× longer`),
+  };
+
+  // ── Careful mode's day ─────────────────────────────────────────────────────
+  /** "2026-12-01" said as a date ("Dec 1, 2026"); what is not one, as it is. */
+  function dayWords(day: string): string {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(day);
+    return m ? fmtDate(new Date(+m[1], +m[2] - 1, +m[3]), { day: "numeric", month: "short", year: "numeric" }) : day;
+  }
+  /** Tomorrow, as the calendar wants it: a day already here would switch it off at once. */
+  function tomorrow(): string {
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  }
+  /** The system's own calendar, opened from the button beside it (the input itself is out of sight). */
+  function pickDay(e: MouseEvent) {
+    play("open");
+    const input = (e.currentTarget as HTMLElement).parentElement?.querySelector<HTMLInputElement>(".day-input");
+    try {
+      input?.showPicker();
+    } catch {
+      input?.focus();
+    }
+  }
 
   function rowsOf(list: FieldDef[]): FieldDef[] {
     const out: FieldDef[] = [];
@@ -1367,10 +1408,11 @@
           use:springValue
           use:sweep
         />
-        <span class="slider-value w-14 shrink-0 text-right text-[12px]"
+        <span class="slider-value shrink-0 text-right text-[12px] {f.key in SCALES ? 'w-24' : 'w-14'}"
               class:is-blank={blank}
-              class:font-mono={!blank} class:text-ink={!blank}>
-          {blank ? "Default" : isChance(f) ? pct(value(f)) : `${value(f)}${unitOf(f) ? ` ${unitOf(f)}` : ""}`}
+              class:font-mono={!blank && !(f.key in SCALES)} class:text-ink={!blank}>
+          {blank ? "Default" : f.key in SCALES ? SCALES[f.key](Number(value(f))) : isChance(f) ? pct(value(f))
+            : `${value(f)}${unitOf(f) ? ` ${unitOf(f)}` : ""}`}
         </span>
         {#if blankable(f)}
           <!-- Back to Default: a button that says so, there once there is something to go back from. -->
@@ -1496,6 +1538,21 @@
       <!-- A plain list of words or phrases is edited as items, not as JSON:
            adding one word should not mean getting the quoting and the commas
            right, with a missing bracket rejecting the save. -->
+      <!-- The day careful mode switches itself off, picked on the system's calendar and said as a date. As a text box
+           for year-month-day it was an empty pill that said nothing. -->
+      {:else if f.key === "bot.conservative.until"}
+        {@const day = String(value(f) ?? "").trim()}
+        <span class="day-pick">
+          <button type="button" class="day-btn" class:is-set={!!day} data-sound="self" onclick={pickDay}>
+            <Icon name="calendar" size={13} />{day ? dayWords(day) : "Pick a day"}
+          </button>
+          {#if day}
+            <button type="button" class="day-clear" data-sound="self" onclick={() => { play("off"); setValue(f, ""); }}
+                    title="No day: it stays on until you switch it off" aria-label="No day"><Icon name="close" size={10} /></button>
+          {/if}
+          <input type="date" class="day-input" tabindex="-1" aria-hidden="true" min={tomorrow()} value={day}
+                 onchange={(e) => { play("select"); setValue(f, (e.target as HTMLInputElement).value); }} />
+        </span>
       {:else if f.type === "json" && Array.isArray(value(f))
                 && value(f).every((v: any) => typeof v === "string")}
         <ListEditor

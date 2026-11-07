@@ -88,8 +88,7 @@ print("== the report ==")
 rows = {r["name"]: r for r in stealth.report({"bot": {"calls": {"enabled": False}, "conservative": {}},
                                              "tiktok": {"headless": False}, "instagram": {},
                                              "snapchat": {}, "x": {}, "reddit": {}})}
-check("careful mode off is called out", rows["Careful mode"]["ok"] is False)
-check("  and says where to turn it on", rows["Careful mode"]["where"] == ["ai/careful"])
+check("careful mode off is not called out: it is a choice, not a fix", "Careful mode" not in rows)
 check("voice off reads as fine", rows["Voice channels"]["ok"] is True)
 rows = {r["name"]: r for r in stealth.report({"bot": {"calls": {"enabled": True, "vc": True},
                                                       "conservative": {}},
@@ -105,6 +104,8 @@ rows = {r["name"]: r for r in stealth.report({"bot": {"calls": {"enabled": True,
 check("careful mode on keeps public actions off by definition",
       rows["Public actions"]["ok"] is True)
 check("careful mode gates voice", rows["Voice channels"]["ok"] is True)
+check("careful mode on: says so, with where it is changed", rows["Careful mode"]["ok"] is True
+      and rows["Careful mode"]["where"] == ["ai/careful"] and rows["Careful mode"]["detail"].startswith("on until"))
 
 print()
 print(f"{len(PASS)} passed, {len(FAIL)} failed")

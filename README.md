@@ -20,6 +20,8 @@ It's free with a Groq key, and it's one download.
 
 </div>
 
+> [!TIP]
+> Need help, or want a feature? [Open an issue](https://github.com/miiazertyy/RandomServerFinder/issues/new). There are no dumb questions.
 <br>
 
 > [!WARNING]

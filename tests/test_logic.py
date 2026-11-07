@@ -67,6 +67,10 @@ check("typo fires at chance=1.0", typo_changed >= 180, f"{typo_changed}/200")
 check("typo never fires at 0.0", all(add_typo("hello there friend", 0.0) == "hello there friend" for _ in range(50)))
 check("typo keeps word count", all(len(add_typo("hello there friend", 1.0).split()) == 3 for _ in range(200)))
 check("typo safe on short text", add_typo("hi", 1.0) == "hi")
+# A typo used to rejoin every word with one space: a reply of several lines went out as one line.
+check("typo keeps every line break and space where it was",
+      all([len(w) for w in t.split("\n")] and t.count("\n") == 2 and "  " in t
+          for t in (add_typo("first line here\nsecond  line\nthird one", 1.0) for _ in range(300))))
 check("humanize composes", " - " not in humanize("a, b", 0.0))
 
 print("\n== tts chunking ==")

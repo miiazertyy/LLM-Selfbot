@@ -34,6 +34,8 @@ ALLOWED = {
     "hiddenChecks",
     # How Memory's people are put in order and narrowed down: the sort and the filters, not the search.
     "memoryView",
+    # Pictures kept although they are the same picture ("Keep both" on the Pictures page): never warned about again.
+    "keptDupes",
 }
 
 _lock = threading.Lock()

@@ -218,6 +218,13 @@ def pictures(request: Request):
             "video": video,
             "duration": _duration(f, pid) if video else 0,
         })
+    # The same picture twice (added again, or saved again smaller or as another format): each says which others, by
+    # id, and the page rings them in red until "Keep both" (app/utils/picdupes.py).
+    from app.utils import picdupes
+    folder = _dir()
+    same = picdupes.alike((o["id"], folder / o["name"]) for o in out if o["id"] and not o["video"])
+    for o in out:
+        o["dupes"] = same.get(o["id"], [])
     _sweep_originals()
     return {"pictures": out}
 

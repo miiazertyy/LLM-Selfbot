@@ -17,6 +17,21 @@ for _stream in (sys.stdout, sys.stderr):
 failed = []
 total_pass = total_fail = 0
 
+# On GitHub, each failure is also an annotation on the step. Its log is shown only to people signed in to GitHub, and
+# the CI's ARM build failed twice with nothing to read but "exit code 1"; annotations anyone can see, on the run's page
+# and through GitHub's API.
+ON_GITHUB = __import__("os").environ.get("GITHUB_ACTIONS") == "true"
+told = 0
+
+
+def annotate(module: str, text: str) -> None:
+    global told
+    if not ON_GITHUB or told >= 10:          # GitHub keeps ten errors a step
+        return
+    told += 1
+    text = text.strip().replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")[-1500:]
+    print(f"::error title={module}::{text}", flush=True)
+
 for path in sorted(HERE.glob("test_*.py")):
     print(f"\n{'=' * 60}\n  {path.name}\n{'=' * 60}")
     # Read back as the UTF-8 each module is told to write: Windows' own code page has no character for some bytes of
@@ -42,6 +57,9 @@ for path in sorted(HERE.glob("test_*.py")):
         failed.append(path.name)
         if not summary:
             print(out[-2000:])
+        # What failed, in its own words: the FAIL lines, or how it ended when it stopped before saying.
+        fails = [line.strip() for line in out.splitlines() if line.startswith("  FAIL")]
+        annotate(path.name, "\n".join(fails[:8]) if fails else out[-1200:])
 
 print(f"\n{'=' * 60}")
 print(f"  {total_pass} passed, {total_fail} failed"

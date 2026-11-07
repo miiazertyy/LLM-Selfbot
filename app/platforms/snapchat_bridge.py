@@ -822,8 +822,8 @@ async def _telegram_main() -> None:
                   on_call=_telegram_called, on_state=_set_runner_state,
                   proxy=os.getenv(f"TELEGRAM_PROXY_{ACCOUNT_INDEX}", "").strip())
     if _careful["on"]:
-        log_system(f"[Telegram] Careful mode: replies at {_careful['reply_scale']:g}\u00d7, "
-                   f"waits \u00d7{_careful['wait_scale']:g}.")
+        log_system(f"[Telegram] Careful mode: {round(_careful['reply_scale'] * 100)}% of the usual replies, "
+                   f"waits {_careful['wait_scale']:g}\u00d7 longer.")
     _TG["client"] = tg
     try:
         who = await tg.start()

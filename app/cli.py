@@ -182,6 +182,10 @@ def acquire_single_instance():
                 import fcntl
                 fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
             _lock_handle = handle
+            # The one copy of the app now: a minute on, it clears the unpack folders of copies that were ended
+            # rather than closed (app/utils/tempsweep.py; the frozen Windows app only).
+            from app.utils import tempsweep
+            tempsweep.start()
             return handle
         except Exception:
             try:

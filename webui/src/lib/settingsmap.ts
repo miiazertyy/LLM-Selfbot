@@ -245,7 +245,7 @@ const DEFINED: Tab[] = [
       {
         id: "careful",
         name: "Careful mode",
-        blurb: "For a new or precious account: slower, quieter, and nothing public until the date passes.",
+        blurb: "For a new or precious account: slower, quieter, and nothing public.",
         keys: [
           "bot.conservative.enabled",
           "bot.conservative.until",

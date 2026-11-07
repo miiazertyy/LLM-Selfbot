@@ -117,9 +117,18 @@ check("how the OBS page shows it", lc.overlay(on) == {"seconds": 8, "position": 
                                                       "size": "medium", "theme": "dark"})
 check("a viewer is the same person to the engine each time", lc.viewer_id("Mara K!") == lc.viewer_id("mara k")
       and lc.viewer_id("x", "Theo.Wav") == "tt_theo-wav" and lc.viewer_id("mara", prefix="livedemo_") == "livedemo_mara")
-check("its line: the first line only, short", lc.clean("hi mara!!\nsecond line") .startswith("hi mara")
-      and "second" not in lc.clean("hi mara!!\nsecond line") and len(lc.clean("x" * 400)) <= 150 and lc.clean(None) == "")
-check("and cut at the words when far past its length", len(lc.clean(" ".join(["word"] * 40), 8).split()) <= 14)
+# Without humanize's random typo: one landing in "mara" failed the check now and then (the ARM build, 2026-11-06), and
+# typos have checks of their own (tests/test_logic.py).
+import app.utils.humanize as _hz  # noqa: E402
+_typo, _hz.add_typo = _hz.add_typo, lambda text, chance=0.03: text
+try:
+    check("its line: the first line only, short", lc.clean("hi mara!!\nsecond line").startswith("hi mara")
+          and "second" not in lc.clean("hi mara!!\nsecond line") and len(lc.clean("x" * 400)) <= 150 and lc.clean(None) == "")
+    check("and cut at the words when far past its length", len(lc.clean(" ".join(["word"] * 40), 8).split()) <= 14)
+finally:
+    _hz.add_typo = _typo
+check("with a typo too, the second line never joins it", all("second" not in lc.clean("hi mara!!\nsecond line")
+                                                           for _ in range(300)))
 
 print("\n== its pace ==")
 pace = lc.Pace()

@@ -43,7 +43,7 @@
   import { cubicOut } from "svelte/easing";
   import { api } from "../lib/api";
   import { get } from "svelte/store";
-  import { picturesBlur, settingsSection, viewPersona } from "../lib/stores";
+  import { keptDupes, picturesBlur, settingsSection, viewPersona } from "../lib/stores";
   import PersonaScope from "../lib/personas/PersonaScope.svelte";
   import { personasRes } from "../lib/personas/store";
   import { play } from "../lib/uisound";
@@ -77,6 +77,8 @@
     name: string; id?: string; description: string; size?: number; look?: string; strength?: number; moving?: boolean;
     /** An MP4, and how long it is in seconds. */
     video?: boolean; duration?: number;
+    /** The ids of the other pictures that are the same picture (app/utils/picdupes.py). */
+    dupes?: string[];
   };
   /** Who a picture is: its id, which a rename does not change; its name only where there is no id. */
   const keyOf = (p: Pic) => p.id || p.name;
@@ -302,6 +304,22 @@
   const UNDO_MS = 6000;
   const isGone = (p: Pic) => leaving.some((l) => keyOf(l) === keyOf(p)) || going.some((g) => keyOf(g) === keyOf(p));
   const shownPics = $derived(pics.filter((p) => !isGone(p)));
+
+  // ── The same picture twice ────────────────────────────────────────────────
+  // A copy added again, or the same photo saved again smaller: each is ringed in red, saying which it is the same as,
+  // until it is deleted or "Keep both" puts that warning away for good.
+  const pairKey = (a: string, b: string) => `${pid}:${[a, b].sort().join("|")}`;
+  /** The pictures on screen that are the same picture as this one, bar any kept on purpose. */
+  function twinsOf(p: Pic): Pic[] {
+    if (!p.id || !p.dupes?.length) return [];
+    const kept = new Set($keptDupes);
+    return shownPics.filter((q) => q.id && q.id !== p.id && p.dupes!.includes(q.id) && !kept.has(pairKey(p.id!, q.id)));
+  }
+  function keepBoth(p: Pic, twins: Pic[]) {
+    play("off");
+    const add = twins.map((q) => pairKey(p.id!, q.id!));
+    keptDupes.update((list) => [...list.filter((k) => !add.includes(k)), ...add]);
+  }
 
   function removeLater(list: Pic[]) {
     const fresh = list.filter((p) => !isGone(p));
@@ -785,8 +803,10 @@
        picture added grows in its own way. -->
   <div class="grid grid-cols-1 gap-4 md:grid-cols-2 2xl:grid-cols-3 domino" use:domino={{ step: 70, once: true }}>
     {#each shownPics as p (keyOf(p))}
-      <!-- Going, it shrinks away and the others close up; brought back, it grows in again. -->
-      <div class="pic-card" class:is-picking={selected.size > 0}
+      {@const twins = twinsOf(p)}
+      <!-- Going, it shrinks away and the others close up; brought back, it grows in again. The same picture as
+           another is ringed in red. -->
+      <div class="pic-card" class:is-picking={selected.size > 0} class:is-dupe={twins.length > 0}
            animate:flip={{ duration: 360, easing: cubicOut }}
            in:scale={{ start: 0.92, duration: 260, easing: cubicOut }}
            out:scale={{ start: 0.88, duration: 220, easing: cubicOut }}>
@@ -879,6 +899,21 @@
             <p class="mt-2.5 text-[13px] leading-relaxed text-warn">
               Not described, so the bot can never send it.
             </p>
+          {/if}
+
+          {#if twins.length}
+            <!-- Which it is the same as, and the two ways out: keep both (never warned again), or delete this copy. -->
+            <div class="pc-dupe">
+              <span class="pc-dupe-text"><Icon name="copy" size={13} />Same picture as {twins.map((q) => q.name).join(", ")}</span>
+              <span class="pc-dupe-acts">
+                <button type="button" class="pc-btn is-keep" data-sound="self" onclick={() => keepBoth(p, twins)}>
+                  <Icon name="check" size={13} />Keep both
+                </button>
+                <button type="button" class="pc-btn is-danger" onclick={() => removeLater([p])}>
+                  <Icon name="trash" size={13} />Delete this one
+                </button>
+              </span>
+            </div>
           {/if}
 
           <!-- What can be done to it, as a row of its own under the words; Delete keeps to the far side. -->
@@ -1242,6 +1277,36 @@
   .pc-btn:active:not(:disabled) { transform: scale(0.95); }
   .pc-btn:disabled { cursor: progress; color: var(--color-ink); }
   .pc-btn.is-danger { margin-left: auto; }
+
+  /* The same picture as another: a red ring round the card, and a line saying which, with its two ways out. */
+  .pic-card.is-dupe :global(.glass) {
+    border-color: transparent;
+    box-shadow: 0 0 0 2px var(--color-bad), 0 0 26px -10px var(--color-bad);
+    transition: box-shadow 0.3s var(--swift);
+  }
+  .pc-dupe {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 10px;
+    margin-top: 12px;
+    padding: 9px 10px 9px 12px;
+    border-radius: 12px;
+    background: color-mix(in srgb, var(--color-bad) 12%, transparent);
+  }
+  .pc-dupe-text {
+    display: inline-flex;
+    min-width: 0;
+    flex: 1 1 160px;
+    align-items: center;
+    gap: 7px;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: color-mix(in srgb, var(--color-bad) 70%, var(--color-ink));
+  }
+  .pc-dupe-text :global(svg) { flex-shrink: 0; color: var(--color-bad); }
+  .pc-dupe-acts { display: inline-flex; flex-wrap: wrap; gap: 6px; }
+  .pc-dupe .pc-btn.is-danger { margin-left: 0; }
   .pc-btn.is-danger:hover:not(:disabled) {
     color: #fff;
     background: var(--color-bad);

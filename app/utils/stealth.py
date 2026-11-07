@@ -147,13 +147,17 @@ def report(cfg: dict = None) -> list:
 
     browsers = [s for s in _BROWSER_NAMES if socials.shown(s, cfg)]
 
-    row("all", "Careful mode", careful["on"],
-        ("on until " + careful["until"]) if careful["on"] and careful["until"] else
-        ("on, until switched off" if careful["on"] else "off - new accounts are safer with it on"),
-        ["ai/careful"], "Slower, quieter, and nothing public.")
+    # Careful mode is a choice, not a fix: off, it isn't a problem to point at (it was, on every install, and the row
+    # was the first thing anyone put away). On, it says so, until when and how much slower, in words.
     if careful["on"]:
-        row("all", "Pace", True,
-            f"{int(careful['reply_scale'] * 100)}% of replies, waits \u00d7{careful['wait_scale']:g}")
+        try:
+            day = datetime.strptime(careful["until"], "%Y-%m-%d")
+            until = f"until {day:%b} {day.day}, {day.year}"
+        except ValueError:
+            until = "until you switch it off"
+        row("all", "Careful mode", True,
+            f"on {until}: {round(careful['reply_scale'] * 100)}% of the usual replies, "
+            f"waits {careful['wait_scale']:g}\u00d7 longer", ["ai/careful"], "Slower, quieter, and nothing public.")
 
     headless = [s for s in browsers if (cfg.get(s) or {}).get("headless") is True]
     row("all", "Hidden browser windows", not headless,

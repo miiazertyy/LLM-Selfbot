@@ -51,7 +51,8 @@ for section in ("snapchat", "tiktok", "instagram", "x", "reddit"):
             block[part] = {"enabled": True}
     everything_on[section] = block
 rows = {r["name"]: r for r in stealth.report(everything_on)}
-for name in ("Careful mode", "Hidden browser windows", "Public actions", "Voice channels"):
+check("careful mode off is not a problem to point at: it is a choice (2026-11-06)", "Careful mode" not in rows)
+for name in ("Hidden browser windows", "Public actions", "Voice channels"):
     row = rows[name]
     check(f"{name}: is a problem here, with somewhere to go", row["ok"] is False and row["where"], str(row))
     missing = [p for p in row["where"] if p not in PATHS]
@@ -64,7 +65,7 @@ check("every public thing that is on has its own place", "tiktok/engage" in rows
       and "reddit/inbox" in rows["Public actions"]["where"])
 check("how many are on, and the places say which", re.fullmatch(r"\d+ are on", rows["Public actions"]["detail"]))
 check("each says what it is about, in its own words, not one sentence for all",
-      len({rows[n]["why"] for n in ("Careful mode", "Hidden browser windows", "Public actions")}) == 3
+      len({rows[n]["why"] for n in ("Hidden browser windows", "Public actions")}) == 2
       and all(len(rows[n]["why"]) < 70 for n in rows))
 off = stealth.report({**everything_on, "services": {"tiktok": {"enabled": False}}})
 off = {r["name"]: r for r in off}
@@ -90,14 +91,16 @@ hidden = by_id["stealth-hidden-browser-windows"]
 check("its places come through, and its own sentence", hidden["places"][:2] == ["snapchat/browser", "tiktok/browser"]
       and hidden["why"] == rows["Hidden browser windows"]["why"])
 check("named by what it is, so one put away stays put away when the rows above it change",
-      {"stealth-careful-mode", "stealth-public-actions", "stealth-voice-channels"} <= set(by_id))
+      {"stealth-public-actions", "stealth-voice-channels"} <= set(by_id) and "stealth-careful-mode" not in by_id)
 good = [c for c in checks if c["ok"]]
 check("one that passes has nothing to go to", good and all(c["places"] == [] and c["action"] is None for c in good))
 stealth.report = lambda: list(real_report({"bot": {"conservative": {"enabled": True}}}))
 twice = sr._doctor_checks(None)["checks"]
 stealth.report = real_report
-check("the same ids with careful mode on, when a Pace row joins them",
-      {"stealth-careful-mode", "stealth-public-actions"} <= {c["id"] for c in twice} and "stealth-pace" in {c["id"] for c in twice})
+on = {c["id"]: c for c in twice}
+check("careful mode on: one row that passes, saying until when and how much slower, in words",
+      on["stealth-careful-mode"]["ok"] is True and "stealth-pace" not in on
+      and "40% of the usual replies, waits 1.5× longer" in on["stealth-careful-mode"]["detail"])
 
 
 print("\n== on the page ==")

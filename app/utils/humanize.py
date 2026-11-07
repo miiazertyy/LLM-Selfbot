@@ -130,12 +130,14 @@ def add_typo(text: str, typo_chance: float = 0.03) -> str:
         return text
 
     typo_type = random.choice(["swap", "double", "miss"])
-    words = text.split()
-    if not words:
+    # Each word where it stands, so the typo changes that word and nothing else. Splitting the reply into words and
+    # joining them with spaces flattened every line break: a reply of several lines went out as one run-on line.
+    spans = [m.span() for m in re.finditer(r"\S+", text)]
+    if not spans:
         return text
 
-    word_idx = random.randint(0, len(words) - 1)
-    word = words[word_idx]
+    start, end = spans[random.randint(0, len(spans) - 1)]
+    word = text[start:end]
     if len(word) < 3:
         return text
 
@@ -147,8 +149,7 @@ def add_typo(text: str, typo_chance: float = 0.03) -> str:
     elif typo_type == "miss":
         word = word[:char_idx] + word[char_idx + 1:]
 
-    words[word_idx] = word
-    return " ".join(words)
+    return text[:start] + word + text[end:]
 
 
 def humanize(text: str, typo_chance: float = 0.03) -> str:

@@ -69,6 +69,16 @@ try:
         sys.exit(0)
 
     env = dict(os.environ, SNAP_DATA_DIR=str(work))
+    # The Chrome the app hands its runners (the system's, snapchat_bridge.py), not Puppeteer's own download in
+    # ~/.cache/puppeteer: a disk cleanup took that away (2026-11-06) and this stopped with "Could not find Chrome".
+    sys.path.insert(0, str(ROOT))
+    try:
+        from app.web.routes.system_routes import installed_browser
+        _browser = installed_browser()[1]
+    except Exception:
+        _browser = ""
+    if _browser and "PUPPETEER_EXECUTABLE_PATH" not in env:
+        env["PUPPETEER_EXECUTABLE_PATH"] = _browser
     proc = subprocess.run([node, "snapchat_dialogs.mjs"], cwd=work, env=env,
                           capture_output=True, text=True, timeout=180,
                           encoding="utf-8", errors="replace")

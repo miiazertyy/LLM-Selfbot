@@ -194,6 +194,11 @@ export const hiddenChecks = persisted<string[]>("hiddenChecks", [], true);
  * a build that knew other choices.
  */
 export const memoryView = persisted<Record<string, unknown>>("memoryView", {}, true);
+/**
+ * The pictures kept although they are the same picture ("Keep both" on the Pictures page's red warning), as
+ * "persona:idA|idB" with the two ids in order. Never warned about again; a third copy is a new pair, and is.
+ */
+export const keptDupes = persisted<string[]>("keptDupes", [], true);
 
 /**
  * Order of the Dashboard sections, top to bottom.
