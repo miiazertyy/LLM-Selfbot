@@ -29,8 +29,9 @@ from app.utils import ghhttp, github_signin, personas
 # shared settings file can never send anyone to another catalog.
 DEFAULT_REPO = "miiazertyy/LLM-Selfbot"
 DEFAULT_SITE = "https://miiazertyy.github.io/LLM-Selfbot"
-# The GitHub App's client ID. Public by design: the device flow needs no secret.
-DEFAULT_CLIENT_ID = ""
+# The GitHub App's client ID ("LLMSelfbot Community", github.com/apps/llmselfbot-community, made 2026-11-07). Public by
+# design: the device flow needs no secret.
+DEFAULT_CLIENT_ID = "Iv23lixnkoFP4wTqwn27"
 
 INDEX_TTL = 600
 META_TTL = 3600
