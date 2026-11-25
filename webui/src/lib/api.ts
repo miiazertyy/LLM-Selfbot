@@ -37,6 +37,8 @@ const SLOW_EXEMPT = [
   "/api/community",
   // Who is in each call, asked again and again behind the list of channels.
   "/api/chats/voice",
+  // The Ask box's question, and the list of changes, asked again and again while Settings is open.
+  "/api/apptools/",
 ];
 
 function watched(path: string, method: string): boolean {
@@ -845,6 +847,17 @@ export const api = {
   viaProxyStatus: () => request("/api/minecraft/viaproxy/status"),
   viaProxyInstall: () => request("/api/minecraft/viaproxy/install", { method: "POST" }),
   viaProxyUninstall: () => request("/api/minecraft/viaproxy/uninstall", { method: "POST" }),
+  aiAsk: (text: string, history: { role: string; text: string }[], persona = "") =>
+    request("/api/apptools/ask", { method: "POST", body: JSON.stringify({ text, history, persona }) }),
+  aiAskStatus: (id: string) => request(`/api/apptools/ask/${encodeURIComponent(id)}`),
+  aiChanges: () => request("/api/apptools/changes"),
+  aiUndo: (id: string) => request("/api/apptools/undo", { method: "POST", body: JSON.stringify({ id }) }),
+  aiConnect: () => request("/api/apptools/connect"),
+  mailboxes: () => request("/api/mail"),
+  mailboxAdd: (address: string, password: string, server = "") =>
+    request("/api/mail", { method: "POST", body: JSON.stringify({ address, password, server }) }),
+  mailboxTest: (index: number) => request(`/api/mail/${index}/test`, { method: "POST" }),
+  mailboxRemove: (index: number) => request(`/api/mail/${index}`, { method: "DELETE" }),
   sysInfo: () => request("/api/system/info"),
   restartApp: () => request("/api/system/restart", { method: "POST" }),
   network: () => request("/api/system/network"),

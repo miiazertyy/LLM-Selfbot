@@ -10,6 +10,8 @@
   import { RIPPLE_RINGS } from "./lib/backdrops";
   import { applyCustomFace } from "./lib/fonts";
   import Notices from "./lib/components/Notices.svelte";
+  import NeedsYou from "./lib/components/NeedsYou.svelte";
+  import SidebarPersona from "./lib/personas/SidebarPersona.svelte";
   import { toast, snowEnabled, motionEnabled, themeId, fontId, health, loadPrefs,
            logoLinkOff, bigPicture, bigPictureArriving, bigPictureCovering, setBigPicture,
            uiSound, uiVolume, settingsPath, settingsSection } from "./lib/stores";
@@ -192,6 +194,8 @@
       pageCache.set(key, m.default);
       // Ignore a load that finished after the user already moved on.
       if (route === key) page = { key, comp: m.default };
+    }).catch(() => {
+      if (route === key) toast("Could not open that page. Try again in a moment.", "err");
     });
   });
 
@@ -708,6 +712,9 @@
       {/if}
     </div>
 
+    <!-- The profile being worked on: one place to switch it, which Persona, Pictures, Memory and Settings follow. -->
+    <SidebarPersona {rail} />
+
     <nav bind:this={navEl} class="relative flex-1 overflow-y-auto overflow-x-hidden px-2 pb-2">
       <!-- Sliding highlight: travels between items with a spring, squashing
            slightly while in motion. -->
@@ -920,3 +927,4 @@
 <Snow enabled={$snowEnabled} />
 
 <Notices />
+<NeedsYou />

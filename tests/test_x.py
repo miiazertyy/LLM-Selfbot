@@ -364,5 +364,14 @@ else:
     print("\n".join("  " + line for line in proc.stdout.strip().splitlines()[-4:]))
     check("x_logic.mjs passes", proc.returncode == 0, (proc.stdout + proc.stderr)[-700:])
 
+print("\n== its own picture on its card (2026-11-11, the first real account) ==")
+# The picture was found but never saved: fetched with credentials from x.com, which X's picture host refuses ("*").
+xr = read("app/platforms/snapchat/x_runner.js")
+saver = xr.split("async function savePicture(", 1)[1].split("\n}\n", 1)[0]
+check("pictures are fetched without credentials, which X's picture host refuses",
+      'fetch(u, { credentials: "omit" })' in saver and '"include"' not in saver)
+check("and its own at 400x400, not the 48px one the page shows",
+      'replace(/_(normal|bigger|mini|x96|200x200)(\\.\\w+)$/, "_400x400$2")' in xr)
+
 print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
 sys.exit(1 if FAIL else 0)

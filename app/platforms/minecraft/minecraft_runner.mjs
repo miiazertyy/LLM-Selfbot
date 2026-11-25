@@ -39,6 +39,10 @@ const PASSWORD = process.env.MC_SERVER_PASSWORD || "";
 // Where the panel serves its live view (minecraft_routes.py), and how far it shows.
 const VIEW_PREFIX = `/api/minecraft/minecraft_${ACCOUNT}/view`;
 const VIEW_DISTANCE = String(process.env.MC_VIEW_DISTANCE || "6");
+// Its standing goal ("" waits to be told), whether it answers all of public chat, and the names it answers to there.
+const PLAY_GOAL = String(process.env.MC_PLAY_GOAL || "");
+const ANSWER_ALL = String(process.env.MC_ANSWER_ALL || "");
+const CALLED = String(process.env.MC_CALLED || "");
 const VIEW_FILE = path.join(DATA_DIR, "ipc", `mc_view${ACCOUNT === 1 ? "" : `_${ACCOUNT}`}.json`);
 // Version translation (ViaProxy), when this server needs it: { java, jar, dir, target, version }.
 let VIAPROXY = null;
@@ -164,6 +168,9 @@ function onHook(msg) {
     if (msg.on) say(msg.mind === "paused" ? "You took control. Its AI is paused." : "You took control.");
     else say(msg.why === "no word from the panel"
       ? "No word from the panel for a while, so it plays by itself again." : "You let go. It plays by itself again.");
+  } else if (msg.event === "playing") {
+    // Its own goal, started because it had none (agent_hooks.mjs keepPlaying).
+    say(`Playing on its own: ${msg.goal || ""}`);
   } else if (msg.event === "hook_error") {
     say(`The app's part of the bot failed: ${msg.error}`);
   }
@@ -437,6 +444,10 @@ async function start() {
   env.LSB_VIEW_PREFIX = VIEW_PREFIX;
   env.LSB_VIEW_DISTANCE = VIEW_DISTANCE;
   if (PASSWORD) env.LSB_SERVER_PASSWORD = PASSWORD;
+  // What it plays at by itself, and who it answers in public chat (agent_hooks.mjs keepPlaying, worthAnswering).
+  env.LSB_PLAY_GOAL = PLAY_GOAL;
+  env.LSB_ANSWER_ALL = ANSWER_ALL;
+  env.LSB_CALLED = CALLED;
   child = spawn(process.execPath, ["main.js"], {
     cwd: MC_DIR, env, stdio: ["ignore", "pipe", "pipe"], windowsHide: true,
     // Its own process group, so the agent process it starts goes when it does (on Windows the bridge's taskkill /T

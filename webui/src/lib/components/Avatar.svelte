@@ -303,7 +303,7 @@
       {#if name}
         <figcaption class="text-[13px] text-ink/80">{name}</figcaption>
       {/if}
-      <span class="text-[11px] text-faint">Hold on it to look closer and scroll to zoom. Click outside it to close, right click to copy.</span>
+      <span class="text-[11px] text-faint">Hold to look closer, scroll to zoom, right click to copy.</span>
     </figure>
     {#if loupe}
       <!-- The loupe: the picture under the pointer, magnified, in a round glass. -->

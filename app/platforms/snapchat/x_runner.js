@@ -152,7 +152,9 @@ async function savePicture(url, stem) {
   try {
     const page = await bot.outPage();
     const got = await page.evaluate(async (u) => {
-      const r = await fetch(u, { credentials: "include" });
+      // No credentials: X's picture host answers any site with "*", which a browser refuses for a request carrying
+      // them, so every picture failed to save (2026-11-11).
+      const r = await fetch(u, { credentials: "omit" });
       if (!r.ok) return null;
       const b = await r.arrayBuffer();
       if (b.byteLength < 100 || b.byteLength > 3e6) return null;
@@ -190,11 +192,15 @@ async function recordIdentity() {
   };
   // The picture is fetched again only when its own path changed, not when its signed address did.
   const pathOf = (u) => { try { return new URL(u).pathname; } catch { return u || ""; } };
-  if (me.avatar && pathOf(me.avatar) !== pathOf(was.picture_url)) {
-    const file = await savePicture(me.avatar, `identity_x_${ACCOUNT}`);
+  // The page shows the 48px one: the card wants it big (X names its sizes in the file's name).
+  const big = me.avatar ? me.avatar.replace(/_(normal|bigger|mini|x96|200x200)(\.\w+)$/, "_400x400$2") : "";
+  if (me.avatar && pathOf(big) !== pathOf(was.picture_url)) {
+    let used = big;
+    let file = await savePicture(big, `identity_x_${ACCOUNT}`);
+    if (!file && big !== me.avatar) { used = me.avatar; file = await savePicture(me.avatar, `identity_x_${ACCOUNT}`); }
     if (file) {
       const dest = path.join(DATA_DIR, "config", path.basename(file));
-      try { fs.copyFileSync(file, dest); out.picture = path.basename(dest); out.picture_url = me.avatar; }
+      try { fs.copyFileSync(file, dest); out.picture = path.basename(dest); out.picture_url = used; }
       catch { /* keep the old one */ }
     }
   }

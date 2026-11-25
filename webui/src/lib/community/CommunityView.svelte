@@ -101,7 +101,7 @@
       <div class="cv-empty" use:chime={"land"}>
         <Icon name="globe" size={22} />
         <b>The community isn't open yet.</b>
-        <span>Its catalog on GitHub isn't there. Check again later.</span>
+        <span>Check again later.</span>
       </div>
     {:else}
       <div class="cv-stats domino" use:domino={{ step: 80, sound: "key", level: 0.45 }}>
@@ -136,12 +136,11 @@
           {/each}
         </div>
       {:else if all.length}
-        <p class="cv-none">Nothing matches. Try fewer words or tags.</p>
+        <p class="cv-none">Nothing matches.</p>
       {:else}
         <div class="cv-empty" use:chime={"land"}>
           <Icon name="sparkle" size={22} />
           <b>No profiles yet.</b>
-          <span>Be the first: share one of yours.</span>
           {#if home.sharing}<Button size="sm" onclick={() => { play("open"); onshare("*"); }}><Icon name="upload" size={12} />Share one</Button>{/if}
         </div>
       {/if}

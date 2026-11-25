@@ -16,7 +16,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 
-import RedditBot, { SEL, chatIdFor, userOf, cleanUser, CHAT_ID, postUrl, readPostsInPage }
+import RedditBot, { SEL, chatIdFor, userOf, cleanUser, CHAT_ID, CHAT_HOME, postUrl, readPostsInPage }
   from "./redditbot.js";
 import { createCore, createBudget, keyed, readJson, writeJson, delay } from "./runner_core.js";
 import { SiteWatch, applySiteFixes } from "./sitewatch.js";
@@ -181,15 +181,38 @@ async function savePicture(chatId, url) {
   }
 }
 
-/** Who this account is, for its card: its name and its picture. */
+/** Who this account is, for its card: its name and its picture. The picture is fetched again only when its address
+ *  changed, and kept beside the file as identity_reddit_<n>.<ext>, which is what the card is served
+ *  (status_routes.py). It never was: the card had the Reddit mark instead (2026-11-11). */
 async function recordIdentity() {
   identityAt = Date.now();
   const info = await bot.profileInfo(USERNAME).catch(() => null);
   if (!info) return;
-  writeJson(IDENTITY_FILE, {
+  const was = readJson(IDENTITY_FILE, {});
+  const out = {
     username: USERNAME, name: `u/${USERNAME}`, karma: info.karma || 0, years: info.years || 0,
+    picture: was.picture || "", picture_url: was.picture_url || "",
     at: Math.floor(Date.now() / 1000),
-  });
+  };
+  let host = "";
+  try { host = new URL(info.avatar || "").hostname; } catch { host = ""; }
+  if (info.avatar && PICTURE_HOSTS.test(host) && info.avatar !== was.picture_url) {
+    const saved = await bot.captureMedia(info.avatar).catch(() => "");
+    if (saved) {
+      const ext = path.extname(saved).toLowerCase() === ".png" ? "png" : "jpg";
+      const cfg = path.join(DATA_DIR, "config");
+      try {
+        // The other kind from before goes, so the card never shows an old one.
+        for (const e of ["png", "jpg", "webp"]) {
+          if (e !== ext) fs.rmSync(path.join(cfg, `identity_reddit_${ACCOUNT}.${e}`), { force: true });
+        }
+        fs.renameSync(saved, path.join(cfg, `identity_reddit_${ACCOUNT}.${ext}`));
+        out.picture = `identity_reddit_${ACCOUNT}.${ext}`;
+        out.picture_url = info.avatar;
+      } catch { /* the old one will do */ }
+    }
+  }
+  writeJson(IDENTITY_FILE, out);
 }
 
 // ── Reading a chat ──────────────────────────────────────────────────────────
@@ -841,7 +864,7 @@ async function main() {
       await checkCaptcha();
       if (RELOAD_MS > 0 && Date.now() > reloadDue && !pending.size) {
         reloadDue = Date.now() + RELOAD_MS * (0.75 + Math.random() * 0.5);
-        await bot.goto("https://chat.reddit.com/", bot.page);
+        await bot.goto(CHAT_HOME, bot.page);
         if (!(await bot.isLogged()) && !(await signInNow())) { await waitSignedOut(); continue; }
         await watchList();
         await reportHealth();
@@ -857,7 +880,7 @@ async function main() {
         if (++listFailures >= 3) {
           console.warn(`${TAG} Its chats would not read three times over (${e.message}); reloading.`);
           listFailures = 0;
-          await bot.goto("https://chat.reddit.com/", bot.page).catch(() => {});
+          await bot.goto(CHAT_HOME, bot.page).catch(() => {});
           await reportHealth();
         }
         await drainWindow(core.jitteredPoll());

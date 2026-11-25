@@ -25,7 +25,7 @@
     {/each}
   </ul>
 {:else}
-  <p class="sr-none">Nothing to change. It talks with your settings.</p>
+  <p class="sr-none">No settings of its own.</p>
 {/if}
 
 <style>

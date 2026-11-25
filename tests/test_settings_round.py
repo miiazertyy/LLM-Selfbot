@@ -74,14 +74,18 @@ check("the clock and the line under it have a width of their own, so the row doe
 
 print("\n== the wait chart ==")
 waits = read("lib/components/WaitTimes.svelte")
-check("each chance is written in its head", 'class="wt-num"' in waits and "const HEAD = 12.5;" in waits)
-check("no more pills lifted above the heads", "lifts" not in waits and "wt-pct > button" not in waits)
-check("a head never sits down on the axis", "const LOWEST = BASE - HEAD - 3;" in waits and "Math.min(LOWEST, yOf(share))" in waits)
-check("a drag moves a head from where it was taken hold of",
-      "timeAt(from.hx + p.x - from.px)" in waits and "from.share + ((from.py - p.y) / (BASE - TOP)) * tallest" in waits)
-check("a click on a head, not a drag, types its chance",
-      "const clicked = !from.moved && hold.part === \"all\";" in waits and 'if (clicked) edit(k, "share");' in waits)
-check("a shaky click is still a click", "Math.hypot(p.x - from.px, p.y - from.py) < 3" in waits)
+# 2026-11-11, rebuilt as rows: neighbours' heads and the times staggered under the axis piled on each other.
+check("each wait on a row of its own, so nothing can sit on anything else", '{#each rows as w, i (w.key)}' in waits
+      and ".wt-grid {" in waits and "grid-template-columns:" in waits.split(".wt-grid {")[1][:200])
+check("its chance has its own meter and number", 'class="wt-odds-fill"' in waits and 'onclick={() => edit(w.key, "share")}' in waits)
+check("a bar moves from where it was taken hold of, a range keeping its span",
+      "timeAt(h.f0 + d)" in waits and "span(timeAt(h.f0 + d), timeAt(h.f1 + d))" in waits)
+check("the row under the pointer stays there until it is let go", "frozen = rows.map((r) => r.key);" in waits)
+check("a time or a chance is typed from a click on it", 'onclick={() => edit(w.key, "time")}' in waits)
+check("a shaky click is still a click", "Math.abs(e.clientX - h.px) < 3" in waits)
+check("added with a button, not a click anywhere on the chart", 'class="wt-add" onclick={add}' in waits
+      and "pressScale" not in waits)
+check("no paragraph saying how", "wt-hint" not in waits)
 check("the empty server table shows the DM waits, faintly, in one small line",
       "fallback" in waits and 'class="wt-ghost"' in waits and ".wt-empty svg.wt-ghost {" in waits
       and "display: inline-flex;" in waits.split(".wt-empty {")[1][:200])

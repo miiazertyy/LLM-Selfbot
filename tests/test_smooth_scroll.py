@@ -63,9 +63,8 @@ check("the glide asks it, and only it", "const wanted = () => get(smoothScroll);
 into = ss[ss.index("export function glideInto("):ss.index("function onWheel(")]
 check("a glide into view is apart from it: it stands in for a scroll a page asks for, so it goes by Animations",
       "if (!get(motionEnabled)) {" in into and "wanted()" not in into)
-check("in Settings, Appearance, Interface, between Animations and Cursor snow, in plain words",
+check("in Settings, Appearance, Interface, between Animations and Cursor snow",
       ap.index(">Animations<") < ap.index(">Smooth scrolling<") < ap.index(">Cursor snow<")
-      and "The mouse wheel glides instead of jumping." in ap
       and '<Toggle checked={$smoothScroll} name="Smooth scrolling" onchange={(v) => smoothScroll.set(v)} />' in ap)
 check("and in the command palette", 'smooth ? "Turn smooth scrolling off" : "Turn smooth scrolling on"' in cp)
 

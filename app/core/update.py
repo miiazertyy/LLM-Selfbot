@@ -30,7 +30,7 @@ import time
 import urllib.request
 from pathlib import Path
 
-from app.utils import device
+from app.utils import device, tls
 
 API = f"https://api.github.com/repos/{device.REPO}/releases/latest"
 
@@ -56,10 +56,11 @@ def _key(name: str, how: str) -> str:
 
 
 def latest(timeout: float = 10) -> dict:
-    """The latest release: its tag, page, notes and files."""
+    """The latest release: its tag, page, notes and files. Checked against Windows' roots and certifi's together
+    (app/utils/tls.py): with Windows' alone, a PC that had not yet needed GitHub's root could not update."""
     req = urllib.request.Request(API, headers={"Accept": "application/vnd.github+json",
                                                "User-Agent": "LLMSelfbot"})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
+    with tls.opener().open(req, timeout=timeout) as r:
         data = json.loads(r.read())
     return {
         "tag": data.get("tag_name", ""),
@@ -134,7 +135,7 @@ def download(asset: dict, dest: Path, progress=None) -> Path:
     done = 0
     last = -1
     req = urllib.request.Request(asset["url"], headers={"User-Agent": "LLMSelfbot"})
-    with urllib.request.urlopen(req, timeout=60) as r, open(part, "wb") as f:
+    with tls.opener().open(req, timeout=60) as r, open(part, "wb") as f:
         while True:
             block = r.read(1 << 16)
             if not block:
@@ -158,9 +159,16 @@ def download(asset: dict, dest: Path, progress=None) -> Path:
     return dest
 
 
-def _relaunch_env(port) -> dict:
+def relaunch_env(port) -> dict:
+    """What a new copy of the app starts with, when this copy starts it."""
     env = {k: v for k, v in os.environ.items() if k != "LLMSELFBOT_CHILD"}
     env["LLMSELFBOT_RESTART"] = "1"      # wait for this one's lock, not give up
+    # A new copy, not one of this copy's workers. Left alone, PyInstaller runs it from this copy's unpack folder, and
+    # this copy's launcher deletes that folder as soon as this copy closes: the new app loses its pages and files.
+    env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+    own = getattr(sys, "_MEIPASS", None)
+    if own:      # binaries.ensure_path put this copy's folder on PATH, and that folder is about to go
+        env["PATH"] = os.pathsep.join(p for p in env.get("PATH", "").split(os.pathsep) if not p.startswith(own))
     if port:
         env["SELFBOT_PORT"] = str(port)
     return env
@@ -192,7 +200,7 @@ def _replace_and_restart(new: Path, supervisor, port):
         os.chmod(new, 0o755)
         os.replace(new, exe)          # the running one keeps its open copy
     _stop(supervisor)
-    subprocess.Popen([str(exe)], cwd=str(exe.parent), env=_relaunch_env(port), close_fds=True,
+    subprocess.Popen([str(exe)], cwd=str(exe.parent), env=relaunch_env(port), close_fds=True,
                      **quiet_kwargs())
     os._exit(0)
 
@@ -219,7 +227,7 @@ def _installer_and_restart(setup: Path, supervisor, port):
     _stop(supervisor)
     subprocess.Popen(["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
                       "-WindowStyle", "Hidden", "-File", str(script)],
-                     cwd=str(setup.parent), env=_relaunch_env(port), close_fds=True, **quiet_kwargs())
+                     cwd=str(setup.parent), env=relaunch_env(port), close_fds=True, **quiet_kwargs())
     os._exit(0)
 
 
@@ -247,7 +255,7 @@ def run(supervisor=None, port=None, wait=False) -> dict:
     try:
         release = latest()
     except Exception as exc:
-        return {"ok": False, "reason": f"Could not reach GitHub: {exc}"}
+        return {"ok": False, "reason": tls.explain(exc) or f"Could not reach GitHub: {exc}"}
     p = plan(release, name, how)
     if not p["ready"]:
         return {"ok": False, "method": method, "reason": p["why"]}
@@ -280,7 +288,7 @@ def run(supervisor=None, port=None, wait=False) -> dict:
             else:
                 _replace_and_restart(dest, supervisor, port)
         except Exception as exc:
-            _say(f"The update failed: {exc}", "error")
+            _say(f"The update failed: {tls.explain(exc) or exc}", "error")
         finally:
             _busy.release()
 

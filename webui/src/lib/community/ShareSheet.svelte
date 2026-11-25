@@ -4,8 +4,15 @@
    * details; what goes with it (the pictures and videos you pick, the settings you tick); and a check that shows
    * exactly what becomes public, says what never leaves, and points out anything to look at. Then sign in with
    * GitHub if you haven't, and send. The app follows it until it is live, or says why not.
+   *
+   * In the page, not a window over it: it grows out of the profile's card (or whatever was pressed) where it stands,
+   * and goes back into it when put away, the way New profile does. The caller mounts it only while it is open.
+   *
+   * A step that can't go on yet says why where it matters: what is missing is red, with a word under it, and pressing
+   * the button anyway sounds no, pulses what is missing and puts the cursor in it.
    */
-  import Modal from "../components/Modal.svelte";
+  import { onDestroy, onMount } from "svelte";
+  import { get } from "svelte/store";
   import Button from "../components/Button.svelte";
   import Icon from "../components/Icon.svelte";
   import Toggle from "../components/Toggle.svelte";
@@ -13,17 +20,20 @@
   import { api } from "../api";
   import { visiblePoll } from "../poll";
   import { play } from "../uisound";
-  import { toast } from "../stores";
+  import { motionEnabled, toast } from "../stores";
+  import { glideInto } from "../smoothscroll";
   import { openGitHub } from "../window";
   import RiskText from "./RiskText.svelte";
   import SignInPanel from "./SignInPanel.svelte";
   import { requestLine, sizeText, SLUG, slugFrom, valueText } from "./logic";
   import type { Persona } from "../personas/logic";
 
-  let { pid = $bindable(""), personas = [], onsent }: {
+  let { pid = $bindable(""), personas = [], from = null, onsent }: {
     /** The profile to share; "*" to pick one first. */
     pid?: string;
     personas?: Persona[];
+    /** Where what was pressed sits (its card, or the button): it grows out of there, and goes back into it. */
+    from?: DOMRect | null;
     onsent?: () => void;
   } = $props();
 
@@ -52,8 +62,8 @@
   let result = $state<{ text: string; tone: string } | null>(null);
   let signedIn = $state(false);
   let stopFollow: (() => void) | null = null;
+  let root: HTMLElement | null = $state(null);
 
-  const open = $derived(!!pid);
   const target = $derived(pid === "*" ? "" : pid);
   const personaArg = $derived(target === "default" ? "" : target);
   const pickable = $derived(personas.filter((p) => !p.community));
@@ -81,11 +91,42 @@
     checked = false; sent = null; result = null; stopFollow?.(); stopFollow = null;
   }
 
+  // ── Growing out of what was pressed, and going back into it (NewPersona.svelte does the same) ──
+  const EASE = "cubic-bezier(0.22, 1, 0.36, 1)";
+  const WHOLE = "inset(0px 0px 0px 0px round 22px)";
+
+  /** What was pressed, as a cut-out of this panel moved to sit where it was. */
+  function fromFrame() {
+    if (!root || !from) return null;
+    const to = root.getBoundingClientRect();
+    const left = Math.max(0, from.left - to.left);
+    const right = Math.max(0, to.right - from.right);
+    const bottom = Math.max(0, to.height - Math.min(from.height, to.height));
+    return { clipPath: `inset(0px ${right}px ${bottom}px ${left}px round 22px)`, transform: `translateY(${from.top - to.top}px)` };
+  }
+
+  onMount(() => {
+    const frame = get(motionEnabled) ? fromFrame() : null;
+    if (frame) root?.animate([{ ...frame, opacity: 0.6 }, { clipPath: WHOLE, transform: "none", opacity: 1 }], { duration: 460, easing: EASE });
+    // Only as far as it takes to see it: the page is not moved for something already in view.
+    glideInto(root, { block: "nearest" });
+  });
+  onDestroy(() => stopFollow?.());
+
+  let shutting = false;
   function close() {
+    if (shutting) return;
     stopFollow?.();
     stopFollow = null;
-    pid = "";
-    loadedFor = "";
+    const frame = get(motionEnabled) ? fromFrame() : null;
+    if (!frame || !root) {
+      pid = "";
+      return;
+    }
+    shutting = true;
+    const leaving = root.animate([{ clipPath: WHOLE, transform: "none", opacity: 1 }, { ...frame, opacity: 0 }],
+                                 { duration: 240, easing: "cubic-bezier(0.4, 0, 0.7, 0.4)", fill: "forwards" });
+    leaving.onfinish = () => (pid = "");
   }
 
   function choose(p: Persona) {
@@ -201,10 +242,48 @@
 
   const STEPS = ["Details", "What goes with it", "Check and send"];
   const slugOk = $derived(!!form && SLUG.test(form.slug) && form.slug.length >= 3 && form.slug.length <= 32);
-  const canNext = $derived(!!form && form.name.trim().length > 0 && slugOk && form.author.trim().length >= 2);
+
+  // ── What is in the way ──────────────────────────────────────────────────────
+  // Red where it is, with a word under it, for as long as it blocks the step: nothing to guess at.
+  const nameBad = $derived(!!form && !form.name.trim());
+  const slugBad = $derived(!!form && form.action !== "update" && !slugOk);
+  const authorBad = $derived(!!form && form.author.trim().length < 2);
+  const canNext = $derived(!!form && !nameBad && !slugBad && !authorBad);
+  /** The last step: problems in the text, the box to tick, a GitHub sign-in. "" when it can go. */
+  const sendBlock = $derived(!preview ? "" : !preview.ready ? "problems" : preview.needs_check && !checked ? "check"
+                             : !signedIn ? "signin" : "");
+
+  let nudging = $state(false);
+  let nudgeTimer = 0;
+  /** The button pressed while something is missing: a no, what is missing pulses, and the cursor goes to it. */
+  function blocked() {
+    play("err", { level: 0.55 });
+    nudging = false;
+    clearTimeout(nudgeTimer);
+    requestAnimationFrame(() => {
+      nudging = true;
+      nudgeTimer = window.setTimeout(() => (nudging = false), 700);
+    });
+    // The first thing in the way, top to bottom: the cursor into its box, or onto its switch, or onto it.
+    const box = root?.querySelector<HTMLElement>(".is-bad");
+    const first = box?.querySelector<HTMLElement>("input:not(:disabled), button") ?? box;
+    first?.focus({ preventScroll: true });
+    glideInto(box, { block: "nearest" });
+  }
+
+  const title = $derived(form ? (form.action === "update" ? `Update ${form.name} in the community` : `Share ${form.name}`)
+                         : "Share a profile");
 </script>
 
-<Modal {open} wide title={form ? (form.action === "update" ? `Update ${form.name} in the community` : `Share ${form.name}`) : "Share a profile"} onclose={close}>
+<svelte:window onkeydown={(e) => { if (e.key === "Escape" && !e.defaultPrevented) close(); }} />
+
+<section class="sh glass" class:is-nudging={nudging} bind:this={root} aria-label={title}
+         style="--sh-c: {form?.color || 'var(--color-accent)'}">
+  <header class="sh-head">
+    <h3>{title}</h3>
+    <button type="button" class="sh-x" aria-label="Close" title="Close" data-sound="self"
+            onclick={() => { play("off"); close(); }}><Icon name="close" size={13} /></button>
+  </header>
   {#if pid === "*"}
     <p class="sh-say">Which of your profiles?</p>
     <div class="sh-pick">
@@ -213,7 +292,7 @@
           <PersonaOrb {p} size={40} /><span><b>{p.name}</b><small>{p.shared ? `Shared as ${p.shared.slug}` : p.line || "Not shared yet"}</small></span>
         </button>
       {:else}
-        <p class="sh-note">Your profiles that came from the community can't be shared again.</p>
+        <p class="sh-note">Profiles from the community can't be shared again.</p>
       {/each}
     </div>
   {:else if error}
@@ -229,19 +308,22 @@
 
     {#if step === 0}
       <div class="sh-grid">
-        <label class="sh-field"><span>Name</span>
-          <input value={form.name} oninput={(e) => setName((e.target as HTMLInputElement).value)} maxlength="40" /></label>
-        <label class="sh-field"><span>Short name</span>
-          <input value={form.slug} disabled={form.action === "update"} maxlength="32" class:is-bad={!slugOk}
+        <label class="sh-field" class:is-bad={nameBad}><span>Name</span>
+          <input value={form.name} oninput={(e) => setName((e.target as HTMLInputElement).value)} maxlength="40"
+                 aria-invalid={nameBad} />
+          {#if nameBad}<small>Give it a name.</small>{/if}</label>
+        <label class="sh-field" class:is-bad={slugBad}><span>Short name</span>
+          <input value={form.slug} disabled={form.action === "update"} maxlength="32" aria-invalid={slugBad}
                  oninput={(e) => { slugEdited = true; form!.slug = (e.target as HTMLInputElement).value.toLowerCase(); }} />
-          <small>{form.action === "update" ? "It keeps its short name." : "Letters, numbers and dashes. Its address in the catalog."}</small></label>
+          <small>{form.action === "update" ? "It keeps its short name."
+            : slugBad ? "3 to 32 letters, numbers or dashes." : "Letters, numbers and dashes. Its address in the catalog."}</small></label>
         <label class="sh-field is-wide"><span>One line about it</span>
           <input bind:value={form.tagline} maxlength="90" placeholder="Night owl who texts in lowercase" /></label>
         <label class="sh-field is-wide"><span>More about it (optional)</span>
           <textarea bind:value={description} maxlength="600" rows="3"></textarea></label>
-        <label class="sh-field"><span>Shown as made by</span>
-          <input bind:value={form.author} maxlength="32" placeholder="A name you pick" />
-          <small>Not your GitHub name.</small></label>
+        <label class="sh-field" class:is-bad={authorBad}><span>Shown as made by</span>
+          <input bind:value={form.author} maxlength="32" placeholder="A name you pick" aria-invalid={authorBad} />
+          <small>{authorBad ? "Pick a name to show, 2 letters at least." : "Not your GitHub name."}</small></label>
         {#if form.action === "update"}
           <label class="sh-field"><span>What changed</span>
             <input bind:value={note} maxlength="200" placeholder="Calmer moods" /></label>
@@ -253,11 +335,14 @@
             {/each}
           </div></div>
         <div class="sh-field is-wide sh-row"><Toggle bind:checked={form.adult} label="For adults (18+)" size="sm" />
-          <small>Hidden in the catalog unless someone asks to see 18+.</small></div>
+          <small>Hidden unless people choose to see 18+.</small></div>
       </div>
       <div class="sh-actions">
         <Button kind="ghost" size="sm" onclick={() => { play("off"); close(); }}>Cancel</Button>
-        <Button size="sm" onclick={() => go(1)} disabled={!canNext}>Next<Icon name="chevron" size={12} /></Button>
+        <!-- Not disabled: pressed while something is missing, it says what. -->
+        <span class="sh-go" class:is-blocked={!canNext} data-sound="self">
+          <Button size="sm" onclick={() => (canNext ? go(1) : blocked())}>Next<Icon name="chevron" size={12} /></Button>
+        </span>
       </div>
     {:else if step === 1}
       <h4 class="sh-h">Pictures and videos <small>{pics} of {form.limits.pictures} pictures, {vids} of {form.limits.videos} videos (up to {form.limits.video_seconds | 0} s each)</small></h4>
@@ -273,9 +358,9 @@
           {/each}
         </div>
       {:else}
-        <p class="sh-note">It has no pictures or videos. That's fine.</p>
+        <p class="sh-note">No pictures or videos.</p>
       {/if}
-      <h4 class="sh-h">Settings that come with it <small>Who it is and how it talks, nothing else</small></h4>
+      <h4 class="sh-h">Settings that come with it</h4>
       <ul class="sh-settings">
         {#each form.settings as s (s.key)}
           <li><Toggle checked={ticked.includes(s.key)} size="sm" name={s.label} onchange={(v) => toggleSetting(s.key, v)} />
@@ -296,23 +381,28 @@
       {#if checking || !preview}
         <p class="sh-note">Checking it</p>
       {:else}
-        <p class="sh-public"><Icon name="globe" size={12} />This goes public. Everything you send is public on GitHub.</p>
+        <p class="sh-public"><Icon name="globe" size={12} />Everything you send is public on GitHub.</p>
         <div class="sh-summary">
           <b>{preview.public.meta.name}</b> by {preview.public.meta.author}
           <span>{preview.public.words} words · {preview.public.settings.length} settings · {preview.public.media.length} pictures and videos{preview.public.avatar ? " · its face" : ""}</span>
         </div>
         <div class="sh-text"><RiskText segments={preview.segments} /></div>
         {#if preview.problems.length}
-          <ul class="sh-problems">{#each preview.problems as p (p)}<li><Icon name="close" size={11} />{p}</li>{/each}</ul>
+          <ul class="sh-problems is-bad" tabindex="-1">{#each preview.problems as p (p)}<li><Icon name="close" size={11} />{p}</li>{/each}</ul>
         {/if}
         {#if preview.warnings.length}
           <ul class="sh-warnings">{#each preview.warnings as w (w)}<li><Icon name="alert" size={11} />{w}</li>{/each}</ul>
         {/if}
         {#if preview.needs_check}
-          <div class="sh-row"><Toggle bind:checked={checked} size="sm" label="I checked the highlighted parts" /></div>
+          <div class="sh-row sh-confirm" class:is-bad={!checked}>
+            <Toggle bind:checked={checked} size="sm" label="I checked the highlighted parts" />
+            {#if !checked}<small>Read the highlighted parts first.</small>{/if}
+          </div>
         {/if}
         {#if !signedIn}
-          <SignInPanel onsignedin={() => (signedIn = true)} />
+          <div class="sh-signin" class:is-bad={sendBlock === "signin"} tabindex="-1">
+            <SignInPanel onsignedin={() => (signedIn = true)} />
+          </div>
         {/if}
         {#if result}
           <p class="sh-result is-{result.tone}">{result.text}
@@ -323,18 +413,62 @@
           {#if sent}
             <Button size="sm" onclick={() => { play("off"); close(); }}>Done</Button>
           {:else}
-            <Button size="sm" onclick={send} loading={sending}
-                    disabled={!preview.ready || !signedIn || (preview.needs_check && !checked)}>
-              <Icon name="send" size={12} />{preview.action === "update" ? "Send the update" : "Share it"}
-            </Button>
+            <span class="sh-go" class:is-blocked={!!sendBlock} data-sound="self">
+              <Button size="sm" onclick={() => (sendBlock ? blocked() : send())} loading={sending}>
+                <Icon name="send" size={12} />{preview.action === "update" ? "Send the update" : "Share it"}
+              </Button>
+            </span>
           {/if}
         </div>
       {/if}
     {/if}
   {/if}
-</Modal>
+</section>
 
 <style>
+  /* A card in the page, in the profile's own colour: no dimmed page behind it, no window frame. */
+  .sh {
+    position: relative;
+    grid-column: 1 / -1;
+    padding: 16px 20px 18px;
+    border-radius: 22px;
+    background-image:
+      radial-gradient(70% 90% at 0% 0%, color-mix(in srgb, var(--sh-c) 11%, transparent), transparent 70%),
+      radial-gradient(60% 80% at 100% 100%, color-mix(in srgb, var(--sh-c) 7%, transparent), transparent 70%);
+  }
+  .sh-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+  .sh-head h3 { margin: 0; font-size: 16px; font-weight: 650; color: var(--color-ink); }
+  .sh-x { display: grid; width: 30px; height: 30px; place-items: center; border-radius: 999px; color: var(--color-faint);
+          transition: background-color 0.15s ease, color 0.15s ease, transform 0.3s var(--jelly); }
+  .sh-x:hover { color: var(--color-ink); background: rgb(255 255 255 / 0.07); }
+  .sh-x:active { transform: scale(0.9); }
+
+  /* What is in the way: red where it is, a word under it, and a pulse when the button is pressed anyway. */
+  .sh-field.is-bad > span { color: var(--color-bad); }
+  .sh-field.is-bad input { background: color-mix(in srgb, var(--color-bad) 9%, rgb(0 0 0 / 0.22));
+                           box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-bad) 65%, transparent); }
+  .sh-field.is-bad input:focus { box-shadow: inset 0 0 0 1px var(--color-bad), 0 0 0 3px color-mix(in srgb, var(--color-bad) 22%, transparent); }
+  .sh-field.is-bad small { color: color-mix(in srgb, var(--color-bad) 85%, var(--color-ink)); }
+  .sh-confirm { padding: 8px 10px; border-radius: 12px; margin-top: 10px; }
+  .sh-confirm small { font-size: 11.5px; color: var(--color-faint); }
+  .sh-confirm.is-bad { background: color-mix(in srgb, var(--color-bad) 9%, transparent);
+                       box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-bad) 45%, transparent); }
+  .sh-confirm.is-bad small { color: color-mix(in srgb, var(--color-bad) 85%, var(--color-ink)); }
+  .sh-signin { margin-top: 10px; border-radius: 14px; outline: none; }
+  .sh-signin.is-bad { box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-bad) 55%, transparent); }
+  .sh-problems { outline: none; }
+  .sh.is-nudging .sh-field.is-bad input, .sh.is-nudging .sh-confirm.is-bad, .sh.is-nudging .sh-signin.is-bad,
+  .sh.is-nudging .sh-problems.is-bad { animation: sh-nudge 0.6s ease; }
+  @keyframes sh-nudge {
+    0% { transform: none; }
+    15%, 55% { transform: translateX(-5px); }
+    35%, 75% { transform: translateX(5px); }
+    100% { transform: none; }
+  }
+  .sh-go { display: inline-flex; transition: opacity 0.2s ease; }
+  .sh-go.is-blocked { opacity: 0.5; }
+  .sh-go.is-blocked:hover { opacity: 0.65; }
+
   .sh-say { margin: 0 0 10px; font-size: 13px; color: var(--color-muted); }
   .sh-pick { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
   .sh-pick-btn { display: flex; align-items: center; gap: 10px; padding: 10px; border-radius: 14px; text-align: left;
@@ -358,7 +492,6 @@
   .sh-field input, .sh-field textarea { padding: 8px 11px; border-radius: 11px; font-size: 13px; color: var(--color-ink);
                                         background: rgb(0 0 0 / 0.22); box-shadow: inset 0 0 0 1px var(--color-edge); outline: none; resize: vertical; }
   .sh-field input:focus, .sh-field textarea:focus { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 60%, transparent); }
-  .sh-field input.is-bad { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-bad) 60%, transparent); }
   .sh-field input:disabled { opacity: 0.6; }
   .sh-row { display: flex; flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: flex-start; gap: 10px; }
   .sh-tags { display: flex; flex-wrap: wrap; gap: 5px; }
@@ -411,4 +544,6 @@
   :global(:root[data-motion="off"]) .sh-tile, :global(:root[data-motion="off"]) .sh-tile img,
   :global(:root[data-motion="off"]) .sh-check, :global(:root[data-motion="off"]) .sh-tag,
   :global(:root[data-motion="off"]) .sh-steps li, :global(:root[data-motion="off"]) .sh-pick-btn { transition: none; }
+  :global(:root[data-motion="off"]) .sh-field.is-bad input, :global(:root[data-motion="off"]) .sh-confirm,
+  :global(:root[data-motion="off"]) .sh-signin, :global(:root[data-motion="off"]) .sh-problems { animation: none; }
 </style>

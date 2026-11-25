@@ -254,15 +254,15 @@ keys = {f["key"] for f in schema.CONFIG_SCHEMA}
 check("both settings are in the schema, with telling me as the default",
       {"discord.gifts.mode", "discord.gifts.only_friends"} <= keys
       and next(f for f in schema.CONFIG_SCHEMA if f["key"] == "discord.gifts.mode")["default"] == "notify")
-check("each says what it does, and is named", all(
-    descriptions.DESCRIPTIONS.get(k) and descriptions.label_for(k) and not descriptions.is_hidden(k)
+check("each is named, with a line where the name doesn't say it all", all(
+    k in descriptions.DESCRIPTIONS and descriptions.label_for(k) and not descriptions.is_hidden(k)
     for k in ("discord.gifts.mode", "discord.gifts.only_friends")))
 smap = read("lib/settingsmap.ts")
 check("on their own page under Discord", 'id: "gifts",' in smap and 'name: "Nitro gifts",' in smap
       and '"discord.gifts.mode"' in smap and '"discord.gifts.only_friends"' in smap)
-check("the three choices are plain words", '{ value: "notify", label: "Tell me"' in read("pages/Settings.svelte")
-      and '{ value: "accept", label: "Accept it"' in read("pages/Settings.svelte")
-      and '{ value: "off", label: "Leave them"' in read("pages/Settings.svelte"))
+check("the three choices are plain words", '{"value":"notify","label":"Tell me"' in app_src("resources/setting_choices.json")
+      and '{"value":"accept","label":"Accept it"' in app_src("resources/setting_choices.json")
+      and '{"value":"off","label":"Leave them"' in app_src("resources/setting_choices.json"))
 cfg = app_src("resources/config.yaml")
 check("and a fresh install has them", "  gifts:" in cfg and "    mode: notify" in cfg
       and "    only_friends: false" in cfg)

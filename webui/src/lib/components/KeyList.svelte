@@ -177,7 +177,7 @@
           </div>
         {/if}
       {:else}
-        <p class="py-3 text-[12px] text-faint">None yet, add one below.</p>
+        <p class="py-3 text-[12px] text-faint">None yet.</p>
       {/each}
     </div>
 
@@ -222,8 +222,7 @@
     {/if}
     {#if accounts}
       <FootNote class="mt-2">
-        Stored as numbered entries and always renumbered to stay consecutive,
-        because the loader stops at the first gap. Each one runs as its own account.
+        Each one runs as its own account.
       </FootNote>
     {/if}
   {/if}

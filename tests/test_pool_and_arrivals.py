@@ -118,12 +118,13 @@ check("the slow timing is in place before the switch goes on, and gone again for
       "arriving = true;" in toggle and "done = window.setTimeout(() => (arriving = false), 900 + ms);" in toggle)
 check("with Animations off it is simply on", "if (!get(motionEnabled) || !checked) {" in toggle)
 waits = read("lib/components/WaitTimes.svelte")
-check("the wait chart grows up out of its axis, one wait after another",
+check("the wait rows grow in, one wait after another",
       "whenShown(el).then(" in waits and "class:is-in={arrived}" in waits
-      and ".wt:not(.is-in) .wt-stem" in waits and "calc(var(--i, 0) * 70ms)" in waits)
-check("its heads rise by exactly the height of their stems", "--rise: ${BASE - w.y}px" in waits)
-check("the slow rise is only for the arrival, hovering stays quick", ".wt.is-arriving .wt-end" in waits)
-check("dragging is never slowed by it", ".wt.is-dragging .wt-rise" in waits)
+      and ".wt:not(.is-in) .wt-bar" in waits and "calc(var(--i, 0) * 70ms)" in waits)
+check("each bar grows out along its row from its start, its meter filling with it",
+      "transform: translateY(-50%) scaleX(0);" in waits and ".wt:not(.is-in) .wt-odds-fill { width: 0 !important; }" in waits)
+check("the slow growth is only for the arrival", ".wt.is-arriving .wt-bar" in waits)
+check("dragging is never slowed by it", ".wt.is-dragging .wt-bar, .wt.is-dragging .wt-odds-fill { transition: none; }" in waits)
 select = read("lib/components/Select.svelte")
 check("a dropdown types its value in, a letter at a time", "let typing = $state<number | null>(null);" in select
       and "whenShown(el).then(" in select and "{label.slice(0, typing)}<span class=\"sel-cursor\"></span>" in select)

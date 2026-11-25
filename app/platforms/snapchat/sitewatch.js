@@ -96,13 +96,20 @@ export class SiteWatch {
     let asked = false;
     for (const frame of tab.frames()) {
       try {
-        const hit = await frame.evaluate((sels) => sels.some((s) => {
-          try {
-            return !!document.querySelector(s);
-          } catch {
-            return false;
+        // The page first, then every open shadow root under it: Reddit's chat is built of them (2026-11-11).
+        const hit = await frame.evaluate((sels) => {
+          const roots = [document];
+          for (let i = 0; i < roots.length && roots.length < 3000; i++) {
+            const root = roots[i];
+            for (const s of sels) {
+              try {
+                if (root.querySelector(s)) return true;
+              } catch { /* not a selector this page reads */ }
+            }
+            for (const el of root.querySelectorAll("*")) if (el.shadowRoot) roots.push(el.shadowRoot);
           }
-        }), selectors);
+          return false;
+        }, selectors);
         asked = true;
         if (hit) return true;
       } catch {

@@ -9,7 +9,8 @@ from fastapi.staticfiles import StaticFiles
 
 from app.utils.paths import APP_DIR, seed_data_dir
 from app.web.logbus import bus
-from app.web.routes import (account_routes, appearance_routes, chat_routes, community_routes,
+from app.web.routes import (account_routes, appearance_routes, apptools_routes, chat_routes, community_routes,
+                            mail_routes,
                             config_routes, env_routes, fromchats_routes, health_routes,
                             livedemo_routes, local_routes, media_routes, models_routes, people_routes,
                             persona_routes, stats_routes, status_routes, system_routes,
@@ -154,6 +155,10 @@ def create_app(supervisor=None):
     app.include_router(appearance_routes.router)
     app.include_router(telegram_routes.router)
     app.include_router(persona_routes.router)
+    # The settings and personas as tools for an AI: the Ask box and connected AI apps (app/utils/apptools.py).
+    app.include_router(apptools_routes.router)
+    # The mailboxes the codes socials email at sign-in are read from (app/utils/mailcodes.py).
+    app.include_router(mail_routes.router)
     # A persona from your own chats (app/utils/chatpersona.py).
     app.include_router(fromchats_routes.router)
     app.include_router(community_routes.router)
@@ -295,6 +300,8 @@ def run_server(supervisor=None, port: int | None = None, no_web: bool = False, b
         from app.web.supervisor import Supervisor
         supervisor = Supervisor(port=port)
     supervisor.port = port
+    from app.utils import mcpserver
+    mcpserver.note_port(port, bind)
 
     url = f"http://{'127.0.0.1' if bind == '0.0.0.0' else bind}:{port}"
     bus.append("supervisor", f"Web UI on {url}")

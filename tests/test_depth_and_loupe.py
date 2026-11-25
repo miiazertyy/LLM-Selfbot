@@ -170,7 +170,7 @@ check("heard: lifted, a tick each half step a note higher as it goes in, put dow
       and "if (n !== notch) {" in wz)
 check("clicking the picture keeps it open; clicking beside it still closes it",
       av.count("onclick={(e) => e.stopPropagation()}") == 2 and "onclick={() => (open = false)}" in av)
-check("and it says so, plainly", "Hold on it to look closer and scroll to zoom. Click outside it to close, right click to copy." in av)
+check("and it says so, plainly", "Hold to look closer, scroll to zoom, right click to copy." in av)
 check("the smooth scrolling leaves a wheel the loupe took", "e.defaultPrevented" in read("lib/smoothscroll.ts"))
 check("with Animations off it simply appears", ':global(:root[data-motion="off"]) .avatar-loupe { animation: none; }' in av
       and ':global(:root[data-motion="off"]) .avatar-loupe img { transition: none; }' in av)

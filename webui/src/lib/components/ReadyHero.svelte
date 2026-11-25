@@ -68,7 +68,8 @@
     whenShown(el).then(() => {
       // Both blocks down, then it begins: held back while the card drops in, a segment sat as a small square.
       afterLanding(el, () => afterLanding(ol, async () => {
-        heard = await onScreen(el);
+        // Whichever comes into view first: the checks should not sit unlit while the steps are on screen.
+        heard = await Promise.race([onScreen(el), onScreen(ol)]);
         landed = true;
         light();
       }));

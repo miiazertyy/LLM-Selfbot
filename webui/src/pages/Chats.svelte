@@ -49,7 +49,7 @@
   import ErrorNote from "../lib/components/ErrorNote.svelte";
   import { mentionNames, resolveMention } from "../lib/mentions";
   import { platformOf, platformName, platformIcon } from "../lib/platforms";
-  import { menu as contextMenu, copyText, openMenu, type MenuEntry } from "../lib/contextmenu";
+  import { menu as contextMenu, copyText, openMenu, readClipboardFiles, type MenuEntry } from "../lib/contextmenu";
   import { fillHeight } from "../lib/fillheight";
 
   type Account = {
@@ -696,15 +696,28 @@
     }
   }
 
-  /** Ctrl+V with a picture on the clipboard, the way Discord takes one. */
+  /** Ctrl+V with a picture on the clipboard, the way Discord takes one; right-click Paste hands it over the same way
+   *  (GlobalMenu.svelte, through data-paste-files on the box). */
   function onComposerPaste(e: ClipboardEvent) {
     const files = [...(e.clipboardData?.items ?? [])]
       .filter((i) => i.kind === "file")
       .map((i) => i.getAsFile())
       .filter((f): f is File => !!f);
-    if (!files.length) return;          // plain text pastes as text
-    e.preventDefault();
-    stageFiles(files);
+    if (files.length) {
+      e.preventDefault();
+      stageFiles(files);
+      return;
+    }
+    // Handed nothing at all, not even text: files copied in Explorer can reach the window's browser that way. The
+    // desktop app reads the clipboard itself.
+    const types = [...(e.clipboardData?.types ?? [])];
+    if (e.isTrusted && plat.media !== false && !types.some((t) => t.startsWith("text/"))
+        && (window as any).pywebview?.api?.read_clipboard_files) {
+      readClipboardFiles().then((got) => {
+        for (const name of got?.tooBig ?? []) toast(`${name} is bigger than 8MB.`, "err");
+        if (got?.files.length) stageFiles(got.files);
+      });
+    }
   }
 
   function unstage(i: number) {
@@ -1775,7 +1788,7 @@
           </div>
           {#if !ignoredShown.length}
             <p class="px-3 py-5 text-center text-[12px] text-faint">
-              Nobody. The X on someone in the list ignores them.
+              Nobody.
             </p>
           {:else}
             <div class="ch-ignored-list">
@@ -1925,10 +1938,6 @@
   <div class="ch-zero glass" class:is-compact={archived.length > 0}>
     <span class="ch-zero-mark" use:chime={"done"}><Icon name="check" size={26} /></span>
     <div class="text-[18px] font-semibold tracking-tight text-ink">Everyone has been answered</div>
-    <p class="max-w-md text-[12.5px] leading-relaxed text-muted">
-      Anyone who messages {allView ? "any of your accounts" : "this account"} and has not had a reply shows up here
-      the moment they do, with where the bot is with their reply.
-    </p>
     {#if !allView && hasServers}
       <!-- Nobody waiting is when you are most likely to want to go and say something in one yourself. -->
       <Button kind="ghost" onclick={() => (serversOpen = true)}>
@@ -2549,6 +2558,7 @@
                      }} />
               <textarea bind:this={composer} value={$drafts[draftKey] ?? ""} rows="1" maxlength="2000"
                         placeholder="Message {selected.kind === 'server' ? (selected.where ?? '').split(' · ')[0] || selected.name : selected.name}"
+                        data-paste-files={plat.media !== false ? "" : undefined}
                         onkeydown={onComposerKey} onpaste={onComposerPaste}
                         oninput={(e) => { setDraft(draftKey, e.currentTarget.value); grow(); }}
                         aria-label="Message {selected.name}"></textarea>
@@ -2589,7 +2599,7 @@
       {:else}
         <div class="flex h-full flex-col items-center justify-center gap-2 p-10 text-center">
           <span class="text-faint"><Icon name="chats" size={26} /></span>
-          <p class="text-[12.5px] text-muted">Pick a conversation on the left.</p>
+          <p class="text-[12.5px] text-muted">Pick a conversation.</p>
         </div>
       {/if}
     </section>

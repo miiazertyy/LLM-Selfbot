@@ -8,6 +8,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 import zipfile
 from pathlib import Path
 
@@ -24,6 +25,8 @@ router = APIRouter(tags=["system"])
 
 SNAP_DIR = DATA_DIR / "snapchat"
 _install_lock = threading.Lock()
+#: Tells this run of the app from the next one: after Restart the panel waits for an answer with a different one.
+BOOT = uuid.uuid4().hex
 
 
 def _which(name: str) -> str | None:
@@ -577,12 +580,18 @@ async def restart_app(request: Request):
     import sys
     import threading
 
+    from app.core.update import relaunch_env
     from app.utils.procs import quiet_kwargs
 
     if getattr(sys, "frozen", False):
         argv = [sys.executable]
+        # Not APP_DIR: that is this copy's unpack folder, and a program working from it stops it being deleted.
+        cwd = Path(sys.executable).resolve().parent
     else:
         argv = [sys.executable, str(APP_DIR / "main.py")]
+        cwd = APP_DIR
+    if "--no-window" in sys.argv:
+        argv.append("--no-window")       # back the way it was started
 
     supervisor = getattr(request.app.state, "supervisor", None)
     port = getattr(supervisor, "port", None) or request.url.port
@@ -613,12 +622,8 @@ async def restart_app(request: Request):
             except Exception as exc:
                 bus.append("system", f"Could not stop the accounts cleanly: {exc}", "warn")
 
-        env = {k: v for k, v in os.environ.items() if k != "LLMSELFBOT_CHILD"}
-        env["LLMSELFBOT_RESTART"] = "1"
-        if port:
-            env["SELFBOT_PORT"] = str(port)
         try:
-            subprocess.Popen(argv, cwd=str(APP_DIR), env=env,
+            subprocess.Popen(argv, cwd=str(cwd), env=relaunch_env(port),
                              close_fds=True, **quiet_kwargs())
         except Exception as exc:
             bus.append("system", f"Could not relaunch: {exc}", "error")
@@ -628,7 +633,7 @@ async def restart_app(request: Request):
 
     bus.append("system", "Restarting the app.")
     threading.Thread(target=_go, daemon=True, name="restart").start()
-    return {"ok": True, "restarting": True}
+    return {"ok": True, "restarting": True, "boot": BOOT}
 
 
 @router.get("/api/system/backup")
@@ -916,13 +921,14 @@ async def update_check(request: Request):
 def _update_check_blocking():
     import urllib.error
     from app.core import update
-    from app.utils import device
+    from app.utils import device, tls
     try:
         release = update.latest(timeout=10)
     except urllib.error.HTTPError as e:
         return {"ok": False, "reason": f"GitHub API returned {e.code}"}
     except Exception as e:
-        return {"ok": False, "reason": str(e)}
+        # A certificate that could not be checked said "<urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] ...>" here.
+        return {"ok": False, "reason": tls.explain(e) or str(e)}
     latest = release["tag"]
     # Which file on the release is this device's, and how it would go in:
     # the panel says "Update now" only where the app can do it itself.
@@ -1201,4 +1207,5 @@ async def info(request: Request):
         "os": platform.platform(),
         "frozen": bool(getattr(sys, "frozen", False)),
         "data_dir": str(DATA_DIR),
+        "boot": BOOT,
     }

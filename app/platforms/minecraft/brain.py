@@ -9,7 +9,11 @@ app put on each of the profile's templates (profile.MARKERS):
                                         game looks like (mindcraft's own rendered prompt: stats, inventory, the
                                         command docs) and what just happened in it go in as extra["context"], and
                                         extra["can_act"] lets the reply carry commands (engine.action_rules).
-  CONVERSE, anything else last          a command's result, a self-prompt tick, a mode's narration: answered
+  CONVERSE, a step toward its goal      mindcraft's own "You are self-prompting with the goal", and each command's
+                                        result after it: a player's move, not a line of chat (playing_goal). Told
+                                        what playing well takes, answered by the strongest model in the chain, and
+                                        the words before the command said in the game only now and then (play_move).
+  CONVERSE, anything else last          a command's result after answering someone, a mode's narration: answered
                                         straight by the model, in character but with nothing remembered about
                                         anyone, so a mode ticking over never costs two more calls or a memory.
   CODE, MEMORY, RESPONDER               mindcraft's own housekeeping: straight to the model, no persona.
@@ -27,6 +31,7 @@ go (profile.py says why that provider). It answers mindcraft's embeddings as wel
 from __future__ import annotations
 
 import asyncio
+import random
 import re
 import secrets
 import time
@@ -120,8 +125,9 @@ _NARRATION_RE = re.compile(r"^\s*(?:\([^()]*\)|\[[^\[\]]*\]|\*[^*]+\*)\s*$", re.
 
 def quiet(reply: str) -> str:
     """The reply, or "" when it is only a way of saying nothing (_NOTHING) or narration, which mindcraft then says
-    nothing for."""
-    text = str(reply or "")
+    nothing for. Cut where a model's own format shows through (gpt-oss's "<|message|>", "<|end|>"): what follows is
+    never words for the game."""
+    text = str(reply or "").split("<|", 1)[0]
     core = text.strip().strip("[](){}*\"'`.!").strip().lower()
     return "" if not core or core in _NOTHING or _NARRATION_RE.match(text) else text
 
@@ -149,16 +155,126 @@ def chat_line(text: str) -> str:
     return _BANG_RE.sub("! ", line)[:CHAT_MAX].rstrip()
 
 
+# The lines of mindcraft's own command results that look like a player's "name: words" (queries.js: "WEARING:
+# Nothing", "Head: iron_helmet", "CRAFTABLE_ITEMS: none"), and the game's own: nobody speaking. A command's result is
+# one turn of several lines, so its last line was read as someone talking: on 2026-11-11 its own !inventory's
+# "WEARING: Nothing" was answered as a player called WEARING, "got it", out loud in DonutSMP's public chat.
+_NOT_PLAYERS = frozenset({"stats", "inventory", "wearing", "head", "torso", "legs", "feet", "nearby_blocks",
+                          "craftable_items", "nearby_entities", "error", "warning", "message", "location",
+                          "disconnected", "kicked", "system"})
+
+
+def _spoken(line: str) -> tuple[str, str] | None:
+    """("Steve", "come here") for a player's line as mindcraft writes it ("Steve: come here", history.js)."""
+    m = _PLAYER_RE.match(line)
+    if not m or m.group(1).lower() in _NOT_PLAYERS:
+        return None
+    return m.group(1), m.group(2).strip()
+
+
 def player_line(turn: dict | None) -> tuple[str, str] | None:
-    """("Steve", "come here") when the turn ends with someone speaking: mindcraft writes that line as
-    "Steve: come here" (history.js). A turn ending in a game event ("SYSTEM: ...") is nobody speaking."""
+    """("Steve", "come here") when the turn ends with someone speaking. A turn ending in a game event ("SYSTEM: ...")
+    or in a command's result is nobody speaking."""
     if not turn or turn.get("role") != "user":
         return None
     lines = _lines(turn)
     if not lines or lines[-1].startswith("SYSTEM:"):
         return None
-    m = _PLAYER_RE.match(lines[-1])
-    return (m.group(1), m.group(2).strip()) if m else None
+    return _spoken(lines[-1])
+
+
+# ── Playing ───────────────────────────────────────────────────────────────────
+# mindcraft works at a goal by asking, again and again, "You are self-prompting with the goal: '...'. Your next
+# response MUST contain a command" (self_prompter.js), and handing back each command's result. Those turns had the
+# persona's whole voice on top and went to the first model in the chain, often the smallest: a line of chat with
+# every step, and the moves of a weak player ("make sure the ai thinks more about playing than talking ... it should
+# play good", 2026-11-11). A step toward a goal is now a player's move: told what playing well takes (PLAYING),
+# answered by the strongest model it has (strongest), and the words before the command, which mindcraft says in the
+# game, kept now and then (play_move).
+_SELF_PROMPT_RE = re.compile(r"^SYSTEM: You are self-prompting with the goal: '(.*)'\. Your next response MUST", re.S)
+# mindcraft's own command pattern (commands/index.js commandRegex): its first match is the one command it runs.
+_COMMAND_RE = re.compile(
+    r'!(\w+)(?:\(((?:-?\d+(?:\.\d+)?|true|false|"[^"]*")(?:\s*,\s*(?:-?\d+(?:\.\d+)?|true|false|"[^"]*"))*)\))?')
+PLAY_TALK_ODDS = 0.3      # of a step's few words, the share said in the game
+PLAY_TALK_CHARS = 80      # and never more than this
+PLAY_VOICE_CHARS = 1500   # of the persona, for those words
+# Room for a move: a reasoning model thinks it through first, and at a chat line's 320 tokens gpt-oss-20b spent them
+# all thinking, was asked again, and the move came half a minute late.
+PLAY_TOKENS = 960
+PLAYING = (
+    "PLAYING NOW. Nobody is talking to you: this is your next move toward your goal, '{goal}'.\n"
+    "Play like a skilled player. Think it through before you answer: what you have (your stats and inventory below), "
+    "what is around you, what your last command did, and what the goal needs next. What a step needs comes before "
+    "the step: the tool, the crafting table, the materials. When a command failed, never send it again as it was: "
+    "fix what it said was missing, or do it another way. Stay alive: eat when you are hungry, get away from a fight "
+    "you are losing, be somewhere safe at night. Look around (!inventory, !nearbyBlocks, !entities, !craftable) only "
+    "to learn something you do not know yet.\n"
+    "Answer with one command alone. Any words before it are said out loud in the game's chat, so only now and then, "
+    "when something is worth it (a good find, a close call), a few words of your own before it: never your plan, "
+    "never a running commentary."
+)
+
+
+def playing_goal(turns: list) -> str:
+    """The goal this turn is a step toward, when it is one of mindcraft's own (its self-prompt, or a command's result
+    since); "" when someone has spoken since, or it has no goal."""
+    for t in reversed(turns or []):
+        if t.get("role") != "user":
+            continue
+        for line in reversed(_lines(t)):
+            m = _SELF_PROMPT_RE.match(line)
+            if m:
+                return m.group(1).strip()
+            if not line.startswith("SYSTEM:") and _spoken(line):
+                return ""
+    return ""
+
+
+_SIZE_RE = re.compile(r"(?<![a-z0-9.])(\d+(?:\.\d+)?)b(?![a-z0-9])")
+
+
+def size_of(model: str) -> float:
+    """Billions of parameters, as a model's name gives them ("openai/gpt-oss-120b": 120), or 0 when it does not."""
+    sizes = [float(x) for x in _SIZE_RE.findall(str(model or "").lower())]
+    return max(sizes) if sizes else 0.0
+
+
+def strongest(chain: list) -> dict | None:
+    """The reply chain's biggest model, by what the names say, to play with: the chain starts with the model best at
+    chat, which is often its smallest. None when no name says its size, and the chain is used as it is."""
+    best = max(chain or [], key=lambda e: size_of(e.get("model")), default=None)
+    return best if best and size_of(best.get("model")) > 0 else None
+
+
+def step_goal(body: dict) -> str:
+    """The goal a request from mindcraft is a step toward (playing_goal), or "" when it is anything else."""
+    messages = (body or {}).get("messages") or []
+    if special(messages)[0]:
+        return ""
+    kind, messages = route(messages)
+    if kind != "converse":
+        return ""
+    turns = messages[1:] if messages and messages[0].get("role") == "system" else messages
+    if player_line(turns[-1] if turns else None):
+        return ""
+    return playing_goal(turns)
+
+
+def play_move(reply: str, roll: float | None = None) -> str:
+    """A step's reply as it goes back to mindcraft: its one command, as mindcraft reads it, and the few words before
+    it only now and then (PLAY_TALK_ODDS); "" when it has no command, which mindcraft takes as a step without a move,
+    rather than musing said out loud in the game. Nothing after the command: gpt-oss-120b has gone on with its own
+    format's tokens and its next thoughts ("!craftable<|message|><|start|>assistant...") or the same command four
+    times over, and mindcraft runs the first one only."""
+    text = str(reply or "")
+    m = _COMMAND_RE.search(text)
+    if not m:
+        return ""
+    words, move = text[: m.start()].strip(), m.group(0)
+    if (words and "<|" not in words and len(words) <= PLAY_TALK_CHARS and quiet(words)
+            and (random.random() if roll is None else roll) < PLAY_TALK_ODDS):
+        return f"{words} {move}"
+    return move
 
 
 def game_context(system_prompt: str, turns: list, speaker: str = "") -> str:
@@ -169,10 +285,16 @@ def game_context(system_prompt: str, turns: list, speaker: str = "") -> str:
     the line said without the name of who said it, which in a public chat left it guessing: asked to follow, it
     wrote !followPlayer("player"), for a player who does not exist."""
     events = []
+    goal = ""
     for t in turns:
         side = t.get("role")
         for line in _lines(t):
-            if line.startswith("SYSTEM:"):
+            # mindcraft's ask for its next move, once a step: said once below, as what it was doing, rather than
+            # a dozen times over as something that happened.
+            playing = _SELF_PROMPT_RE.match(line)
+            if playing:
+                goal = playing.group(1).strip()
+            elif line.startswith("SYSTEM:"):
                 events.append(f"- game: {line[7:].strip()}")
             elif side == "assistant":
                 events.append(f"- you: {line}")
@@ -189,6 +311,9 @@ def game_context(system_prompt: str, turns: list, speaker: str = "") -> str:
              "in it.", system_prompt.strip()]
     if recent:
         parts.append("WHAT JUST HAPPENED, oldest first:\n" + "\n".join(recent))
+    if goal and speaker:
+        parts.append(f"WHAT YOU WERE DOING: playing, toward '{goal[:300]}'. Answer them first; you go back to it "
+                     f"by yourself after.")
     if speaker:
         # Talk first, then the two things people ask most, spelled out, and only as answers to being asked: with
         # only the docs, asked to come over, a model answered "where?"; given the commands as bare examples, asked
@@ -287,16 +412,52 @@ class Budget:
         self.per_hour = max(0, int(per_hour or 0))
         self.calls: deque = deque()
 
-    def take(self) -> bool:
+    def take(self, reserve: int = 0) -> bool:
+        """A call, if the hour has one left with `reserve` still to spare after it."""
         if not self.per_hour:
             return True
         now = time.time()
         while self.calls and now - self.calls[0] > 3600:
             self.calls.popleft()
-        if len(self.calls) >= self.per_hour:
+        if len(self.calls) >= self.per_hour - max(0, int(reserve)):
             return False
         self.calls.append(now)
         return True
+
+
+# Its own moves take at most this share of the hour's calls, the rest kept for answering people, and are spread over
+# the hour: spent as fast as mindcraft asks, the hour went in ten minutes, and every answer to anyone with it.
+PLAY_SHARE = 0.75
+PLAY_BURST = 4             # moves it may make one after another (a look, then the move it was for)
+PLAY_WAIT_MAX = 90.0       # past this, a move is not waited for at all
+
+
+class Pace:
+    """When its next move may be made: a few in a row (PLAY_BURST), then one as often as its share of the hour
+    allows. A move waits its turn rather than being refused: refused three times, mindcraft gives the goal up."""
+
+    def __init__(self, per_hour: int, share: float = PLAY_SHARE, burst: int = PLAY_BURST):
+        self.rate = max(0, int(per_hour or 0)) * share / 3600.0     # moves a second; 0 is no limit
+        self.burst = float(burst)
+        self.tokens = float(burst)
+        self.at = time.monotonic()
+
+    def wait(self, now: float | None = None) -> float:
+        """Seconds until the next move, which is then booked; -1 when that is past PLAY_WAIT_MAX (nothing booked)."""
+        if not self.rate:
+            return 0.0
+        now = time.monotonic() if now is None else now
+        self.tokens = min(self.burst, self.tokens + max(0.0, now - self.at) * self.rate)
+        self.at = now
+        need = 0.0 if self.tokens >= 1.0 else (1.0 - self.tokens) / self.rate
+        if need > PLAY_WAIT_MAX:
+            return -1.0
+        self.tokens -= 1.0
+        return need
+
+    def give_back(self) -> None:
+        """A booked move not made after all."""
+        self.tokens = min(self.burst, self.tokens + 1.0)
 
 
 class Brain:
@@ -311,6 +472,8 @@ class Brain:
         self.greet = greet                # a few words on arriving in the world
         self.timeout_s = float(timeout_s)
         self.budget = Budget(calls_per_hour)
+        self.pace = Pace(calls_per_hour)
+        self._lines_in = 0                # lines that came in for it to answer, counted (a clock's tick is too coarse)
         # Told (player, what they said, the reply, the channel) for the chat log and the Chats tab: what they said
         # is "" for a line it says after acting (a command's result, a goal's next step), and the player is then
         # the last one who spoke to it, whose conversation it carries on.
@@ -361,6 +524,18 @@ class Brain:
     async def answer(self, body: dict) -> str:
         """The reply text for one of mindcraft's requests. Never raises: see the module's docstring."""
         try:
+            # A move of its own waits its turn first (Pace), outside the time a reply is given; and is let go when a
+            # line came in for it meanwhile, since mindcraft throws away whatever it asked before that.
+            if step_goal(body):
+                lines = self._lines_in
+                wait = self.pace.wait()
+                if wait < 0:
+                    return ""
+                if wait:
+                    await asyncio.sleep(wait)
+                    if self._lines_in != lines:
+                        self.pace.give_back()
+                        return ""
             return quiet(await asyncio.wait_for(self._answer(body), self.timeout_s))
         except Exception:
             return ""
@@ -368,6 +543,7 @@ class Brain:
     async def _answer(self, body: dict) -> str:
         what, sid = special(body.get("messages") or [])
         if what == "say":
+            self._lines_in += 1
             # The panel's words, as they are: no model, so nothing from the hour's budget.
             _, text, done = self._sayings.pop(sid, (0.0, "", None))
             if done is not None:
@@ -377,12 +553,15 @@ class Brain:
         system = messages[0]["content"] if messages and messages[0].get("role") == "system" else ""
         turns = messages[1:] if system else messages
         said = player_line(turns[-1] if turns else None) if kind == "converse" else None
+        if said:
+            self._lines_in += 1
         if said and auth_prompt(said[1]):
             return ""
         if (what == "joined" or kind == "converse") and not self.listening(said[0] if said else ""):
             return ""
-        # Everything below asks the model.
-        if not self.budget.take():
+        goal = playing_goal(turns) if kind == "converse" and not said and what != "joined" else ""
+        # Everything below asks the model. Its own moves leave the rest of the hour for answering people.
+        if not self.budget.take(reserve=round(self.budget.per_hour * (1 - PLAY_SHARE)) if goal else 0):
             return ""
         if what == "joined":
             return await self._arrived()
@@ -390,7 +569,9 @@ class Brain:
             system = compact(system)
             if said:
                 return until_stop(await self._persona(said, system, turns), body.get("stop"))
-            # A command's result, a goal's next step: nobody to remember, but still the character speaking. Without
+            if goal:
+                return await self._play(goal, system, turns, body.get("stop"))
+            # A command's result after answering someone: nobody to remember, but still the character speaking. Without
             # this, what it said after following someone ("Sure, I'm following you!") came out in a generic
             # assistant's voice beside the persona's own: one bot, two voices.
             from app.platforms.minecraft import persona as persona_mod
@@ -460,15 +641,51 @@ class Brain:
                 pass
         return reply
 
-    async def _raw(self, system: str, turns: list) -> str:
+    async def _play(self, goal: str, system: str, turns: list, stop=None) -> str:
+        """One step toward its goal (playing_goal): a player's move, thought through by the strongest model in the
+        chain, and a few words for the game's chat only now and then."""
+        from app.platforms.minecraft import persona as persona_mod
+        from app.utils import ai, logger, providers
+        from app.utils.helpers import load_config
+        parts = [PLAYING.format(goal=goal[:600])]
+        voice = await persona_mod.brief()
+        if voice:
+            parts.append("WHO YOU ARE, for those few words:\n" + persona_mod.head(voice, PLAY_VOICE_CHARS))
+        parts.append(system)
+        try:
+            best = strongest(providers.reply_chain(load_config()))
+        except Exception:
+            best = None
+        token = ai.FIRST.set({**ai.FIRST.get(), "replies": best}) if best else None
+        before = logger.thoughts_logged
+        try:
+            raw = until_stop(await self._raw("\n\n".join(parts), turns, max_tokens=PLAY_TOKENS), stop)
+        finally:
+            if token is not None:
+                ai.FIRST.reset(token)
+        # What it means to do next, unless its model has just said what it thought on the way there.
+        if logger.thoughts_logged == before:
+            logger.log_thinking(raw, ai.last_reply_model)
+        move = play_move(raw)
+        # Words it said in the game go into the conversation it last had; its moves alone are not a conversation, and
+        # with a goal of its own always going they would bury it.
+        if self.on_turn and self.last_speaker and move and not move.startswith("!"):
+            try:
+                self.on_turn(self.last_speaker, "", move, self.channel_of(self.last_speaker))
+            except Exception:
+                pass
+        return move
+
+    async def _raw(self, system: str, turns: list, max_tokens: int | None = None) -> str:
         from app.utils.ai import generate_response
+        room = {"max_tokens": max_tokens} if max_tokens else {}
         history = [{"role": t.get("role") if t.get("role") in ("user", "assistant") else "user",
                     "content": str(t.get("content") or "")} for t in turns if t.get("content")]
         if history and history[-1]["role"] == "user":
-            return await generate_response("", system, history) or ""
+            return await generate_response("", system, history, **room) or ""
         # mindcraft sends its housekeeping (a memory summary, whether to answer another bot) as a system prompt and
         # nothing else; a provider wants a user turn to answer.
-        return await generate_response("Write it now.", system, None) or ""
+        return await generate_response("Write it now.", system, None, **room) or ""
 
     async def _vision(self, system: str, turns: list) -> str:
         from app.utils.ai import generate_response_image

@@ -35,7 +35,14 @@
     if (arrivalHeard || !e.animationName.endsWith("lp-land")) return;
     arrivalHeard = true;
     const el = e.currentTarget as HTMLElement;
-    afterLanding(el, () => onScreen(el).then((seen) => { if (seen) play("land"); }));
+    afterLanding(el, () => {
+      // Out of sight, the flag waits too (app.css pauses whatever is in [data-arriving]): it lands where it is heard.
+      el.dataset.arriving = "";
+      onScreen(el).then((seen) => {
+        delete el.dataset.arriving;
+        if (seen) play("land");
+      });
+    });
   }
 
   let {

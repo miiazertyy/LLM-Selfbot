@@ -9,33 +9,28 @@
 export type FontChoice = {
   id: string;
   name: string;
-  note: string;
   stack: string;
 };
 
 export const FONTS: FontChoice[] = [
   {
     id: "mikhak",
-    name: "Mikhak",
-    note: "Bundled with the app. Soft and geometric.",
+    name: "Mikhak",
     stack: '"Mikhak", ui-sans-serif, system-ui, sans-serif',
   },
   {
     id: "inter",
-    name: "Inter",
-    note: "What the panel used before. Neutral and dense.",
+    name: "Inter",
     stack: '"Inter", ui-sans-serif, system-ui, -apple-system, sans-serif',
   },
   {
     id: "system",
-    name: "System",
-    note: "Whatever your operating system uses. Sharpest at small sizes.",
+    name: "System",
     stack: 'system-ui, "Segoe UI Variable Display", "Segoe UI", -apple-system, sans-serif',
   },
   {
     id: "mono",
-    name: "Monospace",
-    note: "Every character the same width. Good for reading ids and logs.",
+    name: "Monospace",
     stack: '"Cascadia Code", "JetBrains Mono", "SF Mono", Consolas, ui-monospace, monospace',
   },
 ];

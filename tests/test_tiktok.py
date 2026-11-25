@@ -117,7 +117,7 @@ from app.web import descriptions as desc  # noqa: E402
 keys = {f["key"] for f in CONFIG_SCHEMA}
 for k in ("tiktok.enabled", "tiktok.min_send_gap_ms", "tiktok.max_sends_per_hour", "tiktok.accept_message_requests",
           "tiktok.follow_back", "tiktok.comments.enabled", "tiktok.live.enabled", "tiktok.live.voice", "tiktok.live.per_minute"):
-    check(f"{k} is a setting, described", k in keys and bool(desc.DESCRIPTIONS.get(k) if hasattr(desc, "DESCRIPTIONS") else True))
+    check(f"{k} is a setting, with its line", k in keys and k in desc.DESCRIPTIONS)
 cfg = read("resources/config.yaml")
 check("comments and the LIVE are off until switched on", "comments:\n    enabled: false" in cfg and "live:\n    enabled: false" in cfg)
 check("cautious by default: 20 sends an hour, 15 to 45 seconds apart", "max_sends_per_hour: 20" in cfg

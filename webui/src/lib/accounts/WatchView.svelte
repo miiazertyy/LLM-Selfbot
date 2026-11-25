@@ -135,8 +135,9 @@
     return () => clearInterval(t);
   }
 
-  // Its own side of the screen: often enough to feel live, and four times a second while it is being played. The
-  // bot reads it off itself each time, so it costs nothing but the round trip.
+  // Its own side of the screen: two and a half times a second, and more than six while it is being played. The bot
+  // reads it off itself each time, so it costs nothing but the round trip. Once a second, the chat, the hearts and
+  // the hotbar lagged a second behind the picture ("everything faster in the viewer", 2026-11-11).
   $effect(() => {
     if (!ready) {
       hud = null;
@@ -144,7 +145,7 @@
     }
     const acc = account;
     const ask = { debug: showDebug, tab: showTab };
-    const every = driving ? 250 : 1000;
+    const every = driving ? 150 : 400;
     let gone = false;
     const read = async () => {
       try {
@@ -1175,7 +1176,7 @@
         <div class="wv-empty">
           <Icon name="minecraft" size={28} />
           <span>Nothing to watch yet.</span>
-          <span class="wv-sub">It shows once {name || "it"} is in a world.</span>
+          <span class="wv-sub">Shows once {name || "it"} is in a world.</span>
         </div>
       {/if}
     </div>
@@ -1207,9 +1208,6 @@
     </div>
   {:else if error}
     <p class="wv-error"><Icon name="info" size={12} /> {error}</p>
-  {:else}
-    <p class="wv-hint">{mode === "above" ? "Over its shoulder, following it about." : "What it sees, as it moves."}
-      It shows the world a few chunks around it.</p>
   {/if}
 </div>
 
@@ -1285,7 +1283,7 @@
   }
   .wv-empty :global(svg) { color: #7cbd4a; opacity: 0.8; margin-bottom: 4px; }
   .wv-sub { font-size: 11.5px; color: var(--color-faint); }
-  .wv-hint, .wv-error { font-size: 11.5px; color: var(--color-faint); }
+  .wv-error { font-size: 11.5px; color: var(--color-faint); }
   .wv-error { display: flex; align-items: center; gap: 6px; color: var(--color-warn); }
 
   /* ── The chat line ─────────────────────────────────────────────────────── */

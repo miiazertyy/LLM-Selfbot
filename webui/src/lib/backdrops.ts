@@ -15,15 +15,14 @@
 export type Backdrop = {
   id: string;
   name: string;
-  hint: string;
 };
 
 // Aurora first: it is the default, so the look a new install has is the first one offered.
 export const BACKDROPS: Backdrop[] = [
-  { id: "aurora", name: "Aurora", hint: "Slow drifting light in the accent colours" },
-  { id: "none", name: "Flat", hint: "Just the theme colour" },
-  { id: "nebula", name: "Nebula", hint: "A deep rotating haze" },
-  { id: "ripple", name: "Ripple", hint: "Slow rings breathing outward" },
+  { id: "aurora", name: "Aurora" },
+  { id: "none", name: "Flat" },
+  { id: "nebula", name: "Nebula" },
+  { id: "ripple", name: "Ripple" },
 ];
 
 /** How many rings the ripple backdrop renders. */

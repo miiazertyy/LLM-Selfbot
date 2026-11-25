@@ -667,7 +667,7 @@
   <header class="ld-head">
     <div class="min-w-0">
       <h3 class="ld-title"><Icon name="tiktok" size={15} />Try a LIVE</h3>
-      <p class="ld-sub">A practice LIVE with a pretend crowd. It answers with the settings above, saved or not. Nothing goes to TikTok.</p>
+      <p class="ld-sub">A practice LIVE with a fake crowd, using the settings above, saved or not. Nothing goes to TikTok.</p>
     </div>
   </header>
 
@@ -944,7 +944,7 @@
         </div>
         <input class="ld-file" type="file" accept="image/*,video/*,.heic,.heif,.mov,.mkv" bind:this={fileInput}
                onchange={(e) => upload(e.currentTarget.files?.[0])} tabindex="-1" aria-hidden="true" />
-        <p class="ld-hint">Or drop a picture or video on the screen. It's only shown here, never sent.</p>
+        <p class="ld-hint">Or drop a picture or video on the screen. It stays here.</p>
         <div class="ld-row">
           <span class="ld-k">Blur</span>
           <span class="ld-seg is-4"><Segmented label="How blurred the screen is" options={BLUR_OPTIONS}
@@ -993,10 +993,10 @@
           <p class="ld-note is-bad">{info.not_ready}</p>
         {/if}
         {#if live.voice && info && !info.voice && !info.not_ready}
-          <p class="ld-note">No voice is set up to speak with, so it only shows its answers.</p>
+          <p class="ld-note">No voice is set up, so answers are text only.</p>
         {/if}
         {#if !live.chat && !live.voice}
-          <p class="ld-note">In the chat and out loud are both off: on a real LIVE it has nowhere to answer.</p>
+          <p class="ld-note">Chat and voice are both off, so on a real LIVE it can't answer.</p>
         {/if}
         {#if info && !live.enabled}
           <p class="ld-note">On real LIVEs it stays quiet until Co-host its LIVE is on.</p>

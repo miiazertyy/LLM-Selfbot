@@ -55,6 +55,14 @@ export function sweep(node: HTMLInputElement) {
     node.style.setProperty("--fill", fill);
     node.style.setProperty("--from", from);
   }
+  /** Hands back what the sweep borrowed and leaves the value as it is. */
+  function letGo() {
+    over = true;
+    if (step === null) node.removeAttribute("step");
+    else node.setAttribute("step", step);
+    node.removeEventListener("pointerdown", stop);
+    node.removeEventListener("keydown", stop);
+  }
   function stop() {
     done();
     node.removeEventListener("pointerdown", stop);
@@ -70,8 +78,9 @@ export function sweep(node: HTMLInputElement) {
   paint(start);
   whenShown(node).then(() => onScreen(node)).then((seen) => {
     if (over) return;
-    // Below what the window shows: at its value at once, no sweep nobody would see.
     if (!seen) return stop();
+    // Its value was changed while it waited to be seen (a save, an AI's change): what is there now is right.
+    if (Number(node.value) !== start) return letGo();
     // Timed from the first frame actually drawn, not from when it was asked
     // for: the tab's first frames are its busiest, and a clock started before
     // them spent the fast start of the curve on frames nobody saw, so the knob

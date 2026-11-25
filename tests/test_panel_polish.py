@@ -76,9 +76,8 @@ check("no setting label or description says 'webui'", not bad, str(bad))
 smap = read("lib/settingsmap.ts")
 names = re.findall(r'name:\s*"([^"]+)"', smap)
 check("nor does any Settings tab or subtab name", not [n for n in names if n.lower() == "webui" and n != "WebUI"])
-check("the WebUI's port and address sit with the switch that serves it, spelled WebUI",
-      '"services.webui.enabled",\n          "services.webui.port",' in smap.replace("\r\n", "\n")
-      and "where the WebUI is served" in smap)
+check("the WebUI's port and address sit with the switch that serves it",
+      '"services.webui.enabled",\n          "services.webui.port",' in smap.replace("\r\n", "\n"))
 
 print("\n== Settings ==")
 settings, css = read("pages/Settings.svelte"), read("app.css")

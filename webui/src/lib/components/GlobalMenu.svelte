@@ -24,7 +24,7 @@
   import Icon from "./Icon.svelte";
   import { play } from "../uisound";
   import {
-    menuState, closeMenu, openMenu, provided, tidy, isAction, isTitle, copyText, readClipboard, searchFor,
+    menuState, closeMenu, openMenu, provided, tidy, isAction, isTitle, copyText, readClipboard, readClipboardFiles, searchFor,
     type MenuAction, type MenuEntry, type MenuState,
   } from "../contextmenu";
   import { bigPicture, motionEnabled, setBigPicture, toast } from "../stores";
@@ -202,6 +202,21 @@
       {
         label: "Paste", icon: "clipboard", keys: "Ctrl V", disabled: locked,
         run: async () => {
+          // A box that takes pictures and files (the chat box: data-paste-files) gets a copied picture or file the way
+          // Ctrl+V gives it, handed over as a paste, which the box already takes. This read text only, so a copied
+          // picture said "There is no text to paste." (2026-11-11).
+          if (f.closest("[data-paste-files]")) {
+            const got = await readClipboardFiles();
+            for (const name of got?.tooBig ?? []) toast(`${name} is bigger than 8MB.`, "err");
+            if (got?.files.length) {
+              const box = new DataTransfer();
+              for (const file of got.files) box.items.add(file);
+              f.focus({ preventScroll: true });
+              f.dispatchEvent(new ClipboardEvent("paste", { clipboardData: box, bubbles: true, cancelable: true }));
+              return;
+            }
+            if (got?.tooBig.length) return;
+          }
           const text = await readClipboard();
           if (text === null) return toast("Press Ctrl+V to paste here.", "info");
           if (!text) return toast("There is no text to paste.", "info");

@@ -458,10 +458,11 @@ smap = read("webui/src/lib/settingsmap.ts")
 check("on four LIVE subtabs: the LIVE, what it answers, how it sounds, the OBS page", all(
     f'id: "{s}"' in smap for s in ("live", "live-answers", "live-style", "live-overlay")))
 settings_src = read("webui/src/pages/Settings.svelte")
-check("every choice a list of plain words", all(f'"tiktok.live.{k}": [' in settings_src for k in lc.CHOICES))
+choices_src = read("resources/setting_choices.json")
+check("every choice a list of plain words", all(f'"tiktok.live.{k}": [' in choices_src for k in lc.CHOICES))
 check("seconds on a dial, with what 0 means", '"tiktok.live.reply_delay": "At once"' in settings_src
       and '"tiktok.live.viewer_cooldown": "Any time"' in settings_src
-      and all("in seconds" in descriptions.DESCRIPTIONS[f"tiktok.live.{k}"]
+      and all(descriptions.unit_for(f"tiktok.live.{k}") == "s"
               for k in ("reply_delay", "viewer_cooldown", "silence_seconds", "overlay_seconds")))
 
 print("\n== the page ==")

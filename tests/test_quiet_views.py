@@ -51,7 +51,7 @@ check("the arrows and ← → step through the rest, each sliding in from its si
 check("the ones either side fetched ahead", "for (const n of [items[at + 1], items[at - 1]]) if (n && !n.video) new Image().src = src(n);" in pv)
 check("what the bot reads, in a slim caption under it, with its name, size and place",
       'class="pv-cap"' in pv and "{@html renderMarkdown(p.description)}" in pv and "{at + 1} of {items.length}" in pv
-      and "No description, so the bot can never send this one." in pv)
+      and "No description, so it's never sent." in pv)
 check("a video plays with its sound and its controls", "controls autoplay loop playsinline" in pv)
 check("heard: a whoosh opening, a slide each step", 'play("open");' in pv and 'play("slide", { level: 0.5 });' in pv)
 check("on a phone the arrows go to the foot", "@media (max-width: 640px)" in pv and ".pv-nav { top: auto; bottom: 18px;" in pv)

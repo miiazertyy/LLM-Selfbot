@@ -104,7 +104,7 @@ print("\n== the notes at the foot of pages ==")
 fn = read("lib/components/FootNote.svelte")
 check("a soft strip with an icon, not a faint line", 'class="fn {cls}"' in fn and "fn-icon" in fn)
 for rel in ("pages/Settings.svelte", "lib/components/SnapchatSetup.svelte", "lib/components/EnvEditor.svelte",
-            "lib/components/UsagePanel.svelte", "lib/components/KeyList.svelte", "pages/System.svelte", "pages/Memory.svelte"):
+            "lib/components/UsagePanel.svelte", "lib/components/KeyList.svelte", "pages/System.svelte"):
     check(f"{rel.split('/')[-1]}", "<FootNote" in read(rel))
 check("the old faint line is gone from Settings", '<p class="mt-6 text-[11px] text-faint">' not in st)
 

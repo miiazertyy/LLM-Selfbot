@@ -30,7 +30,6 @@
   import { renderMarkdown } from "../lib/markdown";
   import { play } from "../lib/uisound";
   import PersonaOrb from "../lib/personas/PersonaOrb.svelte";
-  import PersonaScope from "../lib/personas/PersonaScope.svelte";
   import NewPersona from "../lib/personas/NewPersona.svelte";
   import { personasRes, reloadPersonas } from "../lib/personas/store";
   import { providePersona } from "../lib/personas/context";
@@ -174,10 +173,6 @@
 <ErrorNote text={loadError} />
 
 <div class="pp" style="--persona-color: {color}">
-  {#if list.length > 1}
-    <!-- Whose persona: each profile has its own. -->
-    <div class="ps-scope"><PersonaScope value={selected} label="Persona of" onchange={select} /></div>
-  {/if}
 
   {#if current}
     <!-- ── Who it is ──────────────────────────────────────────────────────────── -->
@@ -193,7 +188,7 @@
             {#each [...current.name] as ch, i (i)}<span class="ps-l">{ch === " " ? " " : ch}</span>{/each}
           </h2>
         {/key}
-        <p class="ps-sub">Who it is, in plain words. Every reply starts from this.</p>
+
       </div>
       <!-- How much of it there is, counting up. -->
       <div class="ps-stats domino" use:domino={{ step: 90, level: 0.55 }}>
@@ -233,7 +228,7 @@
         {/if}
         <span class="ps-doc-note">
           {#if dirty}<span class="ps-unsaved"><span class="ps-unsaved-dot"></span>unsaved changes</span>
-          {:else}A timestamped backup is kept on every save.{/if}
+          {:else}Backed up on every save.{/if}
         </span>
       </div>
 
@@ -256,7 +251,7 @@
         {/key}
       {:else}
         <p class="ps-raw text-faint">
-          Nothing written yet. Press Edit and say who it is, how it talks, and how it treats people.
+          Nothing written yet.
         </p>
       {/if}
     </section>
@@ -290,7 +285,6 @@
 <style>
   /* The page wears the picked profile's colour, and changes it smoothly (app.css registers the property). */
   .pp { transition: --persona-color 0.6s var(--swift); }
-  .ps-scope { display: flex; align-items: center; margin-bottom: 12px; }
 
   /* ── The hero ── */
   .ps-hero {
@@ -333,7 +327,6 @@
     color: var(--color-ink);
   }
   .ps-l { display: inline-block; white-space: pre; }
-  .ps-sub { font-size: 12.5px; color: var(--color-muted); }
   .ps-stats { display: flex; gap: 8px; }
   .ps-stat {
     display: flex;

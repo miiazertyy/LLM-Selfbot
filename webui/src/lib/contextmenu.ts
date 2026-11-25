@@ -175,6 +175,50 @@ export async function readClipboard(): Promise<string | null> {
   }
 }
 
+/**
+ * Pictures and files on the clipboard, for Paste into a box that takes them (the chat box). The desktop app reads
+ * them through its own window, as it does text (app/desktop.py clipboard_files); a browser reads pictures its own
+ * way. One too big for a message comes back by name in `tooBig`, not as a file. null when nothing could be read.
+ */
+export async function readClipboardFiles(): Promise<{ files: File[]; tooBig: string[] } | null> {
+  const bridge = (window as any).pywebview?.api;
+  if (bridge?.read_clipboard_files) {
+    try {
+      const list = await bridge.read_clipboard_files();
+      if (Array.isArray(list)) {
+        const files: File[] = [];
+        const tooBig: string[] = [];
+        for (const f of list) {
+          if (f?.data) files.push(fileFrom(f.data, f.name || "pasted.png", f.type || "application/octet-stream"));
+          else tooBig.push(String(f?.name || "That file"));
+        }
+        return { files, tooBig };
+      }
+    } catch {
+      /* fall through to the page's own clipboard */
+    }
+  }
+  try {
+    const files: File[] = [];
+    for (const item of await navigator.clipboard.read()) {
+      const type = item.types.find((t) => t.startsWith("image/"));
+      if (!type) continue;
+      const blob = await item.getType(type);
+      files.push(new File([blob], `pasted.${type.split("/")[1] || "png"}`, { type }));
+    }
+    return { files, tooBig: [] };
+  } catch {
+    return null;
+  }
+}
+
+function fileFrom(b64: string, name: string, type: string): File {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new File([bytes], name, { type });
+}
+
 // ── Searching for what was selected ─────────────────────────────────────────
 
 /** Ask the search (Ctrl+K) to open, already searching for this. App.svelte listens. */

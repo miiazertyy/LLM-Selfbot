@@ -839,6 +839,26 @@ from app.core.launcher import under_panel as _under_panel
 _EMIT_EVENTS = _under_panel()
 
 
+def _watch_for_captchas() -> None:
+    """Discord asking for a captcha (a reply to someone new, a friend request): the app can't take one, so the person is
+    told at once (app/web/attention.py) rather than finding out from a reply that never went. Every request goes
+    through the one place, so it is watched there."""
+    http = getattr(discord, "http", None)
+    request = getattr(getattr(http, "HTTPClient", None), "request", None)
+    if request is None or getattr(request, "_watched", False):
+        return
+
+    async def watched(self, *args, **kwargs):
+        try:
+            return await request(self, *args, **kwargs)
+        except discord.CaptchaRequired:
+            emit_chat_event({"t": "attention", "what": "captcha"})
+            raise
+
+    watched._watched = True
+    http.HTTPClient.request = watched
+
+
 def emit_chat_event(evt: dict):
     if not _EMIT_EVENTS:
         return
@@ -848,6 +868,9 @@ def emit_chat_event(evt: dict):
         sys.stdout.flush()
     except Exception:
         pass
+
+
+_watch_for_captchas()
 
 
 # ── The chat log (app/utils/chatlog.py) ───────────────────────────────────────

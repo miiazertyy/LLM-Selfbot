@@ -317,7 +317,7 @@ ui = read("lib/components/LocalAI.svelte")
 check("the search gets a model from Hugging Face for llama.cpp", "<ModelSearch kind={pullKind}" in ui and 's.id === "llamacpp" ? "file"' in ui)
 check("starting a server while the saved address has nothing there moves the app to it, saved",
       'await api.configField("bot.local.base_url", s.base_url);' in ui and "(!baseUrl || !reachable) && s.base_url !== stored" in ui)
-check("the setting says it starts the server above, any of them", "The server above starts when the app opens." in ui)
+check("the setting starts the server above, any of them", "<b>Start it with the app</b>" in ui)
 check("the models are asked again while it is open, so ones removed elsewhere go",
       "visiblePoll(() => refreshModels(), 10_000)" in ui)
 check("every other server says where its models come from, in the search's place",

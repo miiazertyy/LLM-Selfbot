@@ -104,14 +104,14 @@
   let swept = false;
   /** Past its sweep in: from then on the marks a hand passes are plucked (not during it, when a page of dials sweeping at once made opening the tab stutter). */
   let plucking = false;
-  /** Off screen as its tab opened: the first setting is not swept to. */
+  /** Gone before it was ever seen: nothing to sweep. */
   let instant = false;
   /** Sweeping in where it is seen: the marks it passes are heard, softly, though not plucked. */
   let winding = false;
   $effect(() => {
     const el = svg;
     if (el) whenShown(el).then(() => onScreen(el)).then((seen) => {
-      // Below what the window shows: straight to its value, no sweep nobody would see.
+      // Waits to be seen: scrolled to later, it sweeps in then, with its sound.
       instant = !seen;
       winding = seen && $motionEnabled;
       shown = true;

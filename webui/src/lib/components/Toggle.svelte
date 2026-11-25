@@ -86,7 +86,7 @@
    * after, is quick again.
    */
   let arriving = $state(false);
-  /** Whether it was on screen as its tab opened: only then is its arrival heard. */
+  /** Whether it was seen: its arrival waits for that, and only then is it heard. */
   let heardIn = false;
   /** How long its knob waits for its turn in a run of switches going on (see the domino above). */
   let wait = $state(0);
@@ -107,7 +107,7 @@
         afterLanding(el, () =>
           onScreen(el).then((seen) => {
             if (!alive) return;
-            // Below what the window shows, or a click came first: on at once, no show.
+            // Its tab went before it was seen, or a click came first: on at once, no show.
             if (!seen || !arriving) {
               arriving = false;
               arrived = true;

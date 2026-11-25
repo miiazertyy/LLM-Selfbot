@@ -419,6 +419,126 @@ check("what it says after acting carries on the last player's conversation",
 check("whose channel is the world's chat, or their own when it whispers",
       brain.Brain(1, server="h-1").channel_of("Ann") == "mcs_h-1"
       and brain.Brain(1, public=False).channel_of("Ann") == "mc_ann")
+
+print("\n== playing: a step toward its goal is a move, not a line of chat ==")
+from app.utils import providers  # noqa: E402
+
+_ask = ("SYSTEM: You are self-prompting with the goal: 'get wood'. Your next response MUST contain a command with "
+        "this syntax: !commandName. Respond:")
+step = [{"role": "system", "content": "[[LSB:CONVERSE]]STATS"}, {"role": "user", "content": _ask}]
+check("mindcraft's self-prompt is a step toward its goal", brain.playing_goal(step[1:]) == "get wood")
+check("  and so is a command's result after it",
+      brain.playing_goal(step[1:] + [{"role": "assistant", "content": '!collectBlocks("oak_log", 4)'},
+                                     {"role": "user", "content": "SYSTEM: Action output:\nCollected 4 oak_log."}])
+      == "get wood")
+check("its own command's result is nobody speaking: 'WEARING: Nothing' was answered as a player, out loud",
+      brain.player_line({"role": "user", "content": "SYSTEM: INVENTORY\n- oak_log: 10\nWEARING: Nothing"}) is None
+      and brain.player_line({"role": "user", "content": "SYSTEM: INVENTORY\nWEARING: \nHead: iron_helmet\nFeet: x"}) is None
+      and brain.player_line({"role": "user", "content": "SYSTEM:\nCRAFTABLE_ITEMS: none"}) is None
+      and brain.player_line({"role": "user", "content": "SYSTEM: Action output:\nCollected 4 oak_log.\nSteve: nice"})
+      == ("Steve", "nice"))
+check("  and the step after it is still a step toward its goal",
+      brain.playing_goal(step[1:] + [{"role": "assistant", "content": "!inventory"},
+                                     {"role": "user", "content": "SYSTEM: INVENTORY\n- oak_log: 10\nWEARING: Nothing"}])
+      == "get wood")
+check("  but not once a player has spoken since, nor with no goal at all",
+      brain.playing_goal(step[1:] + [{"role": "assistant", "content": "!inventory"},
+                                     {"role": "user", "content": "SYSTEM: INVENTORY\nSteve: alicia come here"}]) == ""
+      and brain.playing_goal([{"role": "user", "content": "SYSTEM: Agent executed !followPlayer"}]) == "")
+_chain = [{"provider": "groq", "model": "qwen/qwen3.8-27b"}, {"provider": "groq", "model": "openai/gpt-oss-20b"},
+          {"provider": "groq", "model": "openai/gpt-oss-120b"}]
+check("it plays with the chain's biggest model: gpt-oss-120b over a 27b and a 20b",
+      brain.strongest(_chain)["model"] == "openai/gpt-oss-120b")
+check("  sizes read off the names", brain.size_of("meta-llama/llama-4-scout-17b-16e-instruct") == 17
+      and brain.size_of("llama-3.1-8b-instant") == 8 and brain.size_of("qwen3.8-27b") == 27
+      and brain.size_of("gemini-2.5-pro") == 0)
+check("  and the chain as it is when no name says", brain.strongest([{"provider": "openai", "model": "gpt-4o"}]) is None
+      and brain.strongest([]) is None)
+check("a step's reply: the command alone, mostly",
+      brain.play_move('ooh trees !collectBlocks("oak_log", 4)', roll=0.9) == '!collectBlocks("oak_log", 4)')
+check("  a few words before it now and then",
+      brain.play_move('ooh trees !collectBlocks("oak_log", 4)', roll=0.1) == 'ooh trees !collectBlocks("oak_log", 4)')
+check("  never its plan, whatever the odds",
+      brain.play_move("first i'll gather wood, then craft a table and a pickaxe, then go mining for stone and iron "
+                      '!collectBlocks("oak_log", 4)', roll=0.0) == '!collectBlocks("oak_log", 4)')
+check("  nor narration", brain.play_move("*looks around* !nearbyBlocks", roll=0.0) == "!nearbyBlocks")
+check("  its one command, as mindcraft reads it, and nothing after (gpt-oss-120b's own tokens, the same move again)",
+      brain.play_move('!craftable<|message|><|start|>assistant<|channel|>analysis<|message|>We need to see what can be '
+                      'crafted.!craftRecipe("crafting_table", 1)', roll=0.0) == "!craftable"
+      and brain.play_move('!craftable!craftable!craftRecipe("planks", 5)', roll=0.0) == "!craftable"
+      and brain.play_move('got some !collectBlocks("oak_log", 4) then more', roll=0.0) == 'got some !collectBlocks("oak_log", 4)')
+check("  and a model's format tokens are never said in the game",
+      brain.quiet("nice<|end|><|start|>assistant") == "nice" and brain.quiet("<|channel|>analysis") == "")
+check("  and musing with no move is said nowhere", brain.play_move("hmm what should i do next", roll=0.0) == "")
+_firsts, _played = [], []
+
+
+_rooms = []
+
+
+async def _fake_step(prompt, instructions, history=None, max_tokens=None):
+    _calls.append(instructions)
+    _firsts.append(_ai.FIRST.get().get("replies"))
+    _rooms.append(max_tokens)
+    return 'ooh trees !collectBlocks("oak_log", 4)'
+
+
+_ai.generate_response = _fake_step
+import app.utils.helpers as _helpers  # noqa: E402
+
+_real_chain, _real_odds, _real_load = providers.reply_chain, brain.PLAY_TALK_ODDS, _helpers.load_config
+providers.reply_chain = lambda cfg: list(_chain)
+_helpers.load_config = lambda: {}
+brain.PLAY_TALK_ODDS = 0.0
+player = brain.Brain(1, on_turn=lambda *a: _played.append(a))
+player.last_speaker = "Steve"
+move = asyncio.run(player.answer({"messages": step}))
+check("a step is answered with its move", move == '!collectBlocks("oak_log", 4)', move)
+check("  by the strongest model, for this call only", (_firsts[-1] or {}).get("model") == "openai/gpt-oss-120b"
+      and not _ai.FIRST.get().get("replies"))
+check("  told it is playing, toward its goal", "PLAYING NOW" in _calls[-1] and "'get wood'" in _calls[-1]
+      and "STATS" in _calls[-1])
+check("  with room to think it through, more than a chat line's", _rooms[-1] == brain.PLAY_TOKENS >= 900)
+check("  and a move alone is not put in anyone's conversation", _played == [])
+brain.PLAY_TALK_ODDS = 1.0
+asyncio.run(player.answer({"messages": step}))
+check("  words it said in the game are, in the last player's", len(_played) == 1 and _played[0][0] == "Steve"
+      and _played[0][2].startswith("ooh trees"))
+
+
+async def _spoken_meanwhile():
+    b = brain.Brain(1)
+    b.pace = brain.Pace(3600 * 40)      # its next move a moment off
+    b.pace.tokens = 0.0
+    b.listening = lambda name: False
+    n = len(_calls)
+    play = asyncio.create_task(b.answer({"messages": step}))
+    await asyncio.sleep(0)
+    await b.answer({"messages": [step[0], {"role": "user", "content": "Steve: hi"}]})
+    return await play, len(_calls) - n, b.pace.tokens
+
+
+_meanwhile = asyncio.run(_spoken_meanwhile())
+check("a move waiting its turn is let go when someone speaks meanwhile, unasked and given back",
+      _meanwhile[0] == "" and _meanwhile[1] == 0 and _meanwhile[2] >= 0, str(_meanwhile))
+_p = brain.Pace(120)
+_p.at = 1000.0
+_waits = [_p.wait(1000.0) for _ in range(5)]
+check("its own moves: a few in a row, then one every 40 s at 120 thoughts an hour",
+      _waits[:4] == [0.0] * 4 and abs(_waits[4] - 40.0) < 0.01, str(_waits))
+check("  the next booked after that one", abs(_p.wait(1000.0) - 80.0) < 0.01)
+check("  none waited for past a minute and a half", _p.wait(1000.0) == -1.0)
+_p.give_back()
+check("  and the hour fills it up again", _p.wait(1080.0) == 0.0)
+check("  no limit set: it never waits", brain.Pace(0).wait() == 0.0)
+_b = brain.Budget(4)
+check("its moves leave a quarter of the hour's thoughts for answering people",
+      [_b.take(reserve=1) for _ in range(4)] == [True, True, True, False] and _b.take())
+providers.reply_chain, brain.PLAY_TALK_ODDS, _helpers.load_config = _real_chain, _real_odds, _real_load
+ctx = brain.game_context("STATS", step[1:] + [{"role": "user", "content": "Steve: what are you doing"}],
+                         speaker="Steve")
+check("talked to while playing: it knows what it was doing, said once",
+      "self-prompting" not in ctx and "WHAT YOU WERE DOING: playing, toward 'get wood'" in ctx)
 _ai.generate_response = _real_generate
 persona.brief = _real_brief
 
@@ -514,7 +634,7 @@ check("which the card opens in a browser, the code already in it, rather than as
       'kind: "url", label: "Sign in with browser", to: `https://www.microsoft.com/link?otc=${code}`'
       in read("webui/src/lib/accounts/condition.ts")
       and "openUrl(mcSign.link || mcSign.uri)" in read("webui/src/pages/Accounts.svelte")
-      and "The code is already filled in there." in read("webui/src/pages/Accounts.svelte"))
+      and "The code is filled in." in read("webui/src/pages/Accounts.svelte"))
 check("not let in: tried again, less and less often", "exited too quickly and will not be restarted" in runner_src
       and "RETRY_S" in runner_src)
 check("the brain's token never in the log", "redact" in runner_src and "/v1/…" in runner_src)
@@ -766,6 +886,43 @@ check("the page opens its live view, wide, eyes or above",
 check("ViaProxy installed from Settings, Minecraft", "api.viaProxyInstall()" in read("webui/src/lib/components/MinecraftSetup.svelte"))
 check("and the new parts shipped with the exe", "agent_hooks.mjs" in read("packaging/specparts.py")
       and '(src / "minecraft" / "agent_hooks.mjs", "agent_hooks.mjs")' in read("app/platforms/minecraft/worker.py"))
+_acc = read("webui/src/pages/Accounts.svelte")
+check("the views are cards in the page, grown from the button, not windows over it",
+      '<PageSheet open={!!watchFor} wide from={viewFrom}' in _acc and "<PageSheet open={!!liveFor} from={viewFrom}" in _acc
+      and "viewFrom = pressedRect(); placeView(r.slot.id); watchFor = r.slot;" in _acc
+      and "<Modal open={!!watchFor}" not in _acc)
+check("  under the row of the card it was opened from, the add tile still last",
+      '<div class="acct-view" style="order: {viewOrder}">{@render viewSheets()}</div>' in _acc
+      and 'class="flex" style="order: {i * 2}"' in _acc and ".acct-grid > .add-tile { order: 100000; }" in _acc
+      and ".acct-view:not(:has(:global(.psheet))) { display: none; }" in _acc)
+check("  and what it sees comes in faster: 400 ms, 150 while driving",
+      "const every = driving ? 150 : 400;" in read("webui/src/lib/accounts/WatchView.svelte"))
+
+print("\n== what it does on its own, and who it answers ==")
+from app.platforms.minecraft.playgoal import DEFAULT_PLAY_GOAL  # noqa: E402
+from app.web import descriptions as _desc, schema as _schema  # noqa: E402
+
+check("a goal of its own by default, playing the server's game", worker.DEFAULTS["play_goal"] == DEFAULT_PLAY_GOAL
+      and "Never spend money" in DEFAULT_PLAY_GOAL and worker.DEFAULTS["answer_all_chat"] is False)
+check("  in one line, not past 600 characters; emptied, it waits to be told",
+      worker.play_goal({"play_goal": "  mine\n  diamonds "}) == "mine diamonds"
+      and len(worker.play_goal({"play_goal": "x " * 900})) <= 600 and worker.play_goal({"play_goal": ""}) == "")
+_fields = {f["key"]: f for f in _schema.CONFIG_SCHEMA}
+check("  both in Settings, described", _fields["minecraft.play_goal"]["default"] == DEFAULT_PLAY_GOAL
+      and _fields["minecraft.answer_all_chat"]["default"] is False and "minecraft.play_goal" in _desc.DESCRIPTIONS
+      and "minecraft.answer_all_chat" in _desc.DESCRIPTIONS
+      and '"minecraft.play_goal"' in read("webui/src/lib/settingsmap.ts")
+      and '"minecraft.answer_all_chat"' in read("webui/src/lib/settingsmap.ts"))
+_bridge = read("app/platforms/snapchat_bridge.py")
+_runner = read("app/platforms/minecraft/minecraft_runner.mjs")
+check("  and handed to its runner, then to the bot",
+      '"MC_PLAY_GOAL": mcw.play_goal(mc)' in _bridge and '"MC_ANSWER_ALL": "1" if mc.get("answer_all_chat") else ""' in _bridge
+      and '"MC_CALLED": ",".join(_mc_called_names())' in _bridge
+      and "env.LSB_PLAY_GOAL = PLAY_GOAL;" in _runner and "env.LSB_ANSWER_ALL = ANSWER_ALL;" in _runner
+      and "env.LSB_CALLED = CALLED;" in _runner)
+_hooks_src = read("app/platforms/minecraft/agent_hooks.mjs")
+check("  where it plays on its own once it is in a world", "keepPlaying(bot, agent);" in _hooks_src
+      and "if (!worthAnswering(bot, who[0], who[1], event === \"whisper\")) return undefined;" in _hooks_src)
 
 print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
 if FAIL:

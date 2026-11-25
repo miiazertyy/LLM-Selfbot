@@ -170,10 +170,7 @@
     <div class="flex items-center gap-4 pb-3">
       <div class="min-w-0 flex-1">
         <div class="text-[13px] text-ink">React with emoji</div>
-        <p class="mt-0.5 text-[11px] leading-relaxed text-faint">
-          Let it tap an emoji on a message when the moment calls for one. Off
-          means it only ever replies with words.
-        </p>
+
       </div>
       <Toggle checked={enabled} onchange={(v) => (enabled = v)} />
     </div>
@@ -183,9 +180,7 @@
         <div class="min-w-0 sm:flex-1">
           <div class="text-[13px] text-ink">How often it reacts</div>
           <p class="mt-0.5 text-[11px] leading-relaxed text-faint">
-            It reacts <span class="text-ink/80">{rateWord}</span>. The AI asks
-            for a reaction on almost every reply, so this is what keeps it
-            occasional rather than constant.
+            It reacts <span class="text-ink/80">{rateWord}</span>. 
           </p>
         </div>
         <div class="flex items-center gap-2 sm:shrink-0">
@@ -211,9 +206,8 @@
         <div class="min-w-0 sm:flex-1">
           <div class="text-[13px] text-ink">Reacting instead of replying</div>
           <p class="mt-0.5 text-[11px] leading-relaxed text-faint">
-            Answering with only an emoji and no words, the way you laugh
-            something off. Happens <span class="text-ink/80">{onlyWord}</span>.
-            Never used on a question.
+            Only an emoji, no words. Happens <span class="text-ink/80">{onlyWord}</span>.
+            Never on a question.
           </p>
         </div>
         <div class="flex items-center gap-2 sm:shrink-0">
@@ -239,9 +233,7 @@
     <div class="py-3 {enabled ? '' : 'pointer-events-none opacity-40'}">
       <div class="text-[13px] text-ink">The emoji it uses</div>
       <p class="mt-0.5 text-[11px] leading-relaxed text-faint">
-        The AI picks from this list and nothing else, so anything it invents is
-        ignored rather than sent and rejected by Discord. Click one below to
-        remove it, or browse the full set to add more.
+        Only these are used. Click one to remove it.
       </p>
 
       <div class="mt-2.5 flex flex-wrap gap-1.5">
@@ -257,7 +249,7 @@
           </button>
         {:else}
           <p class="text-[11px] text-warn">
-            Nothing left. Add at least one, or turn reactions off above.
+            None left. Add one, or turn reactions off.
           </p>
         {/each}
       </div>
@@ -292,8 +284,7 @@
         </div>
       {/if}
       <p class="mt-1.5 text-[10px] text-faint/70">
-        {emojis.length} of {MAX}. They are sent to the AI on every reply, so a
-        long list costs a little of every request.
+        {emojis.length} of {MAX}. A long list makes every reply cost a bit more.
       </p>
     </div>
   </div>

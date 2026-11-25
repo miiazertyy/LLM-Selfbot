@@ -1630,6 +1630,7 @@ async function main() {
     if (currentUrl.includes("accounts.snapchat.com") && !currentUrl.includes("/welcome")) {
       setState("awaiting-verification",
                "Snapchat wants an email or code. Finish it in the Chrome window.");
+      tellPython({ kind: "attention", what: "verify" });
       const verified = await bot.awaitEmailVerification(verifyWait);
       if (!verified) {
         setState("awaiting-verification",
@@ -1669,6 +1670,7 @@ async function main() {
       if (stuckOnAuth) {
         setState("awaiting-verification",
                  "A late verification step appeared. Finish it in the Chrome window.");
+        tellPython({ kind: "attention", what: "verify" });
         console.error("[Snap] Snapchat is still asking for verification. Leaving the browser open.");
         console.error("[Snap] Finish it there, then stop and start the account from the panel.");
         return;

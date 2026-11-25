@@ -158,8 +158,8 @@ check("and .env wins over the config, as the other platforms' runners read their
       settings({"max_sends_per_hour": 7})["max_sends_per_hour"] == 3)
 os.environ.pop("TELEGRAM_MAX_SENDS_PER_HOUR")
 keys = {f["key"] for f in schema.CONFIG_SCHEMA if f["key"].startswith("telegram.")}
-check("every setting is in the schema, said in words, and named",
-      len(keys) >= 19 and all(descriptions.DESCRIPTIONS.get(k) for k in keys)
+check("every setting is in the schema, named, with a line where the name doesn't say it all",
+      len(keys) >= 19 and all(k in descriptions.DESCRIPTIONS for k in keys)
       and all(descriptions.label_for(k) for k in keys), sorted(keys - set(descriptions.DESCRIPTIONS)))
 check("each one the client reads is one the panel can set",
       {f"telegram.{k}" for k in DEFAULTS} <= keys, sorted({f"telegram.{k}" for k in DEFAULTS} - keys))

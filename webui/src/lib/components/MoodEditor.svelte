@@ -179,10 +179,7 @@
   <div class="flex flex-wrap items-center justify-between gap-3 border-b border-edge/60 pb-3">
     <div class="min-w-0 flex-1">
       <div class="text-[13px] text-ink">Drift between moods</div>
-      <p class="mt-0.5 text-[11px] leading-relaxed text-faint">
-        The bot picks one of these and writes that way for a while, then
-        changes. Off means it always sounds the same.
-      </p>
+
     </div>
     <Toggle checked={enabled} onchange={(v) => (enabled = v)} />
   </div>
@@ -208,9 +205,8 @@
   {#if asText}
     <div class="py-3">
       <p class="mb-2 text-[11px] leading-relaxed text-faint">
-        One mood per line, written as <span class="font-mono text-muted">name: how it writes</span>.
-        Paste a set here, or ask a model for one and paste that. Replacing the
-        text replaces every mood.
+        One per line, as <span class="font-mono text-muted">name: how it writes</span>.
+        
       </p>
       <textarea
         bind:value={textDraft}
@@ -254,7 +250,7 @@
       </div>
     {:else}
       <p class="py-4 text-[13px] text-muted">
-        No moods yet, so the bot always sounds the same.
+        No moods yet.
       </p>
     {/each}
   </div>

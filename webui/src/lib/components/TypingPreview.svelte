@@ -65,7 +65,7 @@
     </div>
   {:else}
     <p class="mt-2 text-[12px] text-muted">
-      Realistic typing is off, so replies go out as soon as they are written: no read delay, no typing indicator.
+      Realistic typing is off, so replies go out at once.
     </p>
   {/if}
 </div>

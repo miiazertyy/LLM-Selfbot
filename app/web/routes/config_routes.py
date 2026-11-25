@@ -198,8 +198,12 @@ async def post_config(request: Request):
 @router.post("/api/config/field")
 async def set_field(request: Request):
     body = await request.json()
-    key, value = body.get("key"), body.get("value")
-    persona = _persona_param(body.get("persona"))
+    return await save_field(request, body.get("key"), body.get("value"), body.get("persona"))
+
+
+async def save_field(request: Request, key, value, persona=None) -> dict:
+    """One setting saved, and told to whatever runs on it: the page's controls and the AI tools (app/utils/apptools.py)."""
+    persona = _persona_param(persona)
     if not key:
         raise HTTPException(status_code=400, detail="key required")
     # What it holds now, for the persona it is set for: the shape a new value has to have.
@@ -317,10 +321,14 @@ def schema(request: Request, persona: str = ""):
 
     With a persona, each field's value is that persona's, and says whether it is the persona's own (`overridden`),
     what everyone has (`base`), and whether it can differ per persona at all (`global_only`)."""
+    return fields_for(_persona_param(persona))
+
+
+def fields_for(pid: str) -> dict:
+    """Every setting, described, as this persona has it ("" for everyone's)."""
     from app.utils import personas
     from app.web import descriptions as desc
 
-    pid = _persona_param(persona)
     cfg = _settings_for(pid)
     base_cfg = load_config()
     out, seen = [], set()
@@ -339,6 +347,7 @@ def schema(request: Request, persona: str = ""):
             f["type"] = "str"
             f["current"] = "" if f["current"] is None else str(f["current"])
         f["description"] = desc.DESCRIPTIONS.get(f["key"], "")
+        f["unit"] = desc.unit_for(f["key"])
         f["requires_restart"] = desc.needs_restart(f["key"])
         f["common"] = f["key"] in desc.COMMON
         out.append(f)
@@ -353,6 +362,7 @@ def schema(request: Request, persona: str = ""):
             "label": desc.label_for(key),
             "section": desc.section_for(key),
             "description": desc.DESCRIPTIONS.get(key, ""),
+            "unit": desc.unit_for(key),
             "requires_restart": desc.needs_restart(key),
             "common": key in desc.COMMON,
             "current": value,

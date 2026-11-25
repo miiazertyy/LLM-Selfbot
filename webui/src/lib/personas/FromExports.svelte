@@ -211,7 +211,7 @@
     <div class="fx-writing">
       <b>{writeLine}</b>
       <span class="fx-bar is-wide"><i style="width: {writeFill}%"></i></span>
-      <small>{st?.model?.local ? "On this computer: nothing leaves it." : `Samples of your messages go to ${st?.model?.label || "the background work model"}.`}</small>
+      <small>{st?.model?.local ? "Nothing leaves this computer." : `Samples of your messages go to ${st?.model?.label || "the background work model"}.`}</small>
     </div>
   {:else if result}
     <p class="fx-lead">Made from {result.count} of your messages.</p>
@@ -235,7 +235,7 @@
       <Button size="sm" onclick={make} loading={busy} disabled={!name.trim()}>Create</Button>
     </div>
   {:else}
-    <p class="fx-lead">It learns how you text from what you wrote yourself, never from the people you talk to. Pick a social to see how to get its export.</p>
+    <p class="fx-lead">Only what you wrote is used. Pick a social to see how to export it.</p>
 
     <!-- Together, with none of the card's gap between: the panel's own margin folds with it, so nothing jumps. -->
     <div>

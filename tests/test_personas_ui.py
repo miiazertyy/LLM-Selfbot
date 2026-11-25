@@ -39,7 +39,8 @@ css = read("app.css")
 orb = read("lib/personas/PersonaOrb.svelte")
 dots = read("lib/personas/ColorDots.svelte")
 menu = read("lib/personas/PersonaMenu.svelte")
-scope_pill = read("lib/personas/PersonaScope.svelte")
+scope_pill = read("lib/personas/SidebarPersona.svelte")
+app_src = read("App.svelte")
 newp = read("lib/personas/NewPersona.svelte")
 acctmenu = read("lib/personas/AccountMenu.svelte")
 logic = read("lib/personas/logic.ts")
@@ -68,7 +69,7 @@ check("in the sidebar under Run, after the Dashboard, with an icon of its own",
       re.search(r'dashboard: \{[^\n]*\n\s*// [^\n]*\n\s*profiles:\s+\{ title: "Profiles",\s+icon: "layers"', app) is not None
       and "layers:" in icon)
 check("and Persona is one profile's persona again", 'persona:   { title: "Persona",' in app)
-check("a card each, in its colour", "{#each cards as c (c.p.id)}" in profiles and 'style="--pc: {colorOf(p)};' in profiles)
+check("a card each, in its colour", "{#each cards as c, i (c.p.id)}" in profiles and 'style="--pc: {colorOf(p)};' in profiles)
 check("whether it is running, from what its accounts are doing", "runningLine(accts.length, live, other)" in profiles
       and 'class="pr-state is-{c.state.tone}"' in profiles and "export function runningLine(" in logic)
 check("its face breathes in its colour while one of its accounts is up, amber while one starts",
@@ -170,8 +171,7 @@ check("motion off: all of it still", all(f':global(:root[data-motion="off"]) {se
       (".pr-hero::after,", ".pr-l,", ".pr-grid *,", ".pr-card::before,", ".pr-card::after,", ".pr-acct,", ".pr-menu > *,")))
 
 print("\n== Persona, one profile's ==")
-check("a pill says whose, once there is more than one", '<PersonaScope value={selected} label="Persona of" onchange={select} />' in page
-      and "{#if list.length > 1}" in page)
+check("no picker of its own: it follows the sidebar's profile", "PersonaScope" not in page and "const want = $viewPersona;" in page)
 check("the page wears the profile's colour", 'style="--persona-color: {color}"' in page)
 check("and glides to another's: the colour is registered, so it can",
       "@property --persona-color {" in css and 'syntax: "<color>";' in css and "transition: --persona-color 0.6s" in page)
@@ -217,10 +217,11 @@ check("each card's moods are its profile's", "loadMoods(false, pid)" in accounts
       and "moods={moodsBy[personaIdOf(r.slot)] ?? moods}" in accounts and "api\n      .config(persona)" in state)
 check("a new account can be given one before it first starts",
       'aria-label="Profile"' in accounts and accounts.count("await giveNewPersona(id);") == 2)
-check("the add tile's line", "Each one runs on its own, with its own login, mood and profile." in accounts)
+check("each add tile says only what its platform needs", "Uses the account's token." in accounts
+      and "Each one runs on its own" not in accounts)
 
 print("\n== Pictures, one persona's ==")
-check("a pill says whose, and switches", '<PersonaScope value={pid} label="Pictures of" onchange={switchTo} />' in pics)
+check("no picker of its own: it follows the sidebar's profile", "PersonaScope" not in pics and "switchTo(want)" in pics)
 check("the drop zone says whose they are going to", "Drop pictures or videos for <b" in pics)
 check("one list per persona, Default's where it always was",
       'resource(as ? `pictures:${as}` : "pictures"' in pics)
@@ -236,7 +237,7 @@ check("what its new pictures get is its own setting",
       'api.configField("bot.pictures.auto_look.mode", mode, { persona })' in pics)
 
 print("\n== Memory, one persona's ==")
-check("a pill says whose", "<PersonaScope value={pid} onchange={switchTo} />" in memory)
+check("no picker of its own: it follows the sidebar's profile", "PersonaScope" not in memory and "switchTo(want)" in memory)
 check("the title says whose, typing itself in", "`What ${whoName} remembers`" in memory and 'sound: "key"' in memory)
 check("every read and write carries it", all(s in memory for s in (
     "api.memoryUser(uid, who)", "api.memoryPut(selected, body, who)", "api.memoryDelete(selected, { key }, who)",
@@ -247,8 +248,10 @@ check("a person's own tone is not called a persona any more",
       and 'label: "Personas"' not in memory and "Persona for this person" not in memory)
 
 print("\n== Settings, set to one persona ==")
-check("a pill by the search: everyone's, or one persona's",
-      '<PersonaScope value={scope} everyone label="Settings for" onchange={setScope} shake={scopeShake} />' in settings)
+check("by the search: everyone's, or the sidebar's profile's own", '<Segmented label="Whose settings"' in settings
+      and 'id: "all", label: "Everyone"' in settings and "await setScope(id === \"own\" ? working : \"\");" in settings)
+check("  the sidebar's profile changing takes its own settings with it, unless something is unsaved",
+      "if (scope && scope !== w) viewPersona.set(scope);" in settings)
 check("arriving from a persona's Change settings, set to it", "const want = $settingsScope;" in settings
       and 'settingsScope.set("");' in settings)
 check("not switched with changes unsaved: the pill shakes no", "Save or undo first." in settings and "scopeShake = true;" in settings)
@@ -261,7 +264,14 @@ check("its own rows tagged in its colour, with a way back to everyone's",
       "{scopeName}'s own" in settings and "Use everyone's" in settings and "api.resetPersonaSetting(scope, x.key)" in settings)
 check("the app's own rows say they are everyone's", "Same for everyone" in settings and "Same for every profile." in settings)
 check("a dot in its colour on the tabs holding its own", settings.count('class="settings-own-dot"') == 2)
-check("a settings file and the raw editor only for everyone's", "{#if !scope}\n      <div class=\"flex shrink-0 gap-2\">\n        <SettingsFile" in settings)
+check("a settings file and the raw editor only for everyone's", "{#if !scope}\n      <SettingsFile onraw={openRaw}" in settings)
+check("  whose settings sits over the tab list, so picking a profile never moves it",
+      '<div class="settings-for" class:is-shake={scopeShake}>' in settings
+      and ".settings-for { width: 214px; margin-right: 12px; }" in read("app.css")
+      and "lg:grid-cols-[214px_minmax(0,1fr)]" in settings)
+check("  the profile shown by its face, as in the sidebar, not a pencil",
+      "face: workingFace" in settings and "<PersonaOrb p={workingP} size={18} ring={false} />" in settings
+      and 'icon: "persona"' not in settings.split('<Segmented label="Whose settings"', 1)[1].split("/>", 1)[0])
 check("the bar says whose", "`Saved for ${scopeName}`" in settings)
 check("the Pictures and Models panels follow it",
       "const persona = usePersona();" in panel and "api.configField(key, value, persona ? { persona } : {})" in panel
@@ -279,13 +289,47 @@ check("search finds profiles, and opens on the one found",
       'group: "Profiles", kind: "persona"' in search and '{ id: "Profiles", icon: "layers" }' in palette
       and 'if (h.kind === "persona") { if (h.section) viewPersona.set(h.section); }' in palette)
 
+print("\n== one switcher, in the sidebar (2026-11-11) ==")
+check("at the top of the sidebar, above the pages", "<SidebarPersona {rail} />" in app_src
+      and app_src.index("<SidebarPersona {rail} />") < app_src.index("<nav bind:this={navEl}"))
+check("no page has a picker of its own any more", not (ROOT / "webui/src/lib/personas/PersonaScope.svelte").exists()
+      and not any("PersonaScope" in s for s in (page, pics, memory, settings)))
+check("it sets the profile every page follows", "viewPersona.set(pid);" in scope_pill and "$viewPersona" in scope_pill)
+check("its face, its name, and how many accounts speak as it", '<b class="sbp-name">{current.name}</b>' in scope_pill
+      and "No accounts yet" in scope_pill)
+check("the others' faces beside it, and the pop-up mark: somewhere to switch to",
+      "list.filter((p) => p.id !== current?.id && p.avatar && !unloaded.includes(p.avatar)).slice(0, 2)" in scope_pill
+      and '<PopupMark class="sbp-mark" />' in scope_pill)
+check("  their real pictures only: an initial on a disc there read as a picture that had not loaded",
+      "<PersonaOrb {p} size={15}" not in scope_pill and "onerror={() => (unloaded = [...unloaded, p.avatar])}" in scope_pill)
+check("its face alone in the rail", "{#if !rail}" in scope_pill and ".sbp.is-rail {" in scope_pill)
+check("a way to the Profiles page from its list", 'label: "Manage profiles"' in scope_pill)
+check("switching is seen and heard: its face pops in, a landing note", "@keyframes sbp-face" in scope_pill
+      and 'play("land", { delay: 120 })' in scope_pill and 'play(open ? "menu" : "open")' in scope_pill)
+# 2026-11-11: filled with the profile's own colour it "doesn't match the themes" (a blue-grey slab in a purple one).
+check("tinted with the theme like every button, nothing round its edge at rest; the profile's colour only in its face",
+      "var(--pc)" not in scope_pill and "background-color" not in scope_pill and "--pc:" not in scope_pill
+      and ".sbp.is-open::before { --d3-lit: 1; }" in scope_pill and "inset 0 0 0 1px" not in scope_pill
+      and "<PersonaOrb p={current}" in scope_pill)
+check("  its list marks the picked one in the theme too",
+      ".pm-row.is-on { background: color-mix(in srgb, var(--color-accent) 14%, transparent); }" in menu
+      and ".pm-check { display: grid; color: var(--color-accent); }" in menu and "var(--pc)" not in menu)
+check("  and Settings' Everyone | profile switch keeps the theme's pill for the profile",
+      "tone: colorOf(workingP)" not in settings)
+# 2026-11-11: the rows' slide in overshot by a pixel, a sideways scrollbar came and went, and the line above
+# "Manage profiles" dropped 9px and back as the list opened.
+check("its list, and the accounts one, never scroll sideways, so nothing jumps as the rows slide in",
+      "margin: 0 -6px; padding: 0 6px; overflow-x: hidden; overflow-y: auto;" in menu
+      and "overflow-x: hidden;" in acctmenu.split("  .am {", 1)[1].split("}", 1)[0])
+check("it joins the app's tinted buttons", sum(".sbp," in line for line in css.splitlines() if ".acct-persona" in line) >= 6)
+
 print("\n== Animations off ==")
 for name, src, rule in (
     ("the Persona page", page, ':global(:root[data-motion="off"]) .ps-orb'),
     ("the Profiles page", profiles, ':global(:root[data-motion="off"]) .pr-card.is-born'),
     ("the chip's flash", card, ':global(:root[data-motion="off"]) .acct-banner-flash { opacity: 0; }'),
     ("the scope tags", css, ':root[data-motion="off"] .settings-scope-tag { animation: none; }'),
-    ("the scope pill", scope_pill, ':global(:root[data-motion="off"]) .psc-pill'),
+    ("the sidebar's profile", scope_pill, ':global(:root[data-motion="off"]) .sbp,'),
     ("the persona menu", menu, ':global(:root[data-motion="off"]) .pm-row'),
 ):
     check(f"{name}: still with Animations off", rule in src)

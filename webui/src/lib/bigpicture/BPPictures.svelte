@@ -194,7 +194,7 @@
           {#key cur.name}
             <span class="bpp-desc" class:is-missing={!cur.description} in:popIn={{ from: 0.98 }}>
               <b>{label(cur.name)}</b>
-              {#if cur.description}{@html discordInline(cur.description)}{:else}No description yet, so it never gets sent.{/if}
+              {#if cur.description}{@html discordInline(cur.description)}{:else}No description, so it's never sent.{/if}
             </span>
           {/key}
         </figcaption>

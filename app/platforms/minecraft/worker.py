@@ -22,6 +22,7 @@ import socket
 from pathlib import Path
 
 from app.platforms.minecraft import brain as brain_mod, install, profile as profile_mod
+from app.platforms.minecraft.playgoal import DEFAULT_PLAY_GOAL
 from app.utils.paths import APP_DIR, DATA_DIR
 
 # What it runs at when nothing says otherwise: a settings file from before Minecraft has no section for it.
@@ -39,7 +40,20 @@ DEFAULTS = {
     "auto_login": True,
     # How far the live view shows, in chunks.
     "view_distance": 6,
+    # What it plays at when nobody has given it a goal (agent_hooks.mjs keepPlaying); "" waits to be told. Without
+    # one it only ever played when given a goal, and in a busy lobby it stood and talked (2026-11-11).
+    "play_goal": DEFAULT_PLAY_GOAL,
+    # Every line of public chat handed to it to answer, as before 2026-11-11. Off: whispers, its name, and whoever it
+    # is talking with, and the rest now and then (agent_hooks.mjs worthAnswering).
+    "answer_all_chat": False,
 }
+
+
+def play_goal(mc: dict) -> str:
+    """The standing goal, in one line and not past 600 characters; "" when Settings' is emptied: it waits to be told."""
+    return " ".join(str(mc.get("play_goal") or "").split())[:600]
+
+
 RUNNER_DIR = install.MC_DIR / "llmselfbot"
 
 

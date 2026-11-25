@@ -308,6 +308,38 @@ export async function hideWindow(page) {
   }
 }
 
+/**
+ * Whether any of `selectors` is a check a person can see on the page now. Being on the page is not enough: Reddit
+ * (and others) load Google's invisible reCAPTCHA on most pages, a hidden 256x60 badge whose address says
+ * size=invisible, so its iframe is always there. Reddit's runner took that for a check every two minutes, put up
+ * "Reddit needs you" and brought its window onto the screen each time (2026-11-11). Shown means not the invisible
+ * kind, at least 60x40, and nothing round it hidden or see-through.
+ */
+export async function checkShown(page, selectors) {
+  try {
+    return await page.evaluate((list) => {
+      const shown = (e) => {
+        if (/[?&]size=invisible/.test(e.getAttribute("src") || "")) return false;
+        const r = e.getBoundingClientRect();
+        if (r.width < 60 || r.height < 40) return false;
+        for (let p = e; p && p !== document.documentElement; p = p.parentElement) {
+          const s = getComputedStyle(p);
+          if (s.display === "none" || s.visibility === "hidden" || Number(s.opacity) === 0) return false;
+        }
+        return true;
+      };
+      for (const q of list) {
+        try {
+          if ([...document.querySelectorAll(q)].some(shown)) return true;
+        } catch { /* a selector this build of the page can't read */ }
+      }
+      return false;
+    }, selectors);
+  } catch {
+    return false;
+  }
+}
+
 /** The page's clock and language set to the persona's (see snapbot.js: one person, not three). */
 export async function persona(page, { locale = "en-US", timezone = "" } = {}) {
   try { await page.setExtraHTTPHeaders({ "Accept-Language": acceptLanguage(locale) }); } catch { /* the default */ }

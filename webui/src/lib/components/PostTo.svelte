@@ -106,8 +106,7 @@
             {#each info?.subreddits ?? [] as s (s)}<option value={s}>r/{s}</option>{/each}
           </select>
           {#if !(info?.subreddits.length)}
-            <span class="pt-fine">Its own profile always takes a post. To use a subreddit, list it in Settings,
-              Reddit, Comments.</span>
+            <span class="pt-fine">Posts to its own profile. For a subreddit, list it in Settings, Reddit, Comments.</span>
           {/if}
         </label>
         <label class="pt-field">
@@ -118,7 +117,7 @@
 
       <label class="pt-field">
         <span class="pt-label">{isReddit ? "Anything else to say" : "What it says"}</span>
-        {#if isStatus}<span class="pt-fine">Everyone who has its number can see a status, for a day.</span>{/if}
+        {#if isStatus}<span class="pt-fine">Anyone with its number sees it for 24 hours.</span>{/if}
         <textarea class="field pt-words" bind:value={words} rows={isReddit ? 4 : 3}
                   placeholder={isReddit ? "optional" : "say something"}></textarea>
         <span class="pt-count" class:is-over={tooLong}>{words.length} / {most}</span>
@@ -128,7 +127,7 @@
         <Toggle size="sm" checked={trial} name="Try it first" onchange={(v: boolean) => (trial = v)} />
         <span>
           <b>Try it first</b>
-          <span class="pt-fine">It fills the post in and leaves without putting it up.</span>
+          <span class="pt-fine">Fills it in without posting.</span>
         </span>
       </label>
     {/if}

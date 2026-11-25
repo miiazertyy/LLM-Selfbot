@@ -95,14 +95,20 @@ check("a theme or a colour, not both", "second = t.b;" in card and 'second = "";
 check("a picture to go with it, picked or dropped", 'accept="image/*"' in card and "ondrop={dropped}" in card and "face," in card)
 check("and it goes on the profile once there is one", "api.uploadPersonaAvatar(r.persona.id, face)" in page)
 check("from your own chats too, in the same card", 'id: "chats"' in card and "<FromExports bind:name" in card and "oncreated={madeFromChats}" in page and "<FromChats" not in page)
-check("said plainly whose messages that is", "never from the people you talk to" in read("lib/personas/FromExports.svelte"))
+check("said plainly whose messages that is", "Only what you wrote is used." in read("lib/personas/FromExports.svelte"))
 check("every control heard", 'play("glint", { strong: true })' in card and 'play("drop")' in card and 'play("lift")' in card)
 dots = read("lib/personas/ColorDots.svelte")
 check("the colours in the rainbow's order, in even rows", "byHue(palette)" in dots and "Math.ceil(palette.length / 2)" in card)
 check("its menu can change to a theme later", 'themes={data.themes}' in page and "recolor(p, hex, second)" in page and "api.updatePersona(p.id, { color: hex, color2: second })" in page)
 orb = read("lib/personas/PersonaOrb.svelte")
-check("its face and its ring run between the two", "--po-c2: {far}" in orb and "var(--po-rim)" in orb)
-check("one colour looks as it did", "p?.color2 || `color-mix(in srgb, ${color} 30%, transparent)`" in orb and 'p?.color2 || "transparent"' in orb)
+check("its ring runs between the two", "--po-rim: {rim}" in orb and "var(--po-rim)" in orb)
+check("one colour looks as it did", "p?.color2 || `color-mix(in srgb, ${color} 30%, transparent)`" in orb)
+# 2026-11-11: a face without a picture was a disc of the persona's colour, which matched no theme ("make those default
+# profile pfp look better and match the theme"). The disc is the theme's; the persona's colour is in the ring.
+_face = orb.split("  .po-face {", 1)[1].split("}", 1)[0]
+check("a face without a picture is the theme's, its initial pale, no rim",
+      "var(--color-accent) 46%" in _face and "--po-c" not in _face and "box-shadow" not in _face
+      and "color-mix(in srgb, var(--color-accent) 25%, white)" in orb and "text-shadow" not in orb)
 check("its card too", "--pc2: {p.color2 || colorOf(p)}" in page and "var(--pc2) var(--pc2-share)" in page)
 
 print("\n== changing theme: the window stays there ==")

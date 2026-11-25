@@ -128,13 +128,12 @@
                   bind:value={caption}></textarea>
       {:else}
         <p class="pi-note">
-          A story goes up through Instagram's phone site, in the same session. If its website will not take one, it
-          says so and nothing is posted.
+          Stories go up through Instagram's mobile site. If it refuses, nothing is posted.
         </p>
       {/if}
       <label class="pi-trial">
         <Toggle size="sm" checked={trial} name="Try it first" onchange={(v: boolean) => (trial = v)} />
-        Try it first: fill it in on Instagram, then leave without posting
+        Try it first, without posting
       </label>
       <div class="pi-go">
         <Button kind="ghost" onclick={() => (open = false)}>Cancel</Button>

@@ -161,7 +161,7 @@
           <Icon name="github" size={12} />On GitHub
         </button>
       </div>
-      <p class="pi-safe"><Icon name="key" size={11} />Only how it talks comes with it. Your accounts, models, keys and limits stay yours.</p>
+      <p class="pi-safe"><Icon name="key" size={11} />Your accounts, models, keys and limits aren't touched.</p>
 
       {#if reporting}
         <div class="pi-report">

@@ -282,7 +282,7 @@
     </button>
   </div>
 
-  <p class="fc-hint">Drag to move it. Scroll or slide to zoom.</p>
+  <p class="fc-hint">Drag to move, scroll to zoom.</p>
 
   <div class="fc-actions">
     <Button kind="ghost" size="sm" onclick={onback}><Icon name="chevron" size={11} class="fc-back" /> Back</Button>

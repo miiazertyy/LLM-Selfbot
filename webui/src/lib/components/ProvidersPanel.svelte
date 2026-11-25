@@ -98,7 +98,7 @@
       {#if p.ready && manage[p.id] && p.id !== "local"}
         <div class="mt-3 rounded-xl bg-black/20 p-3">
           <p class="mb-2 text-[11.5px] text-faint">
-            When one key hits its rate limit the next one takes over, before moving on to the next model.
+            When a key hits its limit, the next key takes over.
           </p>
           <KeyList name={p.id} accounts={false} stamp={p.keys} onchange={() => loadProviders()} />
         </div>
@@ -122,7 +122,7 @@
 
   <h3 class="pp-h mt-6">Add a provider <span>{others.length}</span></h3>
   <p class="-mt-1 mb-3 text-[12px] text-muted">
-    Paste a key and its models show up under Models. Keys stay in .env on this computer.
+    Keys stay in .env on this computer.
   </p>
   <div class="grid gap-3 lg:grid-cols-2 domino" use:domino={{ step: 24, sound: "wind", level: 0.45, once: true }}>
     {#each others as p (p.id)}{@render card(p)}{/each}

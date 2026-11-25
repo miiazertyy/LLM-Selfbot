@@ -1,0 +1,120 @@
+{
+  "bot.desktop.build_source": [
+    {"value":"auto","label":"Automatic","icon":"refresh"},
+    {"value":"custom","label":"Custom","icon":"edit"}
+  ],
+  "telegram.gifts": [
+    {"value":"notify","label":"Tell me","hint":"Waits in Chats for you","icon":"alert"},
+    {"value":"accept","label":"Accept it","icon":"check"},
+    {"value":"off","label":"Leave them","icon":"eyeOff"}
+  ],
+  "discord.gifts.mode": [
+    {"value":"notify","label":"Tell me","hint":"Waits in Chats for you","icon":"alert"},
+    {"value":"accept","label":"Accept it","icon":"check"},
+    {"value":"off","label":"Leave them","icon":"eyeOff"}
+  ],
+  "reddit.posting.where": [
+    {"value":"profile","label":"Its own profile","hint":"Always works","icon":"accounts"},
+    {"value":"subreddits","label":"The subreddits above","hint":"Young accounts may be refused","icon":"chats"}
+  ],
+  "bot.memory_summary.length": [
+    {"value":"short","label":"Short","hint":"A line or two","icon":"minimize"},
+    {"value":"medium","label":"Medium","hint":"A short paragraph","icon":"order"},
+    {"value":"detailed","label":"Detailed","icon":"logs"}
+  ],
+  "bot.memory_summary.language": [
+    {"value":"auto","label":"Same as the chat","icon":"chats"},
+    {"value":"en","label":"English","mark":"🇬🇧"},
+    {"value":"fr","label":"French","mark":"🇫🇷"},
+    {"value":"es","label":"Spanish","mark":"🇪🇸"},
+    {"value":"de","label":"German","mark":"🇩🇪"},
+    {"value":"pt","label":"Portuguese","mark":"🇵🇹"},
+    {"value":"it","label":"Italian","mark":"🇮🇹"},
+    {"value":"ar","label":"Arabic","mark":"🇸🇦"},
+    {"value":"nl","label":"Dutch","mark":"🇳🇱"}
+  ],
+  "bot.calls.answer": [
+    {"value":"known","label":"People it knows","hint":"Anyone it has talked to","icon":"accounts"},
+    {"value":"anyone","label":"Anyone","icon":"globe"},
+    {"value":"nobody","label":"Nobody","icon":"eyeOff"}
+  ],
+  "bot.message_style.mode": [
+    {"value":"short","label":"Short","hint":"One line","icon":"send"},
+    {"value":"balanced","label":"Balanced","hint":"A few sentences","icon":"chats"},
+    {"value":"chatty","label":"Chatty","hint":"Several messages","icon":"sparkle"}
+  ],
+  "bot.web.search_with": [
+    {"value":"auto","label":"Automatic","hint":"Google, then DuckDuckGo. Free","icon":"globe"},
+    {"value":"google","label":"Google","hint":"Uses a hidden browser","icon":"search"},
+    {"value":"duckduckgo","label":"DuckDuckGo","hint":"No browser needed","icon":"search"},
+    {"value":"brave","label":"Brave","hint":"Needs BRAVE_API_KEY","icon":"key"},
+    {"value":"tavily","label":"Tavily","hint":"Needs TAVILY_API_KEY","icon":"key"}
+  ],
+  "bot.client_profile": [
+    {"value":"web","label":"Web browser","icon":"globe"},
+    {"value":"desktop","label":"Desktop app","icon":"monitor"}
+  ],
+  "tiktok.live.answer_mode": [
+    {"value":"all","label":"All of them","icon":"chats"},
+    {"value":"questions","label":"Questions","hint":"And lines that name it","icon":"info"},
+    {"value":"named","label":"When named","icon":"persona"}
+  ],
+  "tiktok.live.tone": [
+    {"value":"persona","label":"Its usual self","icon":"persona"},
+    {"value":"hype","label":"Hype","mark":"🔥"},
+    {"value":"chill","label":"Chill","mark":"🌙"},
+    {"value":"funny","label":"Funny","mark":"😂"},
+    {"value":"sweet","label":"Sweet","mark":"🌸"}
+  ],
+  "tiktok.live.language": [
+    {"value":"viewer","label":"Theirs","hint":"Each viewer's own language","icon":"chats"},
+    {"value":"persona","label":"Its own","hint":"The persona's language","icon":"persona"}
+  ],
+  "tiktok.live.overlay_position": [
+    {"value":"bottom","label":"Bottom","icon":"download"},
+    {"value":"middle","label":"Middle","icon":"minimize"},
+    {"value":"top","label":"Top","icon":"upload"}
+  ],
+  "tiktok.live.overlay_size": [
+    {"value":"small","label":"Small"},
+    {"value":"medium","label":"Medium"},
+    {"value":"large","label":"Large"}
+  ],
+  "tiktok.live.overlay_theme": [
+    {"value":"dark","label":"Dark","mark":"⬛"},
+    {"value":"light","label":"Light","mark":"⬜"},
+    {"value":"tiktok","label":"TikTok","hint":"Like TikTok's own chat","icon":"tiktok"}
+  ],
+  "tiktok.posting.privacy": [
+    {"value":"everyone","label":"Everyone","icon":"globe"},
+    {"value":"friends","label":"Friends","hint":"Followers it follows back","icon":"accounts"},
+    {"value":"only_me","label":"Only me","icon":"key"}
+  ],
+  "minecraft.auth": [
+    {"value":"offline","label":"No account","hint":"A LAN world, or online mode off","icon":"globe"},
+    {"value":"microsoft","label":"Microsoft","hint":"Online servers, signed in once","icon":"key"}
+  ],
+  "minecraft.translate_versions": [
+    {"value":"auto","label":"When needed","hint":"For servers not on 1.21","icon":"refresh"},
+    {"value":"always","label":"Always","icon":"globe"},
+    {"value":"off","label":"Never","icon":"close"}
+  ],
+  "minecraft.persona": [
+    {"value":"brief","label":"Brief","hint":"Fits free models","icon":"minimize"},
+    {"value":"full","label":"Full","icon":"persona"}
+  ],
+  "imessage.thread_replies": [
+    {"value":"late","label":"When needed","hint":"When others wrote since","icon":"chats"},
+    {"value":"always","label":"Always","icon":"undo"},
+    {"value":"never","label":"Never","icon":"close"}
+  ],
+  "imessage.send_method": [
+    {"value":"auto","label":"Automatic","icon":"refresh"},
+    {"value":"private-api","label":"Private API","hint":"Needs it on the Mac","icon":"key"},
+    {"value":"apple-script","label":"AppleScript","hint":"Works without it","icon":"terminal"}
+  ],
+  "services.webui.bind": [
+    {"value":"127.0.0.1","label":"This computer","icon":"monitor"},
+    {"value":"0.0.0.0","label":"Local network","hint":"Phones on your Wi-Fi too","icon":"globe"}
+  ]
+}

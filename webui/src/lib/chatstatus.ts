@@ -67,11 +67,10 @@ export function statusOf(u: ChatUser, ctx: StatusContext): Status {
       case "waiting":
         return { phase: "live", tone: "accent", step: 1, short: c ? `Replies in ${c}` : "Replying any moment",
                  title: c ? `Replies in ${c}` : "Replying any moment",
-                 detail: "Waiting in case they send more, then it reads everything and answers.",
+                 detail: "Waiting in case they send more.",
                  eta: s.eta, since: s.since };
       case "writing":
-        return { phase: "live", tone: "accent", step: 2, short: "Writing a reply", title: "Writing a reply",
-                 detail: "The model is writing it now." };
+        return { phase: "live", tone: "accent", step: 2, short: "Writing a reply", title: "Writing a reply" };
       case "looking":
         // A look online before it answers (app/utils/web/lookup.py): what it is finding out, in its own words.
         return { phase: "live", tone: "accent", step: 2, short: "Looking it up", title: "Looking it up online",
@@ -79,14 +78,13 @@ export function statusOf(u: ChatUser, ctx: StatusContext): Status {
       case "cooldown":
         return { phase: "live", tone: "accent", step: 3, short: c ? `Sends in ${c}` : "Sending soon",
                  title: c ? `Pacing, sends in ${c}` : "Sending any moment",
-                 detail: "Held so replies to different people never land seconds apart.",
+                 detail: "So replies to different people don't land seconds apart.",
                  eta: s.eta, since: s.since };
       case "queued":
         return { phase: "live", tone: "accent", step: 4, short: "Next to send", title: "Next in line to send",
                  detail: "Another reply is going out first." };
       case "sending":
-        return { phase: "live", tone: "good", step: 4, short: "Typing…", title: "Typing it out",
-                 detail: "The typing indicator is up in their DM right now." };
+        return { phase: "live", tone: "good", step: 4, short: "Typing…", title: "Typing it out" };
       case "skipped":
         return { phase: "needs", tone: "muted", short: "Won't answer", title: "It won't answer this on its own",
                  detail: s.reason ? `Because ${s.reason}.` : undefined };
@@ -105,7 +103,7 @@ export function statusOf(u: ChatUser, ctx: StatusContext): Status {
   }
   if (u.ts && now - u.ts > 3600) {
     return { phase: "needs", tone: "warn", short: "Came in while off", title: "Arrived while the bot was off",
-             detail: "It does not go back through old messages on its own. Reply now answers it." };
+             detail: "It doesn't answer old messages by itself. Reply now answers it." };
   }
   return { phase: "needs", tone: "muted", short: "Not picked up", title: "Not picked up",
            detail: "It won't answer this on its own. Reply now answers it." };

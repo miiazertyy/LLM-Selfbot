@@ -181,9 +181,8 @@ check("a dropdown: the server's own first, then each version it plays, newest fi
       and '{ value: "custom", label: "Custom", hint: "Type the version", icon: "edit" }' in st)
 check("one typed earlier, not on the list, shows as Custom with it in the box",
       '<Select value={mcKnown(v) ? v : "custom"} options={MC_VERSIONS}' in st and "{#if !mcKnown(v)}" in st)
-check("ViaProxy named for what it does: any version's servers, as ViaFabricPlus",
-      "as ViaFabricPlus does" in read("app/web/descriptions.py")
-      and '"label": "Other versions (ViaProxy)"' in read("app/web/schema.py"))
+check("ViaProxy named for what it does: other versions' servers",
+      '"label": "Other versions (ViaProxy)"' in read("app/web/schema.py"))
 
 print("\n== what it sees, as it moves ==")
 hooks = read("app/platforms/minecraft/agent_hooks.mjs")
@@ -197,8 +196,8 @@ check("with the bot itself still drawn, as its own packet",
       'socket.emit("position", { pos, yaw, addMesh: true });' in hooks)
 check("and the page's own camera settled first, so it never fights ours",
       "The page places its own camera on the first position it is sent" in hooks)
-check("said as what it is",
-      "Over its shoulder, following it about." in read("webui/src/lib/accounts/WatchView.svelte"))
+check("no caption saying what the view already shows",
+      "Over its shoulder" not in read("webui/src/lib/accounts/WatchView.svelte"))
 
 print("\n== its window ==")
 from app.web import schema  # noqa: E402

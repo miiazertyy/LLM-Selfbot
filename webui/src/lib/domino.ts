@@ -7,8 +7,9 @@
  * (app.css draws the pop): `<div class="domino" use:domino>`, or
  * `use:domino={{ step: 50, sound: "wind" }}`. The run waits for the block it
  * is in to land (cascade.ts), and for its place in a second, smaller wave down
- * that block, as a chart's bars do (growin.ts). Only the items the window
- * shows take a turn: the rest are simply there when scrolled to. Items that
+ * that block, as a chart's bars do (growin.ts). A list out of sight as the tab
+ * opens has its run when it is scrolled to. Within a list, only the items the
+ * window shows take a turn: the rest are simply there when scrolled to. Items that
  * come later (a list filling in once its data arrives, a new row) pop in on
  * their own, quietly. The notes are booked on the sound card's clock with the
  * items' CSS delays, so a busy moment does not bunch them up. With the app's
@@ -22,8 +23,9 @@ import { play, type UISound } from "./uisound";
 /**
  * One thing arriving with a pop of its own (a check mark, a ring): heard as it
  * pops, which is a moment into its block's drop (what a block animates waits
- * that long), and only where it can be seen. `use:chime={"done"}`, or with the pop's
- * own CSS delay, `use:chime={{ sound: "done", delay: 450 }}`.
+ * that long). Out of sight then, the pop and its sound wait until it is scrolled
+ * to. `use:chime={"done"}`, or with the pop's own CSS delay,
+ * `use:chime={{ sound: "done", delay: 450 }}`.
  */
 export function chime(node: HTMLElement, what: UISound | { sound: UISound; delay?: number } = "land") {
   if (!get(motionEnabled)) return;
@@ -31,7 +33,14 @@ export function chime(node: HTMLElement, what: UISound | { sound: UISound; delay
   whenShown(node).then(() => afterLanding(node, () => {
     // Asked there and then, not of an observer a frame or two later: the pop it goes with has started.
     const r = node.getBoundingClientRect();
-    if (r.width > 0 && r.bottom > 0 && r.top < innerHeight && get(motionEnabled)) play(sound, { delay });
+    if (r.width <= 0 || !get(motionEnabled)) return;
+    if (r.bottom > 0 && r.top < innerHeight) return play(sound, { delay });
+    // app.css pauses whatever is in [data-arriving]: held, the pop is still to come when it is seen.
+    node.dataset.arriving = "";
+    onScreen(node).then((seen) => {
+      delete node.dataset.arriving;
+      if (seen) play(sound, { delay });
+    });
   }));
 }
 

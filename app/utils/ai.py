@@ -1009,8 +1009,8 @@ def _show_thinking(response):
         log_thinking(thought, last_reply_model)
 
 
-async def generate_response(prompt, instructions, history=None):
-    """Completion request returning the response text; if history is passed the caller already appended the user turn as the last entry and prompt is NOT added again, otherwise prompt is the sole user message."""
+async def generate_response(prompt, instructions, history=None, max_tokens=None):
+    """Completion request returning the response text; if history is passed the caller already appended the user turn as the last entry and prompt is NOT added again, otherwise prompt is the sole user message. max_tokens, for a reply that needs more room than a chat line (a Minecraft move, which a reasoning model thinks through first), else bot.max_reply_tokens."""
     if not _initialised:
         init_ai()
     try:
@@ -1020,7 +1020,7 @@ async def generate_response(prompt, instructions, history=None):
         else:
             messages.append({"role": "user", "content": prompt})
 
-        cap = _reply_token_cap()
+        cap = int(max_tokens) if max_tokens else _reply_token_cap()
         try:
             response = await _create_completion(messages, max_tokens=cap)
         except RequestTooLarge as first:

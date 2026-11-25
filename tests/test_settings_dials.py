@@ -176,11 +176,14 @@ check("the build source says what the two choices do, in a line",
 
 print("\n== the batch waits ==")
 waits = read("lib/components/WaitTimes.svelte")
-check("drawn as the odds over time: a stem per wait, a hill for the spread", "wt-stem" in waits and "const hill" in waits)
+# 2026-11-11: a chart of heads dragged sideways for the time and up for the chance at once was "messy and hard to use".
+check("one row per wait on one time scale: its time, its bar where it falls, its chance on a meter of its own",
+      'class="wt-grid wt-row"' in waits and 'class="wt-when"' in waits and 'class="wt-bar"' in waits
+      and 'class="wt-odds"' in waits and "wt-stem" not in waits and "const hill" not in waits)
 check("on a log scale, so seconds and minutes both get room", "Math.log(Math.max(t, LO) / LO)" in waits)
-check("a dot drags sideways for the wait and up for its odds, the others giving way",
-      "timeAt(from.hx + p.x - from.px)" in waits and "from.share + ((from.py - p.y) / (BASE - TOP)) * tallest" in waits
-      and "function withShare(" in waits)
+check("the bar drags along the scale for the wait, the meter for its chance, the others giving way",
+      "function dragBar(" in waits and "function dragOdds(" in waits and "function withShare(" in waits
+      and "from.py" not in waits)
 check("stored as whole percentages that add up to 100", "function percents(" in waits)
 check("the DM table always keeps one wait, as the runner cannot pick from nothing",
       "if (!canEmpty && waits.length <= 1) return;" in waits)

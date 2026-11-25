@@ -1,4 +1,5 @@
 <script lang="ts">
+  import settingChoices from "../../../resources/setting_choices.json";
   /**
    * Settings, as tabs with subtabs inside them.
    *
@@ -14,11 +15,12 @@
   import { get } from "svelte/store";
   import { api } from "../lib/api";
   import { track } from "../lib/busy";
-  import { toast, settingsSection, settingsPath, settingsScope, health } from "../lib/stores";
-  import PersonaScope from "../lib/personas/PersonaScope.svelte";
+  import { toast, settingsSection, settingsPath, settingsScope, health, viewPersona } from "../lib/stores";
+  import Segmented from "../lib/components/Segmented.svelte";
   import { personasRes, reloadPersonas } from "../lib/personas/store";
   import { providePersona } from "../lib/personas/context";
   import { colorOf, shortValue } from "../lib/personas/logic";
+  import PersonaOrb from "../lib/personas/PersonaOrb.svelte";
   import { loadProviders, planPersona } from "../lib/providers";
   import { play } from "../lib/uisound";
   import { fmtDate } from "../lib/fmt";
@@ -69,6 +71,8 @@
   import ModelsHero from "../lib/components/ModelsHero.svelte";
   import ProvidersPanel from "../lib/components/ProvidersPanel.svelte";
   import UsagePanel from "../lib/components/UsagePanel.svelte";
+  import AiAppsPanel from "../lib/components/AiAppsPanel.svelte";
+  import MailboxesPanel from "../lib/components/MailboxesPanel.svelte";
   import PicturesPanel from "../lib/components/PicturesPanel.svelte";
   import TypingPreview from "../lib/components/TypingPreview.svelte";
   import LiveDemo from "../lib/components/LiveDemo.svelte";
@@ -84,6 +88,8 @@
     section: string;
     requires_restart?: boolean;
     description?: string;
+    /** Its unit where the key does not say it (app/web/descriptions.py UNITS): "s", "min", "h", "days", "ms", "wpm". */
+    unit?: string;
     common?: boolean;
     min?: number;
     max?: number;
@@ -155,6 +161,30 @@
     settingsScope.set("");
     untrack(() => {
       if (!changed && want !== scope) applyScope(want);
+    });
+  });
+  // ── Everyone's, or the profile picked in the sidebar's own ────────────────────────────────────
+  // There is one place to pick a profile, the sidebar; here only whether it is everyone's settings or that one's.
+  const working = $derived(cast.some((p) => p.id === $viewPersona) ? $viewPersona
+                           : (cast.find((p) => p.is_default)?.id ?? "default"));
+  const workingP = $derived(cast.find((p) => p.id === working) ?? null);
+  let whose = $state("all");
+  $effect(() => {
+    whose = scope ? "own" : "all";
+  });
+  async function setWhose(id: string) {
+    await setScope(id === "own" ? working : "");
+    // Refused (something unsaved): back to what is shown.
+    whose = scope ? "own" : "all";
+  }
+  // Another profile picked in the sidebar while one profile's own are shown: they follow it, unless something is
+  // unsaved, and then the sidebar goes back to the one shown.
+  $effect(() => {
+    const w = working;
+    untrack(async () => {
+      if (!scope || scope === w) return;
+      await setScope(w);
+      if (scope && scope !== w) viewPersona.set(scope);
     });
   });
   // A persona deleted while it is shown: everyone's again.
@@ -302,6 +332,8 @@
    * read. Keyed on the subtab id; anything unlisted gets the tab's own icon.
    */
   const SUB_ICONS: Record<string, string> = {
+    "ai-apps": "sparkle",
+    mail: "inbox",
     tokens: "key", keys: "key", logins: "key", env: "key",
     replies: "chats", followups: "chats", telegram: "chats",
     triggers: "terminal", friends: "accounts", profiles: "accounts",
@@ -334,43 +366,43 @@
   const PAIRS: Record<string, Pair> = {
     "bot.typing.wpm_min": {
       max: "bot.typing.wpm_max", label: "Typing speed", names: ["Slowest", "Fastest"], hint: "",
-      description: "How fast it types, in words per minute. 30 to 72 is a normal person; much past 90 looks like pasting.",
+      description: "30 to 72 is normal. Past 90 looks like pasting.",
     },
     "bot.typing.think_min": {
       max: "bot.typing.think_max", label: "Thinking before typing", names: ["At least", "At most"], hint: "random in between",
-      description: "How long it waits after reading before it starts typing.",
+      description: "",
     },
     "bot.read_delay_dm_min": {
       max: "bot.read_delay_dm_max", label: "Reading a DM", names: ["At least", "At most"], hint: "random in between",
-      description: "How long before it reads a DM. People see read receipts in DMs, so this one shows.",
+      description: "People see read receipts in DMs.",
     },
     "bot.read_delay_group_min": {
       max: "bot.read_delay_group_max", label: "Reading a group chat", names: ["At least", "At most"], hint: "random in between",
-      description: "How long before it reads a message in a group chat.",
+      description: "",
     },
     "bot.read_delay_server_min": {
       max: "bot.read_delay_server_max", label: "Reading a server message", names: ["At least", "At most"], hint: "random in between",
-      description: "How long before it reads a message in a server.",
+      description: "",
     },
     "bot.global_cooldown_min": {
       max: "bot.global_cooldown_max", label: "Pause between replies", names: ["At least", "At most"], hint: "random in between",
-      description: "The pause between any two replies, to anyone.",
+      description: "Across all chats.",
     },
     "bot.friend_requests.accept_delay_min": {
       max: "bot.friend_requests.accept_delay_max", label: "Wait before accepting", names: ["Soonest", "Latest"], hint: "random in between",
-      description: "How long it waits before accepting a friend request.",
+      description: "",
     },
     "bot.status.change_interval_min": {
       max: "bot.status.change_interval_max", label: "Time between status changes", names: ["At least", "At most"], hint: "random in between",
-      description: "How long a status stays before it changes.",
+      description: "",
     },
     "snapchat.min_send_gap_ms": {
       max: "snapchat.max_send_gap_ms", label: "Gap between sends", names: ["At least", "At most"], hint: "random in between",
-      description: "How long it leaves between two sends.",
+      description: "",
     },
     "tiktok.min_send_gap_ms": {
       max: "tiktok.max_send_gap_ms", label: "Gap between sends", names: ["At least", "At most"], hint: "random in between",
-      description: "How long it leaves between two sends. TikTok limits fast senders.",
+      description: "TikTok limits fast senders.",
     },
   };
   /** The far end of each pair, to its near end. */
@@ -525,19 +557,19 @@
   }
 
   /**
-   * The unit a number is in, read off its key or its description, which state
-   * it consistently ("_ms", "in seconds", "_hours"). A bare "1800" said
-   * nothing about whether it was seconds or minutes.
+   * The unit a number is in: the server's (descriptions.UNITS), or read off
+   * its key ("_ms", "_hours"). A bare "1800" said nothing about whether it
+   * was seconds or minutes. Descriptions no longer say it, so it is not read
+   * from them.
    */
   function unitOf(f: FieldDef): string {
+    if (f.unit) return f.unit;
     const k = f.key;
-    const d = (f.description || "").toLowerCase();
-    if (k.endsWith("_ms") || d.includes("milliseconds")) return "ms";
-    if (k.endsWith("_minutes") || d.includes("in minutes")) return "min";
-    if (k.endsWith("_hours") || d.includes("in hours")) return "h";
-    if (k.endsWith("_days") || d.startsWith("days ")) return "days";
-    if (d.includes("in seconds")) return "s";
-    if (k.includes("wpm") || d.includes("words per minute")) return "wpm";
+    if (k.endsWith("_ms")) return "ms";
+    if (k.endsWith("_minutes")) return "min";
+    if (k.endsWith("_hours")) return "h";
+    if (k.endsWith("_days")) return "days";
+    if (k.includes("wpm")) return "wpm";
     return "";
   }
 
@@ -627,7 +659,7 @@
   const GLOBAL_PANELS = new Set(["env", "local", "usage", "providers", "telegram", "snapchat-setup", "tiktok-setup",
                                  "instagram-setup", "x-setup", "reddit-setup", "whatsapp-setup",
                                  "minecraft-setup", "imessage-setup", "discord-setup", "telegram-setup", "theme", "typeface", "interface",
-                                 "profiles"]);
+                                 "profiles", "aiapps", "mail"]);
 
   /** A persona's own value given up: it has everyone's again (a pair's two ends go together). */
   async function useEveryones(f: FieldDef, far: FieldDef | null) {
@@ -733,126 +765,7 @@
   // Each choice with a mark and a line saying what it does, so the list reads
   // at a glance instead of as bare words (Select draws them).
   type Choice = { value: string; label: string; hint?: string; icon?: string; mark?: string };
-  const CHOICES: Record<string, Choice[]> = {
-    "bot.desktop.build_source": [
-      { value: "auto", label: "Automatic", hint: "Discord's current build, looked up", icon: "refresh" },
-      { value: "custom", label: "Custom", hint: "The number you put in below", icon: "edit" },
-    ],
-    "telegram.gifts": [
-      { value: "notify", label: "Tell me", hint: "It waits in Chats for you to accept", icon: "alert" },
-      { value: "accept", label: "Accept it", hint: "Taken as it lands", icon: "check" },
-      { value: "off", label: "Leave them", hint: "Nothing is said and nothing is taken", icon: "eyeOff" },
-    ],
-    "discord.gifts.mode": [
-      { value: "notify", label: "Tell me", hint: "It waits in Chats for you to accept", icon: "alert" },
-      { value: "accept", label: "Accept it", hint: "Taken as it lands, before it expires", icon: "check" },
-      { value: "off", label: "Leave them", hint: "Nothing is said and nothing is taken", icon: "eyeOff" },
-    ],
-    "reddit.posting.where": [
-      { value: "profile", label: "Its own profile", hint: "Always takes a post, whatever its karma", icon: "accounts" },
-      { value: "subreddits", label: "The subreddits above", hint: "A young account may be refused", icon: "chats" },
-    ],
-    "bot.memory_summary.length": [
-      { value: "short", label: "Short", hint: "A line or two", icon: "minimize" },
-      { value: "medium", label: "Medium", hint: "A short paragraph", icon: "order" },
-      { value: "detailed", label: "Detailed", hint: "Everything worth keeping", icon: "logs" },
-    ],
-    "bot.memory_summary.language": [
-      { value: "auto", label: "Same as the chat", hint: "Whatever language they talk in", icon: "chats" },
-      { value: "en", label: "English", mark: "🇬🇧" },
-      { value: "fr", label: "French", mark: "🇫🇷" },
-      { value: "es", label: "Spanish", mark: "🇪🇸" },
-      { value: "de", label: "German", mark: "🇩🇪" },
-      { value: "pt", label: "Portuguese", mark: "🇵🇹" },
-      { value: "it", label: "Italian", mark: "🇮🇹" },
-      { value: "ar", label: "Arabic", mark: "🇸🇦" },
-      { value: "nl", label: "Dutch", mark: "🇳🇱" },
-    ],
-    "bot.calls.answer": [
-      { value: "known", label: "People it knows", hint: "Anyone it has talked to", icon: "accounts" },
-      { value: "anyone", label: "Anyone", hint: "Strangers too", icon: "globe" },
-      { value: "nobody", label: "Nobody", hint: "Every call rings out", icon: "eyeOff" },
-    ],
-    "bot.message_style.mode": [
-      { value: "short", label: "Short", hint: "One line, like a text", icon: "send" },
-      { value: "balanced", label: "Balanced", hint: "A few sentences", icon: "chats" },
-      { value: "chatty", label: "Chatty", hint: "Longer, several messages", icon: "sparkle" },
-    ],
-    "bot.web.search_with": [
-      { value: "auto", label: "Automatic", hint: "Google, then DuckDuckGo. Free", icon: "globe" },
-      { value: "google", label: "Google", hint: "In its own hidden browser", icon: "search" },
-      { value: "duckduckgo", label: "DuckDuckGo", hint: "No browser needed", icon: "search" },
-      { value: "brave", label: "Brave", hint: "Needs BRAVE_API_KEY", icon: "key" },
-      { value: "tavily", label: "Tavily", hint: "Needs TAVILY_API_KEY", icon: "key" },
-    ],
-    "bot.client_profile": [
-      { value: "web", label: "Web browser", hint: "Looks like Discord in Chrome", icon: "globe" },
-      { value: "desktop", label: "Desktop app", hint: "Looks like the Discord app", icon: "monitor" },
-    ],
-    "tiktok.live.answer_mode": [
-      { value: "all", label: "All of them", hint: "Any comment, at its pace", icon: "chats" },
-      { value: "questions", label: "Questions", hint: "Questions, and lines that name it", icon: "info" },
-      { value: "named", label: "When named", hint: "Only lines that name it", icon: "persona" },
-    ],
-    "tiktok.live.tone": [
-      { value: "persona", label: "Its usual self", hint: "As the persona is", icon: "persona" },
-      { value: "hype", label: "Hype", hint: "Loud and excited", mark: "🔥" },
-      { value: "chill", label: "Chill", hint: "Calm and easy", mark: "🌙" },
-      { value: "funny", label: "Funny", hint: "Jokes around", mark: "😂" },
-      { value: "sweet", label: "Sweet", hint: "Warm and soft", mark: "🌸" },
-    ],
-    "tiktok.live.language": [
-      { value: "viewer", label: "Theirs", hint: "Each viewer's own language", icon: "chats" },
-      { value: "persona", label: "Its own", hint: "Always the persona's language", icon: "persona" },
-    ],
-    "tiktok.live.overlay_position": [
-      { value: "bottom", label: "Bottom", hint: "Along the bottom", icon: "download" },
-      { value: "middle", label: "Middle", hint: "In the middle", icon: "minimize" },
-      { value: "top", label: "Top", hint: "Along the top", icon: "upload" },
-    ],
-    "tiktok.live.overlay_size": [
-      { value: "small", label: "Small", hint: "Out of the way" },
-      { value: "medium", label: "Medium", hint: "Easy to read" },
-      { value: "large", label: "Large", hint: "Big and bold" },
-    ],
-    "tiktok.live.overlay_theme": [
-      { value: "dark", label: "Dark", hint: "Dark glass, white text", mark: "⬛" },
-      { value: "light", label: "Light", hint: "White card, dark text", mark: "⬜" },
-      { value: "tiktok", label: "TikTok", hint: "Like TikTok's own chat", icon: "tiktok" },
-    ],
-    "tiktok.posting.privacy": [
-      { value: "everyone", label: "Everyone", hint: "Anyone on TikTok", icon: "globe" },
-      { value: "friends", label: "Friends", hint: "Followers it follows back", icon: "accounts" },
-      { value: "only_me", label: "Only me", hint: "Nobody else", icon: "key" },
-    ],
-    "minecraft.auth": [
-      { value: "offline", label: "No account", hint: "A LAN world, or online mode off", icon: "globe" },
-      { value: "microsoft", label: "Microsoft", hint: "A real server, signed in once", icon: "key" },
-    ],
-    "minecraft.translate_versions": [
-      { value: "auto", label: "When needed", hint: "Through ViaProxy for servers not on 1.21", icon: "refresh" },
-      { value: "always", label: "Always", hint: "Every server through ViaProxy", icon: "globe" },
-      { value: "off", label: "Never", hint: "Join every server directly", icon: "close" },
-    ],
-    "minecraft.persona": [
-      { value: "brief", label: "Brief", hint: "A short telling, fits free models", icon: "minimize" },
-      { value: "full", label: "Full", hint: "The whole persona, every time", icon: "persona" },
-    ],
-    "imessage.thread_replies": [
-      { value: "late", label: "When needed", hint: "When others wrote since", icon: "chats" },
-      { value: "always", label: "Always", hint: "Every answer in a thread", icon: "undo" },
-      { value: "never", label: "Never", hint: "Always in the chat", icon: "close" },
-    ],
-    "imessage.send_method": [
-      { value: "auto", label: "Automatic", hint: "The best the Mac has", icon: "refresh" },
-      { value: "private-api", label: "Private API", hint: "Needs it on the Mac", icon: "key" },
-      { value: "apple-script", label: "AppleScript", hint: "Works without it", icon: "terminal" },
-    ],
-    "services.webui.bind": [
-      { value: "127.0.0.1", label: "This computer", hint: "Only this computer can open the panel", icon: "monitor" },
-      { value: "0.0.0.0", label: "Local network", hint: "Phones on your Wi-Fi can open it too", icon: "globe" },
-    ],
-  };
+  const CHOICES: Record<string, Choice[]> = settingChoices;
 
   /**
    * The statuses Discord actually has.
@@ -1116,6 +1029,13 @@
     revalidate();
   }
 
+  /** An AI app changed something over MCP: the page shows it, and what someone is editing here stays as they left it. */
+  function aiChanged() {
+    schema.refresh({ force: true });
+    reloadPersonas();
+    revalidate();
+  }
+
   /**
    * Re-run the health checks against what was just saved.
    *
@@ -1179,6 +1099,9 @@
   }
 </script>
 
+<!-- The sidebar's profile in the bar's switch: its face, as in the sidebar. -->
+{#snippet workingFace()}<PersonaOrb p={workingP} size={18} ring={false} />{/snippet}
+
 <!-- One row for one setting, used by both the subtabs and the search results. -->
 {#snippet row(f: FieldDef, showHome: boolean)}
   {@const pair = pairOf(f)}
@@ -1193,7 +1116,10 @@
        because they state their own width.
        The hover rail is there so a row reads as one object rather than as
        paragraphs that happen to be near each other. -->
-  <div class="settings-row group flex flex-wrap items-center gap-x-4 gap-y-2.5 sm:flex-nowrap"
+  <!-- The batch waits' editor is 30rem wide: kept beside its name only where both fit (it squeezed the name into a
+       column of single letters in a narrow window), under it otherwise. -->
+  <div class="settings-row group flex flex-wrap items-center gap-x-4 gap-y-2.5
+              {f.key === 'bot.batch_wait_times' || f.key === 'bot.server_batch_wait_times' ? 'lg:flex-nowrap' : 'sm:flex-nowrap'}"
        class:is-switch={f.type === "bool" || (QUIET_KEYS.has(f.key) && !value(f))}
        use:contextMenu={() => rowMenu(f, far)}>
     <!-- A social's switch has its mark beside it, in its own colour; the rest of What runs a quiet one. -->
@@ -1231,7 +1157,7 @@
           {/key}
         {/if}
       </div>
-      {#if pair || f.description}
+      {#if pair ? pair.description : f.description}
         <p class="mt-0.5 text-[12px] leading-relaxed text-muted">{pair ? pair.description : f.description}</p>
       {/if}
       {#if f.needs ?? partnerOf(f)?.needs}<NotHere feature={(f.needs ?? partnerOf(f)?.needs)!} variant="line" />{/if}
@@ -1589,22 +1515,28 @@
     {#each Array(6) as _}<div class="h-11 animate-pulse rounded-lg bg-white/[0.03]"></div>{/each}
   </div>
 {:else}
-  <div class="mb-4 flex flex-wrap items-center gap-2">
-    <label class="relative min-w-0 flex-1">
-      <span class="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-faint">
+  <!-- The bar. Whose settings sits over the tab list, so picking a profile never moves it when the file buttons go;
+       the search starts where the settings do. One height throughout, and nothing outlined but the search.
+       The Ask box that sat here was taken out on 2026-11-11 (the user's call); AI apps reach the settings over MCP. -->
+  <div class="settings-bar">
+    {#if cast.length > 1}
+      <!-- Whose settings: everyone's, or the sidebar's profile's own on top of them, shown by its face. The pill is
+           the theme's either way: in the profile's own colour it stood out of the theme. -->
+      <div class="settings-for" class:is-shake={scopeShake}>
+        <Segmented label="Whose settings" size="sm" bind:value={whose} onchange={setWhose}
+                   options={[{ id: "all", label: "Everyone", icon: "accounts" },
+                             { id: "own", label: workingP?.name ?? "This profile", face: workingFace }]} />
+      </div>
+    {/if}
+    <label class="settings-search">
+      <span class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-faint">
         <Icon name="search" size={14} />
       </span>
-      <input bind:value={query} placeholder="Search every setting" class="field py-1.5 pl-8 pr-3 text-[13px]" />
+      <input bind:value={query} placeholder="Search every setting" class="field h-9 py-0 pl-9 pr-3 text-[13px]" />
     </label>
-    {#if cast.length > 1}
-      <!-- Whose settings: everyone's, or one persona's own on top of them. -->
-      <PersonaScope value={scope} everyone label="Settings for" onchange={setScope} shake={scopeShake} />
-    {/if}
     <!-- A file of settings, and the raw file, are everyone's: not there while one persona's are shown. -->
     {#if !scope}
-      <div class="flex shrink-0 gap-2">
-        <SettingsFile onraw={openRaw} onimported={() => { load(true); revalidate(); }} />
-      </div>
+      <SettingsFile onraw={openRaw} onimported={() => { load(true); revalidate(); }} />
     {/if}
   </div>
 
@@ -1750,6 +1682,10 @@
               <ModelsPanel />
             {:else if sub.panel === "usage"}
               <UsagePanel />
+            {:else if sub.panel === "aiapps"}
+              <AiAppsPanel onchanged={aiChanged} />
+            {:else if sub.panel === "mail"}
+              <MailboxesPanel />
             {:else if sub.panel === "providers"}
               <ProvidersPanel />
             {:else if sub.panel === "telegram"}
@@ -1874,8 +1810,7 @@
                   <div class="min-w-0 flex-1">
                     <div class="text-[13.5px] font-medium text-ink">Stored profiles</div>
                     <p class="mt-0.5 text-[11px] leading-relaxed text-faint">
-                      {people?.cached ?? 0} people cached on this machine. Clearing
-                      removes every stored name, avatar and bio.
+                      {people?.cached ?? 0} people stored on this computer.
                     </p>
                   </div>
                   <Button kind="ghost" size="sm" onclick={clearPeople}>Clear stored profiles</Button>
@@ -1906,9 +1841,7 @@
         <!-- Appearance applies as it is clicked: nothing there is saved, so nothing to say about saving. -->
         {#if !(sub.panel === "theme" || sub.panel === "typeface" || sub.panel === "interface")}
           <FootNote class="mt-6" icon="check">
-            Saving applies the change to the running account straight away. Only rows
-            marked <span class="settings-restart is-inline"><Icon name="refresh" size={9} />Needs a restart</span> wait for the
-            account to be restarted.
+            Changes apply right away, except rows marked <span class="settings-restart is-inline"><Icon name="refresh" size={9} />Needs a restart</span>.
           </FootNote>
         {/if}
       {/if}

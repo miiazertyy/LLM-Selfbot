@@ -33,10 +33,10 @@
   const who = persona === "default" ? "" : persona;
 
   const MODES = [
-    { id: "off", name: "No filter", hint: "New pictures stay as they are.", icon: "pictures" },
-    { id: "one", name: "Same filter", hint: "Every new picture gets the filter you pick.", icon: "palette" },
-    { id: "random", name: "Random filter", hint: "Each one gets a filter from the ones you tick.", icon: "refresh" },
-    { id: "ai", name: "AI picks", hint: "The AI picks a filter that suits each picture.", icon: "sparkle" },
+    { id: "off", name: "No filter", icon: "pictures" },
+    { id: "one", name: "Same filter", icon: "palette" },
+    { id: "random", name: "Random filter", icon: "refresh" },
+    { id: "ai", name: "AI picks", icon: "sparkle" },
   ];
   const KINDS = [
     { id: "caption", name: "Caption", icon: "caption" },
@@ -253,7 +253,6 @@
                 onclick={() => pickMode(m.id)}>
           <span class="pp-mode-icon"><Icon name={m.icon} size={15} /></span>
           <span class="pp-mode-name">{m.name}</span>
-          <span class="pp-mode-hint">{m.hint}</span>
         </button>
       {/each}
     </div>
@@ -281,7 +280,7 @@
     {/if}
 
     {#if mode === "ai"}
-      <p class="pp-lead">The AI looks at what each new picture shows and picks the filter that suits it.</p>
+      <p class="pp-lead">Picks a filter for each new picture.</p>
       {#if sample}
         <div>
           <Button size="sm" kind="ghost" loading={asking} onclick={askAi}>
@@ -331,7 +330,7 @@
     </div>
       {#if total}
         <div class="pp-foot">
-          <span>Originals are kept, so a filter can be removed from the Pictures tab.</span>
+          <span>Originals are kept, so filters can be removed.</span>
           <Button size="sm" kind="ghost" loading={applying} onclick={applyAll}>
             {total === 1 ? "Apply to the picture now" : `Apply to all ${total} pictures now`}
           </Button>
@@ -347,8 +346,7 @@
   <div class="settings-card pp">
     <div class="pp-split">
       <div class="pp-left">
-        <p class="pp-lead">It can add a caption, big text, the time, the day, emoji or a filter, the way people do on
-          Snapchat. Often it sends the picture as it is.</p>
+        <p class="pp-lead">A caption, text, the time, emoji or a filter. Often nothing.</p>
 
         <div class="pp-sub">On these accounts</div>
         {#if accts.length}
@@ -463,7 +461,6 @@
   }
   .pp-mode.is-on .pp-mode-icon { color: var(--color-bg); background: var(--color-accent); }
   .pp-mode-name { font-size: 13px; font-weight: 600; color: var(--color-ink); }
-  .pp-mode-hint { font-size: 11px; line-height: 1.35; color: var(--color-faint); }
 
   /* Two even rows of six, rather than a row that leaves one alone on the next. */
   .pp-looks { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 14px 8px; max-width: 560px; }

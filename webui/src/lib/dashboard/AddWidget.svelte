@@ -48,7 +48,6 @@
 </script>
 
 <Modal bind:open title="Add a widget" wide onclose={() => (open = false)}>
-  <p class="-mt-1 mb-4 text-[12px] text-faint">Previews use your own data, as it is right now.</p>
   <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
     {#each Object.values(WIDGETS) as w (w.type)}
       {@const taken = placed.has(w.type) && !w.multiple}

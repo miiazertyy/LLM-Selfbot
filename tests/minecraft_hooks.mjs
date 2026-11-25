@@ -163,6 +163,8 @@ check("a rank with no brackets, which mineflayer cuts the name of: the whole lin
       JSON.stringify(hooks.speaker(b, "teve", "hi", "VIP Steve: hi")) === '["Steve","hi"]'
       && JSON.stringify(hooks.spokenIn(b, "★ hrfd » gg")) === '["hrfd","gg"]');
 
+// Every line handed on, as Settings' "Answer every line of chat" does: who is speaking is what this part is about.
+process.env.LSB_ANSWER_ALL = "1";
 const heard = [];
 b = bot();
 b.username = "Alicia";
@@ -191,6 +193,111 @@ let spawned = 0;
 b.on("spawn", () => spawned++);
 b.emit("spawn");
 check("other events as they were", spawned === 1);
+delete process.env.LSB_ANSWER_ALL;
+
+// ── Who it answers (worthAnswering) ──────────────────────────────────────────
+hooks.forgetTalk();
+const me = { username: "aliciamwwoff" };
+const t0 = 1_000_000_000;
+const quietly = { now: t0, roll: 0.99 };
+check("a whisper, always", hooks.worthAnswering(me, "Steve", "yo", true, quietly));
+check("its name in the game, any case", hooks.worthAnswering(me, "Steve", "AliciaMwwOff come here", false, quietly));
+check("its persona's name", hooks.worthAnswering(me, "Steve", "alicia who tf is u", false, { ...quietly, called: ["alicia"] })
+      && hooks.worthAnswering(me, "Steve", "hey @Alicia", false, { ...quietly, called: ["alicia"] }));
+check("  but not inside another word", !hooks.worthAnswering(me, "Steve", "malicia lol", false, { ...quietly, called: ["alicia"] }));
+check("the rest of the chat goes by", !hooks.worthAnswering(me, "Bob", "anyone selling iron", false, quietly));
+check("and now and then it joins in", hooks.worthAnswering(me, "Bob", "anyone selling iron", false, { now: t0, roll: 0.01 }));
+check("  not again straight after", !hooks.worthAnswering(me, "Carl", "lol", false, { now: t0 + 1000, roll: 0.01 }));
+check("  only once a while has gone by", hooks.worthAnswering(me, "Carl", "lol", false, { now: t0 + hooks.CHIME_MS, roll: 0.01 }));
+check("Settings' every line: all of it", hooks.worthAnswering(me, "Bob", "anyone selling iron", false, { ...quietly, all: true }));
+check("the players it only talks with: every line of theirs",
+      hooks.worthAnswering(me, "Steve", "nice", false, { ...quietly, only: ["steve"] })
+      && !hooks.worthAnswering(me, "Bob", "nice", false, { ...quietly, only: ["steve"] }));
+// It has just joined in, so nothing below is let through by chance.
+hooks.forgetTalk();
+hooks.worthAnswering(me, "Dan", "hi", false, { now: Date.now(), roll: 0 });
+const busy = [];
+b = bot();
+b.username = "aliciamwwoff";
+b.players = { aliciamwwoff: {}, Steve: {}, Bob: {} };
+hooks.playersOnly(b);
+b.on("chat", (u, m) => busy.push(`${u}: ${m}`));
+b.on("whisper", (u, m) => busy.push(`${u}: ${m}`));
+b.emit("chat", "Bob", "anyone selling iron");
+b.emit("chat", "Steve", "aliciamwwoff wanna team");
+b.emit("chat", "Steve", "i have a sword");
+b.emit("chat", "Bob", "lol");
+b.emit("whisper", "Bob", "psst");
+check("in a busy chat: its name, that player's next lines, whispers, and nobody else",
+      busy.join(" | ") === "Steve: aliciamwwoff wanna team | Steve: i have a sword | Bob: psst", busy.join(" | "));
+check("  and that conversation ends when it goes quiet",
+      !hooks.worthAnswering(me, "Steve", "hey", false, { now: Date.now() + hooks.TALKING_MS + 1, roll: 0.99 }));
+hooks.forgetTalk();
+
+// ── Playing on its own (playOn, keepPlaying) ─────────────────────────────────
+function mind() {
+  const sp = {
+    state: 0, prompt: "", started: [],
+    isActive() { return this.state === 1; },
+    isPaused() { return this.state === 2; },
+    start(p) { this.started.push(p); this.state = 1; this.prompt = p; },
+  };
+  return { self_prompter: sp, actions: { executing: false }, said: [],
+           openChat(m) { this.said.push(m); return Promise.resolve(); } };
+}
+const G = "Play this server's game well";
+let ag = mind();
+let st = { quietSince: 0, lastGoal: "", gaveUp: false };
+check("no goal of its own set: it waits to be told", !(await hooks.playOn(ag, st, { goal: "", now: t0 }))
+      && ag.self_prompter.started.length === 0);
+check("with nothing to do, a first look only notes the quiet", !(await hooks.playOn(ag, st, { goal: G, now: t0 }))
+      && st.quietSince === t0);
+check("  nothing before the while is up", !(await hooks.playOn(ag, st, { goal: G, now: t0 + hooks.RESUME_MS - 1 })));
+check("  then its own goal", (await hooks.playOn(ag, st, { goal: G, now: t0 + hooks.RESUME_MS }))
+      && ag.self_prompter.started.join() === G);
+ag.self_prompter.prompt = "build a house";
+check("a goal it has, its owner's: left alone", !(await hooks.playOn(ag, st, { goal: G, now: t0 + 100_000 }))
+      && st.lastGoal === "build a house");
+ag.self_prompter.state = 0;
+const t1 = t0 + 200_000;
+await hooks.playOn(ag, st, { goal: G, now: t1 });
+check("that one done: its own does not take straight over",
+      !(await hooks.playOn(ag, st, { goal: G, now: t1 + hooks.RESUME_MS })));
+check("  only after a longer while", (await hooks.playOn(ag, st, { goal: G, now: t1 + hooks.AFTER_ENDED_MS }))
+      && ag.self_prompter.started.at(-1) === G);
+ag.actions.executing = true;
+ag.self_prompter.state = 0;
+check("in the middle of something (a player's !followPlayer): left alone",
+      !(await hooks.playOn(ag, st, { goal: G, now: t1 + 10 ** 7 })) && st.quietSince === 0);
+ag.actions.executing = false;
+ag.self_prompter.state = 2;
+check("a goal paused is a goal it has", !(await hooks.playOn(ag, st, { goal: G, now: t1 + 10 ** 7 })) && st.quietSince === 0);
+
+ag = mind();
+hooks.keepPlaying(bot(), ag);
+st = ag.__lsbPlay;
+ag.self_prompter.start(G);
+await hooks.playOn(ag, st, { goal: G, now: t0 });
+ag.self_prompter.state = 0;
+await ag.openChat("Agent did not use command in the last 3 auto-prompts. Stopping auto-prompting.");
+await ag.openChat("found diamonds");
+check("mindcraft giving a goal up is not said in the game; the rest is", ag.said.join(" | ") === "found diamonds",
+      ag.said.join(" | "));
+await hooks.playOn(ag, st, { goal: G, now: t0 + 1000 });
+check("  its own goal, given up, is back soon", st.gaveUp
+      && (await hooks.playOn(ag, st, { goal: G, now: t0 + 1000 + hooks.RESUME_MS })));
+hooks.keepPlaying(bot(), ag);
+await ag.openChat("hi");
+check("  and wrapped once, however often it spawns", ag.said.join(" | ") === "found diamonds | hi");
+ag.self_prompter.state = 0;
+await hooks.playOn(ag, st, { goal: G, now: t0 + 500_000 });
+check("its own goal ended on purpose (a player's !endGoal): not straight back",
+      !(await hooks.playOn(ag, st, { goal: G, now: t0 + 500_000 + hooks.RESUME_MS }))
+      && (await hooks.playOn(ag, st, { goal: G, now: t0 + 500_000 + hooks.AFTER_ENDED_MS })));
+
+// ── Its live view, lighter ───────────────────────────────────────────────────
+check("the view draws one pixel a pixel, not two or three on a scaled screen",
+      hooks.PAGE_PATCHES[0].shipped === hooks.PIXELS_AS_SHIPPED && hooks.PIXELS_AS_PATCHED.includes("Math.min("));
 
 b = bot();
 hooks.noSkinClear(b);

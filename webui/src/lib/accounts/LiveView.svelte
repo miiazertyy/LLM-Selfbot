@@ -161,7 +161,7 @@
 <div class="lv">
   <div class="lv-head">
     <span class="lv-state" class:is-live={live}><span class="lv-dot" aria-hidden="true"></span>{live ? "Live now" : "Not live"}</span>
-    <span class="text-[12px] text-muted">{live ? `${name || "It"} is co-hosting.` : "It starts co-hosting when the account goes live."}</span>
+    <span class="text-[12px] text-muted">{live ? `${name || "It"} is co-hosting.` : "Starts when the account goes live."}</span>
   </div>
 
   <div class="lv-feed" aria-live="polite">
@@ -195,7 +195,7 @@
     </div>
     {#if visit?.on}
       <div class="lv-feed lv-feed-out" aria-live="polite">
-        {#if !visit.feed.length}<p class="lv-empty">Watching. Its chat shows here.</p>{/if}
+        {#if !visit.feed.length}<p class="lv-empty">Watching.</p>{/if}
         {#each visit.feed.slice(-30) as l, i (`${l.at}-${i}`)}
           {#if l.t === "visit_say"}
             <div class="lv-say lv-say-out" in:fly={{ y: 8, duration: 260 * dur }}>
@@ -232,7 +232,7 @@
   <div class="lv-obs">
     <div class="min-w-0">
       <div class="text-[12.5px] font-semibold text-ink">For OBS</div>
-      <div class="text-[11.5px] text-muted">Add this as a Browser source. It shows each answer and says it.</div>
+      <div class="text-[11.5px] text-muted">Add it as a Browser source.</div>
     </div>
     <button class="lv-copy" onclick={() => { play("select"); copyText(overlay, "Copied the OBS link."); }}>
       <Icon name="copy" size={13} />Copy link

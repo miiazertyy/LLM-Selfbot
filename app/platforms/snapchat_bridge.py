@@ -1393,17 +1393,73 @@ def _live_state(on: bool) -> None:
     log_system("The account went LIVE: co-hosting" if on else "The LIVE has ended")
 
 
+#: The socials whose code is typed in the page, so the app can type one it finds in a mailbox (app/utils/mailcodes.py).
+_MAIL_CODES = ("instagram", "x", "reddit")
+_mail_hunt = {"on": False}
+
+
 def _attention(what: str) -> None:
     """Something the site put up that only a person can do (a puzzle, a code from its email): said where they will
-    see it."""
+    see it. A code is looked for in the mailboxes first, when there are any."""
     if what == "captcha":
         _emit_chat({"t": "attention", "what": "captcha"})
         _notify_telegram_error("Needs you", f"{PLATFORM_NAME} put up a check (a puzzle). "
                                             f"Solve it in the {PLATFORM_NAME} window.")
     elif what == "code":
-        _emit_chat({"t": "attention", "what": "code"})
-        _notify_telegram_error("Needs a code", f"{PLATFORM_NAME} sent a code to the account's email or phone. "
-                                               "Type it on the Accounts page.")
+        if PLATFORM in _MAIL_CODES and _has_mailboxes():
+            if not _mail_hunt["on"]:
+                _mail_hunt["on"] = True
+                _emit_chat({"t": "attention", "what": "code_mail"})
+                _spawn_panel(_code_from_mail(time.time()))
+            return
+        _ask_for_code()
+    elif what == "verify":
+        _emit_chat({"t": "attention", "what": "verify"})
+        _notify_telegram_error("Needs you", f"{PLATFORM_NAME} wants its email check done. "
+                                            f"Finish it in the {PLATFORM_NAME} window.")
+
+
+def _ask_for_code() -> None:
+    _emit_chat({"t": "attention", "what": "code"})
+    _notify_telegram_error("Needs a code", f"{PLATFORM_NAME} sent a code to the account's email or phone. "
+                                           "Type it on the Accounts page.")
+
+
+def _has_mailboxes() -> bool:
+    try:
+        from app.utils import mailcodes
+        return any(b["server"] and b["password"] for b in mailcodes.mailboxes())
+    except Exception:
+        return False
+
+
+async def _code_from_mail(asked: float) -> None:
+    """The code the social just emailed, found in the mailboxes and typed where it asks. Not there in time, or not
+    taken: the person is asked, as before. The code itself is never logged."""
+    from app.utils import mailcodes
+    loop = asyncio.get_running_loop()
+
+    def model(platform, subject, text):
+        # The model's clients live on this loop: asked from the lookup's thread, the question is run here.
+        return mailcodes.ask_model(platform, subject, text,
+                                   run=lambda coro: asyncio.run_coroutine_threadsafe(coro, loop).result(60))
+
+    try:
+        found = await asyncio.to_thread(mailcodes.wait_for_code, PLATFORM, asked, model=model)
+        if found:
+            r = await _panel("code", timeout=20.0, code=found["code"])
+            if r.get("ok"):
+                log_system(f"Typed the code {PLATFORM_NAME} emailed, found in {found['address']}")
+                return
+            log_system(f"Found {PLATFORM_NAME}'s code in {found['address']}, but it was not taken: "
+                       f"{r.get('reason') or 'no reason given'}")
+        else:
+            log_system(f"No code from {PLATFORM_NAME} came to the mailboxes in time")
+    except Exception as e:
+        log_error("Mail codes", f"Looking for {PLATFORM_NAME}'s code failed: {e}")
+    finally:
+        _mail_hunt["on"] = False
+    _ask_for_code()
 
 
 async def _live_event(evt: dict) -> None:
@@ -4511,7 +4567,11 @@ def _mc_start_runner(host: str, port: int) -> bool:
     _MC.update(target=target, server=server, started_at=time.time(), turned_away=0)
     _MC["brain"].server = server
     shown = f"{host}:{port}"
-    extra = {"MC_VIEW_DISTANCE": mcw._int(mc.get("view_distance"), 6, 2, 12)}
+    extra = {"MC_VIEW_DISTANCE": mcw._int(mc.get("view_distance"), 6, 2, 12),
+             # What it plays at when nobody gave it a goal, and who it answers in public chat (agent_hooks.mjs).
+             "MC_PLAY_GOAL": mcw.play_goal(mc),
+             "MC_ANSWER_ALL": "1" if mc.get("answer_all_chat") else "",
+             "MC_CALLED": ",".join(_mc_called_names())}
     if mc.get("auto_login", True):
         try:
             extra["MC_SERVER_PASSWORD"] = mcw.server_password(_MC["name"], server)
@@ -4544,6 +4604,23 @@ def _mc_start_runner(host: str, port: int) -> bool:
         log_error(PLATFORM_NAME, f"Could not start the Minecraft runner: {e}")
         _mc_state("logged-out", f"Its runner could not start: {e}")
         return False
+
+
+def _mc_called_names() -> list[str]:
+    """What players may call it besides its name in the game: its persona's name ("Alicia" for aliciamwwoff), as the
+    profile names it and as its own words do. Answering only its game name, "alicia who tf is u" went past it."""
+    names: list[str] = []
+    try:
+        from app.utils import personas
+        pid = personas.persona_of(f"minecraft_{ACCOUNT_INDEX}")
+        p = personas.get(pid) or {}
+        for n in (str(p.get("name") or ""), personas._name_from_text(personas.read_text(pid))):
+            n = n.strip()
+            if 3 <= len(n) <= 24 and n.lower() != "default" and n not in names:
+                names.append(n)
+    except Exception:
+        pass
+    return names
 
 
 def _mc_played_as(slot: dict) -> str:

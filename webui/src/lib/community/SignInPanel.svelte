@@ -133,13 +133,13 @@
         <span class="si-ring" style="--f: {frac}" title="{Math.floor(left / 60)}:{String(left % 60).padStart(2, '0')} left"></span>
         <button type="button" class="si-out" data-sound="self" onclick={cancel}>Cancel</button>
       </div>
-      <p class="si-note">Waiting for you on GitHub. It only lets this app post requests to LLMSelfbot's repo and keep your own private gist.</p>
+      <p class="si-note">Waiting for GitHub. The app can only post to LLMSelfbot's repo and keep a private gist.</p>
     </div>
   {:else}
     <div class="si-start">
       {#if st.reason}<p class="si-bad"><Icon name="alert" size={12} />{st.reason}</p>{/if}
       <Button onclick={start}><Icon name="github" size={14} />Sign in with GitHub</Button>
-      {#if !compact}<p class="si-note">No password here: you get a code to enter on GitHub, in your browser.</p>{/if}
+      {#if !compact}<p class="si-note">You get a code to enter on GitHub.</p>{/if}
     </div>
   {/if}
 </div>

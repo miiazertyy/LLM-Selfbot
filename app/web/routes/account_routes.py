@@ -894,7 +894,8 @@ async def x_sign_in_code(request: Request):
     the sign-in window, or a running account's own runner."""
     from app.utils import x_signin
     body = await request.json()
-    code = "".join(ch for ch in str(body.get("code") or "") if ch.isdigit())[:12]
+    # X's codes can be letters and digits together ("4hdk2pqx"): only what is neither goes.
+    code = "".join(ch for ch in str(body.get("code") or "") if ch.isalnum())[:12]
     if not code:
         raise HTTPException(status_code=400, detail="That is not a code.")
     index = int(body.get("index") or 0)

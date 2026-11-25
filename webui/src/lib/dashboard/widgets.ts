@@ -44,11 +44,11 @@ const WINDOW: OptionDef = {
 export const WIDGETS: Record<string, WidgetDef> = {
   figures: {
     type: "figures", title: "Headline figures", icon: "stats", size: "full",
-    blurb: "Accounts up, replies today and this week, people talked to. Click one for the detail.",
+    blurb: "Accounts up, replies, people.",
   },
   activity: {
     type: "activity", title: "Replies over time", icon: "stats", size: "full", multiple: true,
-    blurb: "How many replies went out each day, and the last 24 hours hour by hour.",
+    blurb: "Per day, and the last 24 hours.",
     options: [{
       key: "days", label: "Covers",
       choices: [{ value: 7, label: "7 days" }, { value: 14, label: "14 days" },
@@ -58,7 +58,7 @@ export const WIDGETS: Record<string, WidgetDef> = {
   },
   accounts: {
     type: "accounts", title: "Accounts", icon: "accounts", size: "full",
-    blurb: "Every account, whether it is up, and start, stop or restart it.",
+    blurb: "Start, stop or restart them.",
     options: [{
       key: "view", label: "Show as",
       choices: [{ value: "cards", label: "Cards" }, { value: "list", label: "Compact list" }],
@@ -67,11 +67,11 @@ export const WIDGETS: Record<string, WidgetDef> = {
   },
   thoughts: {
     type: "thoughts", title: "Thoughts", icon: "sparkle", size: "half",
-    blurb: "What each account is thinking, as it thinks it.",
+    blurb: "Live, for each account.",
   },
   people: {
     type: "people", title: "Most active people", icon: "memory", size: "half", multiple: true,
-    blurb: "Who the bot talks to most, ranked.",
+    blurb: "Ranked by messages.",
     options: [
       { ...WINDOW, default: 7 },
       { key: "count", label: "Show", choices: [{ value: 5, label: "Top 5" }, { value: 10, label: "Top 10" }],
@@ -80,7 +80,7 @@ export const WIDGETS: Record<string, WidgetDef> = {
   },
   log: {
     type: "log", title: "Live log", icon: "logs", size: "half", multiple: true,
-    blurb: "What the bot is doing, as it does it.",
+    blurb: "Live.",
     options: [
       { key: "filter", label: "Lines",
         choices: [{ value: "all", label: "Everything" }, { value: "replies", label: "Replies only" },
@@ -93,22 +93,22 @@ export const WIDGETS: Record<string, WidgetDef> = {
   },
   hours: {
     type: "hours", title: "Time of day", icon: "stats", size: "half", multiple: true,
-    blurb: "When replies go out across the day. Hover a bar for the exact count.",
+    blurb: "Replies by hour.",
     options: [WINDOW],
   },
   weekdays: {
     type: "weekdays", title: "Day of the week", icon: "stats", size: "half", multiple: true,
-    blurb: "Which days are busiest.",
+    blurb: "Replies by day.",
     options: [WINDOW],
   },
   platforms: {
     type: "platforms", title: "By platform", icon: "chats", size: "half", multiple: true,
-    blurb: "How replies split between the platforms.",
+    blurb: "Replies by platform.",
     options: [WINDOW],
   },
   waiting: {
     type: "waiting", title: "Waiting for a reply", icon: "chats", size: "half",
-    blurb: "People who messaged and have not been answered yet.",
+    blurb: "Not answered yet.",
     // "Up to 6", not "6": the label also shows as a chip beside the title, and a
     // bare number there read as "6 people waiting" above "Nobody is waiting".
     options: [{ key: "count", label: "Show", choices: [{ value: 3, label: "Up to 3" },
@@ -117,11 +117,11 @@ export const WIDGETS: Record<string, WidgetDef> = {
   },
   health: {
     type: "health", title: "Needs attention", icon: "alert", size: "half",
-    blurb: "Anything wrong with the setup, and a link to where it is fixed.",
+    blurb: "Setup problems, with a link to each fix.",
   },
   actions: {
     type: "actions", title: "Quick actions", icon: "command", size: "half",
-    blurb: "One click to the things you do most.",
+    blurb: "Shortcuts.",
   },
 };
 

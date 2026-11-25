@@ -198,7 +198,7 @@
   <div class="tg-hero is-loading" aria-hidden="true"></div>
 {:else}
   <!-- Where things stand. -->
-  <section class="tg-hero" class:is-on={connected && info.state === "running"}>
+  <section class="tg-hero" class:is-on={connected && info.state === "running"} class:is-bare={!info.token_set}>
     <span class="tg-logo" aria-hidden="true">
       <svg viewBox="0 0 24 24"><path d="M20.7 4.3 2.9 11.2c-1.2.5-1.2 1.2-.2 1.5l4.6 1.4 1.8 5.4c.2.6.4.8.9.8.4 0 .6-.2.9-.5l2.2-2.1 4.6 3.4c.8.5 1.4.2 1.6-.8l3-14c.3-1.3-.5-1.8-1.6-1.4ZM9.8 14.1l-.4 4.1-1.4-4.4L18 7.7l-8.2 6.4Z" /></svg>
     </span>
@@ -214,17 +214,17 @@
           Checking the token…
         {/if}
       </div>
-      <p class="tg-sub">
-        {#if !info.token_set}
-          Three short steps below, and you can run the bot from your phone.
-        {:else if botErr}
-          {botErr}
-        {:else if !info.owner_id}
-          One more step: tell it who you are.
-        {:else}
-          {info.bot?.name ?? "Your bot"} answers only you (ID {info.owner_id}).
-        {/if}
-      </p>
+      {#if info.token_set}
+        <p class="tg-sub">
+          {#if botErr}
+            {botErr}
+          {:else if !info.owner_id}
+            One step left.
+          {:else}
+            {info.bot?.name ?? "Your bot"} answers only you (ID {info.owner_id}).
+          {/if}
+        </p>
+      {/if}
       {#if connected}
         <div class="tg-actions">
           {#if botLink}<a class="tg-btn" href={botLink} target="_blank" rel="noreferrer"><Icon name="external" size={12} />Open in Telegram</a>{/if}
@@ -296,7 +296,7 @@
           {/if}
         </div>
         {#if (!info.owner_id || changingOwner) && info.token_set}
-          <p class="tg-how">So it answers only you. Send
+          <p class="tg-how">Send
             {#if botLink}<a href={botLink} target="_blank" rel="noreferrer">@{info.bot?.username}</a>{:else}your bot{/if}
             any message, then press Find me.</p>
           <div class="tg-row">
@@ -340,7 +340,7 @@
           {#if tested === "sent"}<span class="tg-done">It works</span>{/if}
         </div>
         {#if connected && tested !== "sent"}
-          <p class="tg-how">A message from the bot to you, to be sure it all fits.</p>
+          <p class="tg-how">A test message from the bot to you.</p>
           <div class="tg-row">
             <button type="button" class="tg-go" onclick={test} disabled={testing}><Icon name="send" size={12} />{testing ? "Sending" : "Send a test message"}</button>
           </div>
@@ -401,6 +401,8 @@
     box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-edge) 70%, transparent);
   }
   .tg-hero.is-loading { height: 96px; animation: tg-pulse 1.4s ease-in-out infinite; }
+  /* Only the title to say: level with the logo, not hung from its top. */
+  .tg-hero.is-bare { align-items: center; }
   @keyframes tg-pulse { 50% { opacity: 0.5; } }
   .tg-logo {
     position: relative;

@@ -37,14 +37,13 @@
    * long it is, and plays, muted, while the pointer is on it; opened, it plays
    * with its sound.
    */
-  import { onDestroy, onMount, tick } from "svelte";
+  import { onDestroy, onMount, tick, untrack } from "svelte";
   import { flip } from "svelte/animate";
   import { scale } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
   import { api } from "../lib/api";
   import { get } from "svelte/store";
   import { keptDupes, picturesBlur, settingsSection, viewPersona } from "../lib/stores";
-  import PersonaScope from "../lib/personas/PersonaScope.svelte";
   import { personasRes } from "../lib/personas/store";
   import { play } from "../lib/uisound";
   import { domino } from "../lib/domino";
@@ -120,6 +119,13 @@
     galleryOf(next).refresh({ maxAge: 10000 });
     loadLooks();
   }
+  // The profile picked in the sidebar: this page follows it.
+  $effect(() => {
+    const want = $viewPersona;
+    untrack(() => {
+      if (want && want !== pid && cast.some((p) => p.id === want)) switchTo(want);
+    });
+  });
   const pics = $derived<Pic[]>($gallery.data.pictures ?? []);
   const loading = $derived(!$gallery.fetched && $gallery.loading);
   const loadError = $derived($gallery.error);
@@ -267,8 +273,8 @@
   /** What new pictures get, picked where they go in: no filter, the AI's pick, a random one, or one look for all. */
   const autoOptions = $derived([
     { value: "off", label: "No filter", icon: "pictures" },
-    { value: "ai", label: "AI picks", hint: "A filter that suits each one", icon: "sparkle" },
-    { value: "random", label: "Random", hint: "Any of the filters, each time", icon: "refresh" },
+    { value: "ai", label: "AI picks", icon: "sparkle" },
+    { value: "random", label: "Random", icon: "refresh" },
     ...looksList.map((l) => ({ value: `one:${l.id}`, label: l.name, icon: "palette" })),
   ]);
   const autoChoice = $derived(!autoLook || autoLook.mode === "off" ? "off"
@@ -583,12 +589,6 @@
 
 <ErrorNote text={loadError} onretry={load} />
 
-{#if many}
-  <!-- Whose pictures: each persona sends its own. -->
-  <div class="pz-scope">
-    <PersonaScope value={pid} label="Pictures of" onchange={switchTo} />
-  </div>
-{/if}
 
 <!-- ── Drop zone ────────────────────────────────────────────────────────── -->
 <svelte:window onpaste={onPaste} />
@@ -649,10 +649,7 @@
       {/if}
     </p>
     <p class="mt-0.5 text-[11px] leading-relaxed text-faint">
-      Any format works, it is converted for you. Videos become MP4, made
-      smaller when too big to send. A zip is unpacked including its subfolders.
-      Each one is described automatically, and that description is all the
-      bot has to go on when it picks one.
+      Any format, or a zip. Each one gets a description, which is what the bot picks by.
     </p>
     <!-- Where the phone app cannot pick files, or this build cannot open HEIC. -->
     <div class="flex flex-col items-center">
@@ -741,7 +738,7 @@
   <div class="pd-long">
     <span class="pd-long-mark"><Icon name="sparkle" size={13} /></span>
     <p class="min-w-0 flex-1">
-      {longOnes} {longOnes === 1 ? "description is" : "descriptions are"} long. A line or two is all the bot needs.
+      {longOnes} {longOnes === 1 ? "description is" : "descriptions are"} long.
     </p>
     <Button size="sm" kind="ghost" loading={queueing} onclick={shortenLong}>Shorten {longOnes === 1 ? "it" : "them"}</Button>
     <button type="button" class="pd-long-x" onclick={hideLong} title="Hide this" aria-label="Hide this">
@@ -897,7 +894,7 @@
             </div>
           {:else}
             <p class="mt-2.5 text-[13px] leading-relaxed text-warn">
-              Not described, so the bot can never send it.
+              No description, so it's never sent.
             </p>
           {/if}
 
@@ -957,11 +954,9 @@
       />
       <p class="text-[12px] leading-relaxed text-muted">
         {#if editing.video}
-          What happens in the video, like a caption: who, what they do, where.
-          The bot reads it when it sends the video. Markdown works.
+          Who, what they do, where.
         {:else}
-          What is in the picture, like a caption: who, what they are wearing or
-          doing, where. The bot reads it when it sends the picture. Markdown works.
+          Who, what they're wearing or doing, where.
         {/if}
       </p>
     </div>
@@ -973,7 +968,7 @@
     ></textarea>
     <div class="mt-1.5 flex items-center justify-between text-[11px] text-faint">
       <span>
-        {editWords} {editWords === 1 ? "word" : "words"}{#if editWords > 60}<span class="text-warn"> · a line or two is enough</span>{/if}
+        {editWords} {editWords === 1 ? "word" : "words"}{#if editWords > 60}<span class="text-warn">  · keep it short</span>{/if}
       </span>
       {#if dirty}<span class="text-warn">unsaved</span>{/if}
     </div>
@@ -1203,7 +1198,6 @@
   /* The drop zone while pictures go in (lib/pictures.ts keeps the count, so it is still there after leaving the tab). */
   .pz { position: relative; overflow: hidden; }
   /* Whose pictures, above the drop zone; and their name in it, in their colour. */
-  .pz-scope { display: flex; align-items: center; margin-bottom: 10px; }
   .pz-who { font-weight: 650; color: var(--color-ink); }
   .pz.is-adding {
     border-color: color-mix(in srgb, var(--color-accent) 50%, transparent);

@@ -40,9 +40,9 @@ in **Settings**.
 | **Snapchat** | a Chrome window | chats, snaps of itself, friend requests | computers |
 | **TikTok** | a Chrome window | DMs, message requests, the videos people send, comments, LIVE, For You, posting | computers |
 | **Instagram** | a Chrome window | DMs, message requests, stories, reels, comments, Notes, posting | computers |
-| **X** <sup>beta</sup> | a Chrome window | DMs, replies, likes, posting | computers |
-| **Reddit** <sup>beta</sup> | a Chrome window | chats, inbox, comments, votes, posting | computers |
-| **WhatsApp** <sup>beta</sup> | linked from your phone, no browser | chats, groups, statuses | computers |
+| **X** | a Chrome window | DMs, replies, likes, posting | computers |
+| **Reddit** | a Chrome window | chats, inbox, comments, votes, posting | computers |
+| **WhatsApp** | linked from your phone, no browser | chats, groups, statuses | computers |
 | **Telegram** | your own account | chats, groups, channels | computers, phones |
 | **iMessage** | a Mac running BlueBubbles, or your iPhone | texts and group chats | computers |
 | **Minecraft** | joins a server as a player | plays, and chats with people in game | computers |

@@ -905,7 +905,7 @@
             {:else if s.installed}
               {@render said(s.hint || "")}
             {:else}
-              Not on this computer yet.{#if s.id === "ollama"} The easiest way to run models here.{/if}
+              Not on this computer yet.
             {/if}
           </p>
           <div class="lc-uses">
@@ -1000,7 +1000,7 @@
         <span class="lc-logo"><ProviderTile id="local" size={46} /></span>
         <div class="min-w-0 flex-1">
           <div class="lc-name">No model server found</div>
-          <p class="lc-sub">Ollama is the easiest: once it is installed, it is found here by itself.</p>
+          <p class="lc-sub">Install Ollama and it shows up here.</p>
         </div>
       </div>
       <div class="lc-actions">
@@ -1114,7 +1114,6 @@
       <div class="lc-row">
         <div class="lc-row-text">
           <b>Start it with the app</b>
-          <p>The server above starts when the app opens.</p>
         </div>
         <Toggle checked={autostart} onchange={setAutostart} name="Start it with the app" />
       </div>
@@ -1125,8 +1124,7 @@
       <div class="lc-row is-wrap">
         <div class="lc-row-text">
           <b>Room for the conversation</b>
-          <p>How much the model reads at once, in tokens. Your persona and the recent messages have to fit.
-            Applies when the app starts Ollama or llama.cpp.</p>
+          <p>In tokens. Your persona and recent messages have to fit.</p>
         </div>
         <div class="lc-ctx">
           <Segmented label="Room for the conversation" value={String(contextLength)}
@@ -1144,7 +1142,7 @@
       <div class="lc-row is-stack">
         <div class="lc-row-text">
           <b>Server address</b>
-          <p>Found by itself. Change it for a server somewhere else on the network.</p>
+          <p>Change it for a server elsewhere on the network.</p>
         </div>
         <div class="lc-addr">
           <input
@@ -1173,7 +1171,7 @@
           />
         </label>
         {#if locked}
-          <p class="lc-note is-warn">It answered, but wants an API key. Put it in above, then Refresh.</p>
+          <p class="lc-note is-warn">It needs an API key. Add it above, then Refresh.</p>
         {:else if probeError && !reachable}
           <p class="lc-note is-bad">{probeError}</p>
         {:else if reachable}
@@ -1185,7 +1183,7 @@
             <Button kind="ghost" size="sm" onclick={() => { loading = true; load(true).then(() => (loading = false)); }}>
               Revert
             </Button>
-            <span>Used from the next request, no restart needed.</span>
+            <span>Applies from the next request.</span>
           </div>
         {/if}
       </div>
@@ -1197,7 +1195,7 @@
     <section class="lc-sec">
       <header class="lc-head">
         <h3>Also works with</h3>
-        <span class="lc-count">Found by itself when it runs</span>
+        <span class="lc-count">Found while it's running</span>
       </header>
       <div class="ls-grid">
         {#each others as o (o.id)}

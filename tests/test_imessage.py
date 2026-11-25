@@ -370,7 +370,8 @@ smap = read("webui/src/lib/settingsmap.ts")
 check("every one on a page of Settings, iMessage", all(f'"{k}"' in smap for k in keys if k != "imessage.enabled")
       and 'panel: "imessage-setup"' in smap)
 settings = read("webui/src/pages/Settings.svelte")
-check("its two choices as words", '"imessage.thread_replies": [' in settings and '"imessage.send_method": [' in settings
+choices = read("resources/setting_choices.json")
+check("its two choices as words", '"imessage.thread_replies": [' in choices and '"imessage.send_method": [' in choices
       and '"services.imessage.enabled": "imessage.enabled"' in settings)
 check("its own setup page", "<ImessageSetup />" in settings and "BlueBubbles Server" in read("webui/src/lib/components/ImessageSetup.svelte"))
 check("the example .env", "IMESSAGE_SERVER_1=" in read("resources/example.env"))

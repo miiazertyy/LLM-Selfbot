@@ -65,7 +65,7 @@
         </ul>
       {/if}
       <p class="us-line"><Icon name="persona" size={12} />
-        {#if pv.text.changed}Its text: {pv.text.added} lines new, {pv.text.removed} gone.{:else}Its text stays the same.{/if}
+        {#if pv.text.changed}Text: {pv.text.added} lines new, {pv.text.removed} gone.{:else}Same text.{/if}
       </p>
       {#if pv.settings.length}
         <ul class="us-settings">
@@ -74,11 +74,11 @@
           {/each}
         </ul>
       {:else}
-        <p class="us-line"><Icon name="settings" size={12} />Its settings stay the same.</p>
+        <p class="us-line"><Icon name="settings" size={12} />Same settings.</p>
       {/if}
-      {#if pv.face_kept}<p class="us-line"><Icon name="check" size={12} />The face you gave it stays.</p>{/if}
+      {#if pv.face_kept}<p class="us-line"><Icon name="check" size={12} />Keeps the face you gave it.</p>{/if}
       {#if pv.edited}
-        <p class="us-warn"><Icon name="alert" size={12} />You changed this profile since you added it. Updating replaces those changes; the old text and settings are kept in backups.</p>
+        <p class="us-warn"><Icon name="alert" size={12} />You changed this profile. Updating replaces your changes, and keeps a backup.</p>
       {/if}
       <div class="us-actions">
         <Button kind="ghost" size="sm" onclick={() => { play("off"); close(); }}>Not now</Button>

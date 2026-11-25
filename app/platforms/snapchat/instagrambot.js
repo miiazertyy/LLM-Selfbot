@@ -14,7 +14,7 @@
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
-import { delay, typeDelay, launchBrowser, showWindow, hideWindow, persona } from "./browser.js";
+import { delay, typeDelay, launchBrowser, showWindow, hideWindow, persona, checkShown } from "./browser.js";
 // The day labels over a run of messages read the same way on every platform (runner_core.js).
 import { atOfLabel } from "./runner_core.js";
 
@@ -996,19 +996,13 @@ export default class InstagramBot {
     }, u).catch(() => null);
   }
 
-  /** A check Instagram put up that only a person can answer: a captcha, a "was this you?". */
+  /** A check Instagram put up that only a person can answer: a captcha, a "was this you?". One on the screen, not
+   *  Google's invisible reCAPTCHA loaded out of sight (browser.js checkShown), or Instagram's own words for it. */
   async captchaShown(page = this.page) {
+    if (await checkShown(page, SEL.captcha)) return true;
     try {
-      return await page.evaluate((sels) => {
-        for (const s of sels) {
-          try {
-            const e = document.querySelector(s);
-            if (e && e.getClientRects().length) return true;
-          } catch { /* bad selector on this build */ }
-        }
-        return /confirm it.s you|solve this puzzle|help us confirm|unusual (login )?activity/i
-          .test((document.body?.innerText || "").slice(0, 4000));
-      }, SEL.captcha);
+      return await page.evaluate(() => /confirm it.s you|solve this puzzle|help us confirm|unusual (login )?activity/i
+        .test((document.body?.innerText || "").slice(0, 4000)));
     } catch {
       return false;
     }
@@ -2329,7 +2323,9 @@ export default class InstagramBot {
   async fetchInPage(page, url, limit = 40000000) {
     return await page.evaluate(async (src, cap) => {
       try {
-        const r = await fetch(src, { credentials: "include" });
+        // Its cookies only to Instagram itself: a picture host that answers any site with "*" refuses a request
+        // carrying them (seen on X and Reddit, 2026-11-11).
+        const r = await fetch(src, { credentials: new URL(src, location.href).origin === location.origin ? "include" : "omit" });
         if (!r.ok) return null;
         const buf = await r.arrayBuffer();
         if (buf.byteLength < 1000 || buf.byteLength > cap) return null;

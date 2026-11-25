@@ -110,6 +110,8 @@
     max-height: 340px;
     flex-direction: column;
     gap: 2px;
+    /* Never sideways: the rows' slide in overshoots by a pixel, and a sideways scrollbar came and went with it. */
+    overflow-x: hidden;
     overflow-y: auto;
     padding: 6px;
     border-radius: 16px;

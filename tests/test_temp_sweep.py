@@ -38,10 +38,11 @@ def unpacked(name, ours=True, old=True, dll=True):
         (folder / "resources" / "config.yaml").write_text("bot: {}\n", encoding="utf-8")
         (folder / "webui").mkdir()
     if dll:
-        if sys.platform == "win32":
-            shutil.copy(Path(sys.base_prefix) / "python3.dll", folder / "python312.dll")
-        else:
-            (folder / "python312.dll").write_bytes(b"MZ")
+        for name in ("python3.dll", "python312.dll"):
+            if sys.platform == "win32":
+                shutil.copy(Path(sys.base_prefix) / "python3.dll", folder / name)
+            else:
+                (folder / name).write_bytes(b"MZ")
     if old:
         for p in [folder, *folder.rglob("*")]:
             os.utime(p, (OLD, OLD))
@@ -53,11 +54,13 @@ gone = unpacked("_MEI200")
 busy = unpacked("_MEI300")
 fresh = unpacked("_MEI400", old=False)
 theirs = unpacked("_MEI500", ours=False)
+hexed = unpacked("_MEI000034dc2")
 (base / "notes").mkdir()
 
 print("== which are looked at ==")
 found = {p.name for p in tempsweep.stale(own)}
 check("the app's own old ones", {"_MEI200", "_MEI300"} <= found, str(found))
+check("with a real name too: they are in hex, so have letters in them", "_MEI000034dc2" in found, str(found))
 check("never the one it is running from", "_MEI100" not in found)
 check("nor one changed in the last ten minutes: a copy may be unpacking into it", "_MEI400" not in found)
 check("nor another program's", "_MEI500" not in found)
@@ -73,12 +76,13 @@ if sys.platform == "win32":
     check("a folder whose DLL a running copy has loaded is not cleared", tempsweep.clear(busy) is False)
     check("  and nothing in it was deleted", (busy / "python312.dll").exists() and (busy / "lib" / "thing.pyd").exists()
           and (busy / "resources" / "config.yaml").exists())
+    check("  not even the small python3.dll, which a running copy may not have loaded", (busy / "python3.dll").exists())
 else:
     print("  SKIP  a loaded DLL can be deleted outside Windows, which is why the sweep only runs there")
 
 print("\n== the sweep ==")
 cleared, left = tempsweep.sweep(own)
-check("the unused old one is cleared, all of it", not gone.exists(), str(list(base.iterdir())))
+check("the unused old one is cleared, all of it", not gone.exists() and not hexed.exists(), str(list(base.iterdir())))
 if holder:
     check("the one in use is counted as left", left == 1 and busy.exists(), f"{cleared} {left}")
     holder.kill()

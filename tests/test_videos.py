@@ -283,7 +283,7 @@ check("a tall picture starts a little above the middle", "(h - side) * 0.22" in 
 check("sounds: grabbed, let go, zoomed by notches, started again",
       'play("grab"' in crop and 'play("tick", { level: 0.28' in crop and 'play("undo"' in crop and 'play("slide")' in prof)
 check("a file's address is let go when it closes", "URL.revokeObjectURL(crop.src)" in prof)
-check("plain words", "Drag to move it. Scroll or slide to zoom." in crop and ">Use this<" in crop and "How it shows" in crop)
+check("plain words", "Drag to move, scroll to zoom." in crop and ">Use this<" in crop and "How it shows" in crop)
 check("motion off", ':global(:root[data-motion="off"]) .fc,' in crop and ':global(:root[data-motion="off"]) .fc-face img,' in crop)
 check("a minus to zoom out with", 'minus: "M5 12h14"' in read("webui/src/lib/components/Icon.svelte"))
 

@@ -125,7 +125,7 @@
   let winding = false;
   $effect(() => {
     const el = root;
-    // Below what the window shows as the tab opens: no sweep in, just its count.
+    // Waits to be seen: scrolled to later, it sweeps in then, with its sound.
     if (el) whenShown(el).then(() => onScreen(el)).then((seen) => {
       instant = !seen;
       winding = seen;

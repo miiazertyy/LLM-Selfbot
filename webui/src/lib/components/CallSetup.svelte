@@ -443,7 +443,7 @@
       <span class="cl-mark" aria-hidden="true"><Icon name="phone" size={18} /></span>
       <div class="min-w-0 flex-1">
         <div class="cl-name">Try a call</div>
-        <p class="cl-sub">Talk to it with your microphone, the way someone calling it would. Headphones help.</p>
+        <p class="cl-sub">Talk to it with your mic. Headphones help.</p>
       </div>
       {#if live}
         <span class="cl-state is-{call?.state}"><span class="cl-dot"></span>{STATES[call?.state ?? ""] ?? "On a call"}</span>
@@ -488,12 +488,12 @@
       {#if cat && !hasKey}
         <div class="cl-warn">
           <Icon name="key" size={13} />
-          <span class="min-w-0 flex-1">No {providerName} key yet, so calls use its own brain until one is added.
+          <span class="min-w-0 flex-1">No {providerName} key yet, so calls use its own brain.
             {provider === "gemini" ? "Gemini's is free." : ""}</span>
           <button type="button" class="cl-btn" onclick={() => goto("groq/keys")}>Add a key</button>
         </div>
       {/if}
-      <p class="cl-hint">There is no voice model for this computer. For a call that never leaves it, pick its own brain.</p>
+      <p class="cl-hint">No voice model runs on this computer. To keep calls local, pick its own brain.</p>
     </div>
   {:else}
     <div class="cl-block">
@@ -562,7 +562,7 @@
         {#if !local.supported}
           <NotHere feature="local_voice" variant="line" />
         {:else}
-          <p class="cl-hint">Hears and speaks with no server and no key. Nothing said leaves this computer.</p>
+          <p class="cl-hint">No server or key needed. Nothing leaves this computer.</p>
           <div class="cl-local">
             {#each local.models as m (m.id)}
               {@const inUse = (m.job === "stt" ? legs?.hear : legs?.speak)?.model === m.id}

@@ -190,6 +190,11 @@ def apply_chat_event(web_id: str, evt: dict) -> None:
     # Typing lapses in seconds, and comes every few while someone types: not worth replaying, and it would crowd out what is.
     if evt.get("t") == "typing":
         return
+    if evt.get("t") == "attention":
+        # A check to solve, a code to type: said at once, wherever the person is (app/web/attention.py).
+        from app.web import attention
+        attention.raised(web_id, str(evt.get("what") or ""))
+        return
     if evt.get("t") in ("live", "live_say", "live_state", "attention"):
         live = _LIVE.setdefault(tgt, {"on": False, "feed": deque(maxlen=80)})
         if evt["t"] == "live_state":

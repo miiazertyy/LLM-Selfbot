@@ -311,7 +311,7 @@ desc = read("app/web/descriptions.py")
 yaml_text = read("resources/config.yaml")
 for key in ("tiktok.watch.enabled", "bot.videos.enabled", "bot.videos.listen", "bot.videos.max_seconds"):
     check(f"{key}: shipped, typed, described, labelled and placed",
-          f'"key": "{key}"' in schema and desc.count(f'"{key}": ') == 2 and f'"{key}",' in smap)
+          f'"key": "{key}"' in schema and desc[:desc.index("UNITS = {")].count(f'"{key}": ') == 2 and f'"{key}",' in smap)
 check("watching TikToks is its own sub of the TikTok tab", 'id: "watching",\n        name: "Watching",' in smap)
 check("how videos are watched is one place for every platform", 'id: "videos",\n        name: "Videos they send",' in smap
       and '"tiktok.watch.listen"' not in smap and '"tiktok.watch.max_seconds"' not in smap)
@@ -321,7 +321,7 @@ check("read as each message comes: no restart", not any(f'"{k}"' in desc[desc.in
                                                                      desc.index("def section_for")]
                                                         for k in ("tiktok.watch.enabled", "bot.videos.enabled",
                                                                   "bot.videos.listen", "bot.videos.max_seconds")))
-check("its length is in seconds on the dial", "in seconds" in desc.split('"bot.videos.max_seconds": ', 1)[1].split("\n", 1)[0])
+check("its length is in seconds on the dial", '"bot.videos.max_seconds": "s",' in desc[desc.index("UNITS = {"):])
 for text_ in (read("app/utils/tiktokwatch.py"), read("app/utils/videowatch.py"), card):
     check("no em dashes", "\u2014" not in text_)
 
@@ -584,7 +584,7 @@ for key in ("tiktok.watch.their_posts", "tiktok.engage.like_sent", "tiktok.engag
             "tiktok.visits.follow_host", "tiktok.foryou.enabled", "tiktok.foryou.sessions_per_day", "tiktok.foryou.minutes",
             "tiktok.foryou.like_percent", "tiktok.share.enabled", "tiktok.posting.enabled", "tiktok.posting.per_day",
             "tiktok.posting.privacy"):
-    check(f"{key}: typed, described, labelled and placed", f'"key": "{key}"' in schema and desc.count(f'"{key}": ') == 2
+    check(f"{key}: typed, described, labelled and placed", f'"key": "{key}"' in schema and desc[:desc.index("UNITS = {")].count(f'"{key}": ') == 2
           and f'"{key}",' in smap)
 import yaml  # noqa: E402
 
@@ -601,7 +601,7 @@ check("what the runner reads needs a restart; what Python reads does not", '"tik
 page_src = read("webui/src/pages/Settings.svelte")
 check("its subs have icons, and who can watch has its choices", all(f' {k}: "' in page_src for k in ("watching", "engage", "visits",
                                                                                                   "foryou", "posting"))
-      and '"tiktok.posting.privacy": [' in page_src)
+      and '"tiktok.posting.privacy": [' in read("resources/setting_choices.json"))
 check("Telegram: /visit and /foryou", '("visit",' in read("app/telegram_bot/commands.py")
       and 'CommandHandler("visit",' in read("app/telegram_bot/telegram_controller.py")
       and 'CommandHandler("foryou",' in read("app/telegram_bot/telegram_controller.py"))

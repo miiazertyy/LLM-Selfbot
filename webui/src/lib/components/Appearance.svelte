@@ -42,9 +42,9 @@
   const DEFAULT_BACKDROP = "aurora";
   const DEFAULT_SURFACE = "glass";
   const SURFACES = [
-    { id: "glass", name: "Glass", hint: "See the background through them" },
-    { id: "solid", name: "Solid", hint: "Opaque, the lightest to draw" },
-    { id: "frost", name: "Frosted", hint: "More blur, more opaque" },
+    { id: "glass", name: "Glass" },
+    { id: "solid", name: "Solid" },
+    { id: "frost", name: "Frosted" },
   ];
 
   let bgBusy = $state(false);
@@ -109,7 +109,6 @@
             {/each}
           </span>
           <span class="ap-name">{t.name}{#if t.id === DEFAULT_THEME}<span class="default-tag">Default</span>{/if}</span>
-          <span class="ap-hint">{t.hint}</span>
           {#if on}<span class="ap-tick"><Icon name="check" size={11} /></span>{/if}
         </button>
       {/each}
@@ -127,7 +126,6 @@
             <span class="ap-scene-pane"></span>
           </span>
           <span class="ap-name">{b.name}{#if b.id === DEFAULT_BACKDROP}<span class="default-tag">Default</span>{/if}</span>
-          <span class="ap-hint">{b.hint}</span>
           {#if on}<span class="ap-tick"><Icon name="check" size={11} /></span>{/if}
         </button>
       {/each}
@@ -150,7 +148,6 @@
             <span class="ap-surface-pane is-{s.id}"><b></b><em></em></span>
           </span>
           <span class="ap-name">{s.name}{#if s.id === DEFAULT_SURFACE}<span class="default-tag">Default</span>{/if}</span>
-          <span class="ap-hint">{s.hint}</span>
           {#if on}<span class="ap-tick"><Icon name="check" size={11} /></span>{/if}
         </button>
       {/each}
@@ -205,7 +202,6 @@
           <span class="min-w-0 flex-1">
             <span class="ap-name" style="font-family: {f.stack}">{f.name}</span>
             <span class="ap-sample" style="font-family: {f.stack}">The quick brown fox jumps</span>
-            <span class="ap-hint">{f.note}</span>
           </span>
           {#if on}<span class="ap-tick"><Icon name="check" size={11} /></span>{/if}
         </button>
@@ -246,21 +242,21 @@
     <div class="settings-row flex items-center gap-4">
       <div class="min-w-0 flex-1">
         <div class="text-[13.5px] font-medium text-ink">Animations</div>
-        <p class="mt-0.5 text-[12px] leading-relaxed text-muted">Springy motion throughout the app.</p>
+
       </div>
       <Toggle checked={$motionEnabled} onchange={(v) => motionEnabled.set(v)} />
     </div>
     <div class="settings-row flex items-center gap-4">
       <div class="min-w-0 flex-1">
         <div class="text-[13.5px] font-medium text-ink">Smooth scrolling</div>
-        <p class="mt-0.5 text-[12px] leading-relaxed text-muted">The mouse wheel glides instead of jumping.</p>
+
       </div>
       <Toggle checked={$smoothScroll} name="Smooth scrolling" onchange={(v) => smoothScroll.set(v)} />
     </div>
     <div class="settings-row flex items-center gap-4">
       <div class="min-w-0 flex-1">
         <div class="text-[13.5px] font-medium text-ink">Cursor snow</div>
-        <p class="mt-0.5 text-[12px] leading-relaxed text-muted">Snow falls from your cursor as you move it.</p>
+
       </div>
       <Toggle checked={$snowEnabled} onchange={(v) => snowEnabled.set(v)} />
     </div>

@@ -260,7 +260,7 @@
           <h3 class="text-[15px] font-semibold tracking-tight text-ink">Raw config</h3>
           {#if dirty}<span class="re-dirty" title="Changed, not saved">Edited</span>{/if}
         </div>
-        <p class="truncate text-[11.5px] text-faint">Every setting, as JSON. Saved back to config.yaml.</p>
+        <p class="truncate text-[11.5px] text-faint">Saved to config.yaml.</p>
       </div>
 
       {#key shake}

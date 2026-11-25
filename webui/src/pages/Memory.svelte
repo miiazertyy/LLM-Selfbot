@@ -34,7 +34,7 @@
    * opens the person it knows the most about instead.
    */
   import { autowidth } from "../lib/autowidth";
-  import { onMount, tick } from "svelte";
+  import { onMount, tick, untrack } from "svelte";
   import { flip } from "svelte/animate";
   import { cubicOut } from "svelte/easing";
   import { fade, fly } from "svelte/transition";
@@ -56,7 +56,6 @@
   import { ask } from "../lib/ask";
   import { DAY_MONTH, fmtDate } from "../lib/fmt";
   import { memoryView, toast, viewPersona } from "../lib/stores";
-  import PersonaScope from "../lib/personas/PersonaScope.svelte";
   import { personasRes } from "../lib/personas/store";
   import { resource } from "../lib/resource";
   import Button from "../lib/components/Button.svelte";
@@ -64,7 +63,6 @@
   import Select from "../lib/components/Select.svelte";
   import { PLATFORM_IDS, PLATFORMS, platformOf, type PlatformId } from "../lib/platforms";
   import { personOn, platformOn, socialsOn } from "../lib/socials";
-  import FootNote from "../lib/components/FootNote.svelte";
   import UserChip from "../lib/components/UserChip.svelte";
   import ErrorNote from "../lib/components/ErrorNote.svelte";
   import Avatar from "../lib/components/Avatar.svelte";
@@ -128,6 +126,14 @@
     viewPersona.set(next);
     peopleOf(next).refresh({ maxAge: 10000 });
   }
+
+  // The profile picked in the sidebar: this page follows it.
+  $effect(() => {
+    const want = $viewPersona;
+    untrack(() => {
+      if (want && want !== pid && cast.some((p) => p.id === want)) switchTo(want);
+    });
+  });
 
   /** Not the people of a social switched off in Settings: it is shown nowhere (lib/socials.ts). */
   const users = $derived<MemUser[]>((($people.data.users ?? []) as MemUser[]).filter((u) =>
@@ -604,12 +610,7 @@
       {/if}
     </button>
     <div class="mm-who">
-      {#if many}
-        <!-- Whose memory: each persona remembers people for itself. -->
-        <span class="mm-scope"><PersonaScope value={pid} onchange={switchTo} /></span>
-      {:else}
-        <span class="mm-kicker">Memory</span>
-      {/if}
+      <span class="mm-kicker">Memory</span>
       <!-- The title types itself in, a soft key a letter, again for each persona. -->
       {#key title}
         <h2 class="mm-title domino" use:domino={{ step: 26, sound: "key", level: 0.55, max: 30, once: true }} aria-label={title}>
@@ -630,8 +631,6 @@
           <span class="mm-last-text">Knows the most about <b>{nameOf(best)}</b>, {best.fact_count} {best.fact_count === 1 ? "fact" : "facts"}</span>
           <Icon name="chevron" size={11} />
         </button>
-      {:else}
-        <p class="mm-sub">What the bot has written down about the people it talks to, as they talk.</p>
       {/if}
     </div>
     <!-- Each pops in after the one before, its number counting up (lib/domino.ts, Num). -->
@@ -730,7 +729,7 @@
       {#if users.length === 0}
         <div class="mm-empty">
           <span class="mm-float"><Icon name="memory" size={24} /></span>
-          <p>Nothing remembered yet. The bot writes facts down on its own as people talk to it.</p>
+          <p>Nothing remembered yet.</p>
         </div>
       {:else if shown.length === 0}
         <div class="mm-none">
@@ -812,7 +811,7 @@
           </header>
           {#if sameAs.length}
             <p class="mm-same-lead">
-              It knows these are one person: what any of them says, it remembers about all of them.
+              Treated as one person.
             </p>
             <div class="mm-same-list">
               {#each sameAs as u (u.user_id)}
@@ -831,7 +830,7 @@
             </div>
           {:else}
             <p class="mm-same-lead">
-              Writes to it from another platform too? Link them and it remembers one person, not two.
+              Same person on another platform? Link them.
             </p>
           {/if}
           <div class="mm-same-add" data-link-picker bind:this={linkAnchor}>
@@ -906,7 +905,7 @@
                     {/if}
                   </div>
                 {:else}
-                  <p class="mm-none">Nothing written down about them yet.</p>
+                  <p class="mm-none">Nothing yet.</p>
                 {/each}
               </div>
             {/key}
@@ -923,17 +922,13 @@
               />
               <Button onclick={addFact} loading={saving} disabled={!newKey.trim()}>Add</Button>
             </div>
-            <FootNote class="mt-3" icon="memory">
-              The bot adds these itself as it talks. Anything you add here is
-              treated exactly the same way.
-            </FootNote>
           </section>
 
           <section class="mm-own-card glass">
             <header class="mm-head">
               <h3>How it talks to them</h3>
             </header>
-            <p class="mm-own-note">Extra instructions used only when replying to them. Leave it empty for its usual way.</p>
+            <p class="mm-own-note">Only used with this person.</p>
             <textarea
               bind:value={persona}
               rows={3}
@@ -957,7 +952,7 @@
       {:else}
         <section class="mm-pick glass">
           <span class="mm-float"><Icon name="memory" size={26} /></span>
-          <p>Pick someone to see what the bot remembers about them, and change it.</p>
+          <p>Pick someone.</p>
           <span class="mm-pick-arrow" aria-hidden="true"><Icon name="chevron" size={14} /></span>
         </section>
       {/if}
@@ -1077,8 +1072,6 @@
   .mm-title { max-width: 100%; overflow: hidden; white-space: nowrap; font-size: 26px; font-weight: 700; line-height: 1.15;
               letter-spacing: -0.02em; color: var(--color-ink); }
   .mm-l { display: inline-block; white-space: pre; }
-  .mm-scope { display: inline-flex; margin-bottom: 4px; }
-  .mm-sub { margin-top: 3px; font-size: 12.5px; color: var(--color-muted); }
   /* What it learned last: a line that opens it. */
   .mm-last {
     display: inline-flex;

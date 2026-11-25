@@ -43,6 +43,8 @@ def build_parser() -> argparse.ArgumentParser:
                     help="overrides services.webui.port in config.yaml")
     ap.add_argument("--no-window", action="store_true",
                     help="serve the webui without opening a desktop window")
+    ap.add_argument("--mcp", action="store_true",
+                    help="let an AI app use the app's tools, over stdin and stdout (the app has to be open)")
     ap.add_argument("mode", nargs="?", choices=["discord", "snapchat", "both"],
                     help="legacy: run platforms directly, no webui")
     return ap
@@ -267,10 +269,12 @@ def _legacy_mode(mode: str):
 # ── Entry ────────────────────────────────────────────────────────────────────
 
 def bootstrap():
-    """Prepare the process: data dir, credentials, PATH for bundled tools."""
+    """Prepare the process: data dir, credentials, PATH for bundled tools, and HTTPS that trusts Windows' roots and
+    certifi's together (app/utils/tls.py) for every urllib download."""
     from app.utils.paths import seed_data_dir
-    from app.utils import binaries
+    from app.utils import binaries, tls
     from app.core import update
+    tls.install()
     update.clean_leftovers()   # the exe the last update stepped aside from
     seed_data_dir()
     load_env()
@@ -290,6 +294,11 @@ def load_env():
 def run(argv=None) -> bool:
     """Dispatch on argv. Returns True when a role/mode was handled, False when the caller should fall through to its own default (the desktop window)."""
     args = build_parser().parse_args(argv)
+    if args.mcp:
+        # Before bootstrap: it answers an AI app over stdout and asks the open app for everything, so it needs none of it.
+        from app.utils import mcpserver
+        mcpserver.run()
+        return True
     bootstrap()
 
     if args.role:

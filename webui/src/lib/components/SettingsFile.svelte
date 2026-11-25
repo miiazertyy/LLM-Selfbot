@@ -222,7 +222,6 @@
         <span class="sf-pop-mark"><Icon name="download" size={16} /></span>
         <div class="min-w-0">
           <div class="text-[13.5px] font-semibold text-ink">Export settings</div>
-          <div class="mt-0.5 text-[11.5px] text-faint">Every setting, in one .json file.</div>
         </div>
       </div>
       <div class="sf-opt">
@@ -297,7 +296,7 @@
     {:else}
       <div class="sf-none">
         <Icon name="check" size={18} />
-        <span>Nothing to change. Every setting in this file is already set this way.</span>
+        <span>Nothing to change.</span>
       </div>
     {/if}
 
@@ -317,32 +316,32 @@
 </Modal>
 
 <style>
-  .sf { position: relative; }
+  .sf { position: relative; display: flex; flex-shrink: 0; align-items: center; gap: 8px; }
 
-  /* ── The buttons: one quiet group, so three reads as one control ───────── */
+  /* ── The buttons: one capsule tinted like a button (36px, as tall as the bar), the three bare inside it, so
+     they read as one control. A tinted group round tinted buttons was a box in a box. ───────── */
   .sf-group {
     display: inline-flex;
     align-items: stretch;
-    gap: 2px;
     padding: 3px;
     border-radius: 12px;
-    background: rgb(255 255 255 / 0.03);
-    box-shadow: inset 0 0 0 1px var(--color-edge);
+    background: color-mix(in srgb, var(--color-accent) 8%, rgb(255 255 255 / 0.035));
   }
   .sf-btn {
     display: inline-flex;
+    height: 30px;
     align-items: center;
     gap: 6px;
-    padding: 4px 11px;
+    padding: 0 12px;
     border-radius: 9px;
     font-size: 12.5px;
-    font-weight: 500;
+    font-weight: 600;
     color: var(--color-muted);
     white-space: nowrap;
     transition: background-color 0.15s ease, color 0.15s ease, transform 0.35s var(--jelly);
   }
   .sf-btn :global(svg) { color: var(--color-faint); transition: color 0.15s ease, transform 0.35s var(--jelly); }
-  .sf-btn:hover:not(:disabled) { color: var(--color-ink); background: rgb(255 255 255 / 0.06); }
+  .sf-btn:hover:not(:disabled) { color: var(--color-ink); background: color-mix(in srgb, var(--color-accent) 13%, transparent); }
   .sf-btn:hover:not(:disabled) :global(svg) { color: var(--color-accent); }
   .sf-btn:active:not(:disabled) { transform: scale(0.95); }
   .sf-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 55%, transparent); }
@@ -357,7 +356,7 @@
     background: color-mix(in srgb, var(--color-accent) 14%, transparent);
   }
   .sf-btn.is-open :global(svg) { color: var(--color-accent); }
-  .sf-sep { width: 1px; margin: 5px 1px; background: var(--color-edge); }
+  .sf-sep { width: 1px; margin: 9px 3px; background: rgb(255 255 255 / 0.1); }
 
   /* ── Export's little card ─────────────────────────────────────────────── */
   .sf-pop {

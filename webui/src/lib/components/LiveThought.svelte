@@ -107,7 +107,7 @@
       {/each}
     </div>
   {:else}
-    <p class="lt-none">None yet. A model that reasons before it answers shows it here, as it happens.</p>
+    <p class="lt-none">None yet. Only models that reason first show this.</p>
   {/if}
 {:else if showing && latest}
   {#if variant === "line"}

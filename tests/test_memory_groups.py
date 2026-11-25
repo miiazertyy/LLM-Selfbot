@@ -106,7 +106,7 @@ check("linking is a picker of the others, searchable",
       "async function linkTo" in page and "const canLink = $derived.by" in page
       and '<div class="mm-link-pop unroll" data-link-picker' in page)
 check("it says plainly what linking does",
-      "It knows these are one person: what any of them says, it remembers about all of them." in page)
+      "Treated as one person." in page)
 check("an account already linked is not offered again",
       "const taken = new Set([current.user_id, ...(current.same_as ?? [])]);" in page)
 check("and the totals count a linked person once, not once per account",

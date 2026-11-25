@@ -431,6 +431,52 @@ def _drop_stale_webview_cache(storage, app_dir) -> None:
 
 _WINDOW: dict = {"w": None}
 
+# What Paste can hand the chat box from here, the same limits the box itself keeps (Chats.svelte MAX_FILES, MAX_BYTES).
+CLIPBOARD_MAX_FILES = 4
+CLIPBOARD_MAX_BYTES = 8 * 1024 * 1024
+
+
+def clipboard_files(grab=None):
+    """Pictures and files on the clipboard, as [{name, type, size, data}] with data in base64: a screenshot or a copied
+    picture as one PNG, files copied in Explorer as themselves. One too big for a message comes without its data, so
+    the page can say so rather than carry it. [] when there are none, None when the clipboard can't be read here (the
+    page then tries its own way). Right-click Paste only ever got text, so a picture could be pasted into a chat with
+    Ctrl+V but not from the menu (2026-11-11). `grab` stands in for ImageGrab.grabclipboard in tests."""
+    if grab is None and sys.platform != "win32":
+        return None
+    try:
+        import base64
+        import io
+        import mimetypes
+        from PIL import Image
+        if grab is None:
+            from PIL import ImageGrab
+            grab = ImageGrab.grabclipboard
+        got = grab()
+    except Exception:
+        return None
+    out = []
+    try:
+        if isinstance(got, Image.Image):
+            buf = io.BytesIO()
+            got.save(buf, "PNG")
+            data = buf.getvalue()
+            fits = len(data) <= CLIPBOARD_MAX_BYTES
+            out.append({"name": "pasted.png", "type": "image/png", "size": len(data),
+                        "data": base64.b64encode(data).decode("ascii") if fits else ""})
+        elif isinstance(got, list):
+            for name in got[:CLIPBOARD_MAX_FILES]:
+                path = pathlib.Path(str(name))
+                if not path.is_file():
+                    continue          # a folder copied in Explorer: nothing a message can carry
+                size = path.stat().st_size
+                kind = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+                out.append({"name": path.name, "type": kind, "size": size,
+                            "data": base64.b64encode(path.read_bytes()).decode("ascii") if size <= CLIPBOARD_MAX_BYTES else ""})
+    except Exception:
+        return None
+    return out
+
 
 class WindowApi:
     """Exposed to the SPA as window.pywebview.api.* The window is frameless, so minimise / close / resize have no OS chrome to come from, the UI drives them through here. Methods only; no attributes."""
@@ -574,6 +620,10 @@ class WindowApi:
                 user32.CloseClipboard()
         except Exception:
             return None
+
+    def read_clipboard_files(self):
+        """Pictures and files on the clipboard, for Paste in the right-click menu (clipboard_files below)."""
+        return clipboard_files()
 
     def pick_folder(self):
         """A directory chosen by the user, for exports and portable installs."""

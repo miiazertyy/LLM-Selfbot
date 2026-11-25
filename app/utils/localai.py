@@ -20,7 +20,7 @@ def _server(sid, name, root, site, hint, start="", path="/v1", owner=(), mark=""
 # `owner` is what its model list says in owned_by, and `mark` a page only it answers. Two pairs share a port by default (llama.cpp and LocalAI on 8080, the web UI and TabbyAPI on 5000), and those say which one is there. `hint` is how to turn its API on, with commands in backticks (and no full stop after one, where it would hang off the code). `get` is where its models come from, for one the app cannot give a model to (Ollama downloads them itself, and llama.cpp is given the file).
 KNOWN_SERVERS = [
     _server("ollama", "Ollama", "http://127.0.0.1:11434", "https://ollama.com/download",
-            "The easiest to start with. The app starts it for you.",
+            "The app starts it for you.",
             start="command", owner=("library",), can_pull=True),
     _server("lmstudio", "LM Studio", "http://127.0.0.1:1234", "https://lmstudio.ai",
             "The app starts its server for you.", start="command", owner=("organization_owner",),

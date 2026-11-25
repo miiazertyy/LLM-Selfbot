@@ -204,6 +204,17 @@ settings_page = (ui / "pages" / "Settings.svelte").read_text(encoding="utf-8")
 api = (ui / "lib" / "api.ts").read_text(encoding="utf-8")
 check("Export, Import and Raw file sit together beside the search",
       "<SettingsFile onraw={openRaw}" in settings_page and "Export" in comp and "Import" in comp and "Raw file" in comp)
+_group = comp.split("  .sf-group {", 1)[1].split("}", 1)[0]
+_css = (ui / "app.css").read_text(encoding="utf-8")
+check("  as one capsule tinted like a button, bare buttons in it, no ring round it (a box in a box before)",
+      "background: color-mix(in srgb, var(--color-accent) 8%, rgb(255 255 255 / 0.035));" in _group
+      and "box-shadow" not in _group and ".sf-btn" not in _css)
+check("  and the whole bar one height: the capsule, the search and the switch beside it",
+      "height: 30px;" in comp.split("  .sf-btn {", 1)[1].split("}", 1)[0]
+      and 'class="field h-9 py-0' in settings_page and '<Segmented label="Whose settings" size="sm"' in settings_page)
+# 2026-11-11: the user had the Ask box taken out; AI apps reach the settings over MCP (Settings > App > MCP).
+check("no Ask box in the bar any more", "AskApp" not in settings_page and "toggleAsk" not in settings_page
+      and "settings-ask" not in settings_page and "settings-ask" not in _css)
 check("the file is sent as text, never parsed on the page", "file.text()" in comp and "api.importPreview(text)" in comp
       and "JSON.parse" not in comp)
 check("the export is saved as the server wrote it", "saveTextFile(r.filename, r.text)" in comp)

@@ -214,7 +214,7 @@
     {#if problem}
       <p class="mk-note is-bad" transition:fade={{ duration: 120 }}>{problem}</p>
     {:else}
-      <p class="mk-note">A 64 by 64 PNG. It is the same on every server.</p>
+      <p class="mk-note">A 64×64 PNG. Same on every server.</p>
     {/if}
     {#if own && !chosen}
       <button type="button" class="mk-link" onclick={reset} disabled={!!busy}>

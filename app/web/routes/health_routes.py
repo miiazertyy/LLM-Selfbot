@@ -155,8 +155,7 @@ def _issues(supervisor) -> list:
     has_key = bool(providers.keys_for("groq"))
     if not usable:
         add("settings", "error", "Nothing can write replies",
-            "None of the models set to write replies has a key or a server behind it. "
-            "Connect a provider, or pick a model you do have, under Models.",
+            "No model for replies has a key or a server. Connect a provider, or pick another model, under Models.",
             "Models", section="models")
     else:
         for e in chain:

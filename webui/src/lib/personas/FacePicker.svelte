@@ -244,7 +244,7 @@
         {/each}
       </div>
       {#if loaded && !pics.length}
-        <p class="fp-none">No pictures yet. Upload one, or add some on the Pictures page.</p>
+        <p class="fp-none">No pictures yet.</p>
       {/if}
     {/if}
     <input type="file" accept="image/*" class="hidden" bind:this={upload} onchange={uploaded} />

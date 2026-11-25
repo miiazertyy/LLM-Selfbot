@@ -86,7 +86,7 @@
   $effect(() => {
     const el = svg;
     if (el) whenShown(el).then(() => onScreen(el)).then((seen) => {
-      // Below what the window shows: straight to its value, no sweep nobody would see.
+      // Waits to be seen: scrolled to later, it sweeps in then, with its sound.
       instant = !seen;
       winding = seen && $motionEnabled;
       shown = true;

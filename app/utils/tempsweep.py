@@ -21,7 +21,7 @@ import threading
 import time
 from pathlib import Path
 
-_NAME = re.compile(r"^_MEI\d+$")
+_NAME = re.compile(r"^_MEI[0-9a-fA-F]+$")       # in hex: _MEI000034dc2
 #: Seconds a folder must have gone unchanged before it is looked at.
 MIN_AGE = 600
 
@@ -54,7 +54,9 @@ def stale(own: Path, now: float | None = None) -> list[Path]:
 
 def clear(folder: Path) -> bool:
     """One folder deleted, if nothing has its Python DLL loaded. False when it is in use (and left as it was)."""
-    for dll in folder.glob("python3*.dll"):
+    # The versioned one first: every running copy has python312.dll loaded, but not always the small python3.dll, so
+    # starting with that one could delete it from under a copy still running.
+    for dll in sorted(folder.glob("python3*.dll"), key=lambda p: len(p.name), reverse=True):
         try:
             dll.unlink()
         except OSError:

@@ -298,7 +298,9 @@ check("on a computer, nothing to say", compat.check("local_voice", "windows-x64"
       and compat.check("local_voice", "linux-arm64") is None)
 src = (ROOT / "app" / "voice" / "onboard.py").read_text(encoding="utf-8")
 check("the archive is unpacked with the safe filter", 'filter="data"' in src)
-check("certifi's certificates beside the system's", "certifi.where()" in src)
+_tls = (ROOT / "app" / "utils" / "tls.py").read_text(encoding="utf-8")
+check("certifi's certificates beside the system's (the app's one context, app/utils/tls.py)", "tls.context()" in src
+      and "ssl.create_default_context()" in _tls and "ctx.load_verify_locations(certifi.where())" in _tls)
 
 server.shutdown()
 print(f"\n{len(PASS)} passed, {len(FAIL)} failed")

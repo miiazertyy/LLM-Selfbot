@@ -420,9 +420,9 @@ check("its tile says what its exports gave", "of yours" in page and "counts[g.id
 check("the name, the colours and the picture are the card's", "bind:name" in card and "color2={second}" in card and "oncreated?.(p, face)" in card
       and "api.fromChatsCreate(name.trim(), color, color2)" in page and "uploadPersonaAvatar(made.id, face)" in profiles)
 check("not written with too little to go on", "disabled={total < ENOUGH}" in page)
-check("says it learns from you, never the people you talk to", "never from the people you talk to" in page)
+check("says it learns from you, never the people you talk to", "Only what you wrote is used." in page)
 check("no control anywhere to pick someone else", not PERSON.search(page))
-check("says where the samples go", "Samples of your messages go to" in page and "nothing leaves it" in page)
+check("says where the samples go", "Samples of your messages go to" in page and "Nothing leaves this computer." in page)
 check("every arrival heard", 'play("lift")' in page and 'play("drop")' in page and 'play("rise")' in page and 'play("done")' in page and 'play(guide ? "open" : "tick")' in page)
 
 print(f"\n{passed} passed, {failed} failed")

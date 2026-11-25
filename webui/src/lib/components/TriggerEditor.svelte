@@ -120,10 +120,9 @@
   <div class="mt-2.5 flex flex-wrap items-center gap-2">
     <p class="min-w-0 flex-1 text-[11px] leading-relaxed text-faint">
       {#if names.length}
-        Any of these in a group chat gets a reply without a mention. Servers still need a mention or a
-        reply. Enter or a comma adds one.
+        In group chats these get a reply without a mention. Servers still need a mention or a reply.
       {:else}
-        No names: in a group chat it replies only when mentioned or replied to.
+        No names, so group chats need a mention or a reply.
       {/if}
     </p>
     {#if dirty}

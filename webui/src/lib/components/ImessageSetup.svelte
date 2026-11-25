@@ -97,7 +97,7 @@
   const steps = $derived.by((): ReadyStep[] => [
     { name: "A Mac signed in to iMessage", what: "Any Mac, on and awake. The Messages app signed in.", done: signedIn,
       shows: signedIn ? (accts.find((a) => a.username)?.username || anyMac.find((m) => m.account)?.account || "Signed in") : "Not seen yet" },
-    { name: "BlueBubbles Server", what: "Free, on that Mac. It is what this app talks to.", done: up.length > 0,
+    { name: "BlueBubbles Server", what: "Free, on that Mac.", done: up.length > 0,
       shows: up.length ? `Reached${anyMac[0]?.bluebubbles ? `, ${anyMac[0].bluebubbles}` : ""}` : slots.length ? "Not reached" : "Not added" },
     { name: "Its Private API", what: "For typing dots, read receipts, tapbacks, replies in a thread, edits.",
       done: papi, optional: true, shows: papi ? "On" : up.length ? "Off, optional" : "Optional" },
@@ -107,7 +107,7 @@
 
   const headline = $derived.by((): { title: string; sub: string; tone: "good" | "warn" | "bad" | "working" } => {
     if (!slots.length) return { title: "Text from iMessage, through a Mac", tone: "warn",
-                                sub: "It needs a Mac signed in to iMessage, running BlueBubbles Server. Then add it on the Accounts page." };
+                                sub: "Needs a Mac running BlueBubbles Server. Then add it on the Accounts page." };
     if (!up.length) {
       const bad = accts.find((a) => a.web && !a.web.stale && (a.web.state === "logged-out" || a.web.state === "needs-you"));
       return bad ? { title: "It cannot reach the Mac yet", tone: "bad", sub: bad.web?.detail || "Check the address and the password." }
@@ -136,7 +136,7 @@
     if (!phoneSlots.length) return { title: "iMessage through your iPhone", tone: "warn",
                                      sub: "No Mac needed. Add an iMessage account on the Accounts page, the iPhone way." };
     if (!heardReal) return { title: "Make the shortcut on your iPhone", tone: "working",
-                             sub: "Four steps in Shortcuts. Then every message it gets is answered from here." };
+                             sub: "Four steps in Shortcuts." };
     return { title: "iMessage is ready to run", tone: "good", sub: "Your iPhone passes every message it gets to here." };
   });
 
@@ -209,8 +209,7 @@
             <!-- The panel only listens on this PC: a phone has nothing to reach. -->
             <p class="im-warn">
               <Icon name="alert" size={13} />
-              <span>Your iPhone can't reach this PC yet: the panel only listens on this PC. Open it to your network,
-                or use Tailscale. <button type="button" class="im-link" onclick={openSwitch}>Open the switch</button></span>
+              <span>Your iPhone can't reach this PC yet. Open it to your network, or use Tailscale. <button type="button" class="im-link" onclick={openSwitch}>Open the switch</button></span>
             </p>
           {/if}
           <div class="im-addr">
@@ -233,8 +232,7 @@
                   </span>
                 {/if}
               </div>
-              <p class="im-faint mt-2">Scan it with the iPhone's camera first: the page it opens says whether your
-                iPhone reaches this PC.</p>
+              <p class="im-faint mt-2">Scan it with the iPhone camera to test the connection.</p>
             </div>
           </div>
         {:else if r && !r.ok}
@@ -257,8 +255,7 @@
         <li>Inside it, add <b>Send Message</b>: the message is <b>Contents of URL</b>, the recipient
             <b>Shortcut Input</b> (hold Recipients to pick it).</li>
       </ol>
-      <p class="im-faint">An iPad works the same. It answers the messages it gets; sending first, typing dots,
-        tapbacks and photos need a Mac.</p>
+      <p class="im-faint">Works on iPad too. Messaging first, typing dots, tapbacks and photos need a Mac.</p>
       {#if !phoneSlots.length}
         <a class="im-tip" href="#/accounts" onclick={() => play("open")}>
           <Icon name="accounts" size={15} />
@@ -303,7 +300,7 @@
         <li>Sign in to iMessage in the Messages app.</li>
         <li>Install <button type="button" class="im-link" onclick={() => go("https://bluebubbles.app/downloads/")}>BlueBubbles Server</button>,
             open it, and set a password.</li>
-        <li>Pick how it is reached. Cloudflare gives an address that works from anywhere; the Mac's own address works on your network.</li>
+        <li>Pick how it's reached: Cloudflare works from anywhere, the Mac's address only on your network.</li>
         <li>For typing dots, read receipts and tapbacks, turn on its
             <button type="button" class="im-link" onclick={() => go("https://docs.bluebubbles.app/private-api/")}>Private API</button>.
             It asks for one setting changed on the Mac.</li>
@@ -311,7 +308,7 @@
       </ol>
       <a class="im-tip" href="#/accounts" onclick={() => play("open")}>
         <Icon name="accounts" size={15} />
-        <span><b>Then add it on the Accounts page.</b> Its address and its password, and Test.</span>
+        <span><b>Then add it on the Accounts page.</b> Its address and password, then Test.</span>
         <Icon name="chevron" size={12} />
       </a>
     </section>

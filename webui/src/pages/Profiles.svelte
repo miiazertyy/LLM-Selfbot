@@ -456,8 +456,28 @@
   });
   let shareFor = $state("");
   let updateFor_ = $state("");
+  /** Where what was pressed sat: the share card grows out of it. */
+  let shareFrom = $state<DOMRect | null>(null);
+  /** Its place in the grid: straight after the row the profile's card is on (the cards are ordered 0, 2, 4...). */
+  let shareOrder = $state(-1);
+
+  function placeShare(pid: string) {
+    const grid = document.querySelector<HTMLElement>(".pr-grid");
+    const i = cards.findIndex((c) => c.p.id === pid);
+    if (!grid || i < 0) {
+      shareOrder = -1;
+      return;
+    }
+    const cols = getComputedStyle(grid).gridTemplateColumns.split(" ").filter(Boolean).length || 1;
+    shareOrder = Math.min(cards.length - 1, Math.floor(i / cols) * cols + cols - 1) * 2 + 1;
+  }
+
   function openShare(pid: string) {
     play("open");
+    // A profile's card when it came from its menu; otherwise the button that was pressed (it still has the focus).
+    const card = pid !== "*" ? document.querySelector(`[data-face="${CSS.escape(pid)}"]`)?.closest<HTMLElement>(".pr-card") : null;
+    shareFrom = (card ?? (document.activeElement as HTMLElement | null))?.getBoundingClientRect() ?? null;
+    placeShare(pid);
     shareFor = pid;
   }
   function openUpdate(pid: string) {
@@ -488,12 +508,7 @@
     <h2 class="pr-title" aria-label="Your profiles">
       {#each ["Your", "profiles"] as word, w}<span class="pr-word" aria-hidden="true">{#each Array.from(word) as ch, i}<span
         class="pr-l" style="--c: {w * 5 + i}">{ch}</span>{/each}</span>{#if w === 0}{" "}{/if}{/each}
-    </h2>
-    {#if $profilesView === "community"}
-      <p class="pr-sub">Profiles people made and shared. Look inside any of them before you add one.</p>
-    {:else}
-      <p class="pr-sub">Each one is its own bot, with its own persona, pictures, memory and settings, on the accounts you give it.</p>
-    {/if}
+    </h2>
   </div>
   <div class="pr-stats domino" use:domino={{ step: 80, sound: "key", level: 0.45 }}>
     {#each [{ label: "Profiles", n: totals.profiles, icon: "layers" }, { label: "Running", n: totals.running, icon: "play" },
@@ -510,6 +525,10 @@
 <CommunitySwitch {updates} />
 
 {#if $profilesView === "community"}
+  {#if shareFor}
+    <!-- Sharing from here: the card opens at the top of the community, grown out of the button pressed. -->
+    <div class="pr-share-top"><ShareSheet bind:pid={shareFor} personas={list} from={shareFrom} onsent={() => reloadPersonas()} /></div>
+  {/if}
   <CommunityView personas={list} onshare={openShare} onupdate={openUpdate} />
 {:else}
 {#if loading}
@@ -519,11 +538,11 @@
 {:else}
   <!-- ── One card each, and a way to make another: dealt in one after another as the page opens ── -->
   <div class="pr-grid" use:deal data-no-rise>
-    {#each cards as c (c.p.id)}
+    {#each cards as c, i (c.p.id)}
       {@const p = c.p}
       <article class="pr-card glass" class:is-live={c.live > 0} class:is-born={p.id === born} class:is-raised={menuFor === p.id}
-               class:is-powering={acting === `${p.id}:start`} class:is-lit={lit === p.id}
-               style="--pc: {colorOf(p)}; --pc2: {p.color2 || colorOf(p)}; --pc2-share: {p.color2 ? '30%' : '16%'}" use:arrived={p.id} use:tilt={2.5}
+               class:is-powering={acting === `${p.id}:start`} class:is-lit={lit === p.id} class:is-sharing={shareFor === p.id}
+               style="--pc: {colorOf(p)}; --pc2: {p.color2 || colorOf(p)}; --pc2-share: {p.color2 ? '30%' : '16%'}; order: {i * 2}" use:arrived={p.id} use:tilt={2.5}
                animate:flip={{ duration: 380, easing: cubicOut }} out:scale={{ start: 0.86, duration: 300, easing: cubicOut }}>
         <div class="pr-banner" aria-hidden="true"></div>
 
@@ -631,6 +650,13 @@
       </article>
     {/each}
 
+    {#if shareFor}
+      <!-- Sharing one: a card in the page, under the row of the profile shared, grown out of its card. -->
+      <div class="pr-share" style="order: {shareOrder}">
+        <ShareSheet bind:pid={shareFor} personas={list} from={shareFrom} onsent={() => reloadPersonas()} />
+      </div>
+    {/if}
+
     {#if newOpen}
       <NewPersona bind:open={newOpen} {list} palette={data.palette} themes={data.themes} {copyOf} busy={creating} from={newFrom}
                   oncreate={create} oncreated={madeFromChats} />
@@ -638,7 +664,7 @@
       <button type="button" class="pr-new" onclick={() => openNew()} in:scale={{ start: 0.94, duration: $motionEnabled ? 220 : 0, easing: cubicOut }}>
         <span class="pr-new-orb"><Icon name="plus" size={22} /></span>
         <b>New profile</b>
-        <small>Its own persona, pictures, memory and settings</small>
+
       </button>
     {/if}
   </div>
@@ -647,8 +673,9 @@
 
 <AccountMenu bind:open={giveOpen} anchor={giveBtn} {data} {faces} persona={giveFor} onpick={give} />
 
-<!-- Sharing one to the community, and updating one that came from it. -->
-<ShareSheet bind:pid={shareFor} personas={list} onsent={() => reloadPersonas()} />
+<svelte:window onresize={() => { if (shareFor) placeShare(shareFor); }} />
+
+<!-- Updating one that came from the community. -->
 <UpdateSheet bind:pid={updateFor_} onupdated={() => { reloadPersonas(); communityRes.refresh({ force: true, quiet: true }); }} />
 
 <!-- Its face: a small panel beside it, not a box over the page. -->
@@ -778,6 +805,10 @@
 
   /* ── The cards ── */
   .pr-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 360px), 1fr)); align-items: start; gap: 16px; }
+  /* The cards are ordered 0, 2, 4...; the share card goes after its profile's row, and New profile is always last. */
+  .pr-share { grid-column: 1 / -1; }
+  .pr-share-top { margin-bottom: 16px; }
+  .pr-grid > :global(.np), .pr-grid > .pr-new { order: 100000; }
   .pr-card {
     --pc: var(--color-accent);
     position: relative;
@@ -890,6 +921,8 @@
   }
   .pr-card.is-live { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--pc) 24%, transparent); }
   .pr-card.is-raised { z-index: 20; }
+  /* The one being shared, while its share card is open under it. */
+  .pr-card.is-sharing { box-shadow: 0 0 0 2px color-mix(in srgb, var(--pc) 55%, transparent), 0 14px 36px -18px var(--pc); }
   .pr-card.is-born { animation: pr-born 0.62s cubic-bezier(0.3, 1.4, 0.5, 1) backwards; }
   @keyframes pr-born { from { opacity: 0; transform: scale(0.6) rotate(-4deg); } 60% { opacity: 1; transform: scale(1.04) rotate(0.6deg); } }
   /* Its colour washed across the top, stronger and slowly moving while it runs. */
@@ -1172,7 +1205,6 @@
                   transform: translateY(-3px); }
   .pr-new:active { transform: scale(0.98); }
   .pr-new b { font-size: 15px; font-weight: 650; color: var(--color-ink); }
-  .pr-new small { max-width: 16rem; font-size: 12px; line-height: 1.45; }
   .pr-new-orb {
     display: grid;
     width: 52px;

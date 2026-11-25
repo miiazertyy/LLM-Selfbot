@@ -110,6 +110,43 @@ import app.desktop as d
 got = d.WindowApi().read_clipboard_text()
 check("which answers with text, or None where it cannot", got is None or isinstance(got, str))
 
+print("\n== pasting a picture or a file into the chat box from the menu (2026-11-11) ==")
+# Paste read text only, so a copied picture said "There is no text to paste." Now the box that takes pictures
+# (data-paste-files) is handed what was copied the way Ctrl+V hands it: as a paste the box already takes.
+import base64  # noqa: E402
+import tempfile  # noqa: E402
+from PIL import Image  # noqa: E402
+
+shot = d.clipboard_files(lambda: Image.new("RGB", (3, 2), (200, 30, 90)))
+check("a screenshot or a copied picture comes as one PNG", isinstance(shot, list) and len(shot) == 1
+      and shot[0]["name"] == "pasted.png" and shot[0]["type"] == "image/png"
+      and base64.b64decode(shot[0]["data"])[:8] == b"\x89PNG\r\n\x1a\n", str(shot)[:120])
+tmp = Path(tempfile.mkdtemp(prefix="paste-"))
+(tmp / "cat.jpg").write_bytes(b"\xff\xd8\xff" + b"0" * 64)
+(tmp / "huge.mp4").write_bytes(b"0" * (d.CLIPBOARD_MAX_BYTES + 1))
+(tmp / "folder").mkdir()
+files = d.clipboard_files(lambda: [str(tmp / "cat.jpg"), str(tmp / "huge.mp4"), str(tmp / "folder")])
+check("files copied in Explorer come as themselves", files and files[0]["name"] == "cat.jpg"
+      and files[0]["type"] == "image/jpeg" and base64.b64decode(files[0]["data"]).startswith(b"\xff\xd8\xff"), str(files)[:160])
+check("one too big for a message comes by name, without its data", len(files) == 2 and files[1]["name"] == "huge.mp4"
+      and files[1]["data"] == "" and files[1]["size"] == d.CLIPBOARD_MAX_BYTES + 1)
+check("a folder is left out", all(f["name"] != "folder" for f in files))
+check("no more than a message can carry", len(d.clipboard_files(lambda: [str(tmp / "cat.jpg")] * 9)) == d.CLIPBOARD_MAX_FILES)
+check("nothing on it is an empty list, a clipboard that can't be read is None",
+      d.clipboard_files(lambda: None) == [] and d.clipboard_files(lambda: (_ for _ in ()).throw(OSError("busy"))) is None)
+check("the window offers it to the page", "def read_clipboard_files(self)" in desktop and "return clipboard_files()" in desktop)
+check("the page asks the window first, then the browser's own clipboard for pictures",
+      "bridge.read_clipboard_files()" in core and "navigator.clipboard.read()" in core)
+check("Paste hands what was copied to a box that takes it, as a paste", 'f.closest("[data-paste-files]")' in menu
+      and 'new ClipboardEvent("paste", { clipboardData: box, bubbles: true, cancelable: true })' in menu
+      and "is bigger than 8MB." in menu)
+check("the chat box takes them, where its chat can carry pictures",
+      'data-paste-files={plat.media !== false ? "" : undefined}' in chats and "onpaste={onComposerPaste}" in chats)
+check("and Ctrl+V handed nothing at all asks the window too (files copied in Explorer)",
+      "e.isTrusted && plat.media !== false" in chats and "readClipboardFiles().then(" in chats)
+import shutil  # noqa: E402
+shutil.rmtree(tmp, ignore_errors=True)
+
 print("\n== opening a tab ==")
 cascade = read("lib/cascade.ts")
 app = read("App.svelte")

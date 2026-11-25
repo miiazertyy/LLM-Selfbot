@@ -76,18 +76,24 @@ wt = (ROOT / "webui" / "src" / "lib" / "components" / "WaitTimes.svelte").read_t
 check("a row may carry the end of its range", "type Row = { time: number; weight: number; to?: number }" in wt)
 check("and keeps it only when it is past the start", "if (isFinite(to) && to > time) row.to = to;" in wt)
 check("sent back with it", "{ time: w.time, to: w.to, weight: pcts[i] }" in wt)
-check("a range is drawn as a plateau across its span", 'class="wt-band"' in wt and 'class="wt-bar"' in wt)
-check("with a handle at each end, and a single wait's tucked beside it",
-      'class="wt-end" class:is-stub={w.to == null}' in wt and "{#each ENDS as part (part)}" in wt)
-check("an end drags sideways only, against the other end", 'hold.part !== "all"' in wt and "span(hold.anchor, timeAt(p.x))" in wt)
+check("a range is a bar across its span", 'class="wt-bar" class:is-range={w.to != null}' in wt
+      and "width: {(f1 - f0) * 100}%" in wt)
+check("with an end on each side to drag, a single wait's tucked beside its dot",
+      'class="wt-grip is-{part}"' in wt and "{#each ENDS as part (part)}" in wt
+      and ".wt-bar:not(.is-range) .wt-grip.is-start { left: -6px; }" in wt)
+check("an end drags sideways only, against the other end",
+      "span(h.anchor, timeAt((e.clientX - h.box.left) / h.box.width))" in wt)
+check("an end takes hold outward only, so a short range's middle still moves it whole",
+      ".wt-grip.is-start::before { left: -9px; right: 0; }" in wt and ".wt-grip.is-end::before { left: 0; right: -9px; }" in wt)
 check("pushed back into the other end it is one time again", "hi / lo < 1.08" in wt)
-check("the head moves a range whole, keeping its span", "timeAt(p.x + hold.d0), timeAt(p.x + hold.d1)" in wt)
+check("the bar moves a range whole, keeping its span", "span(timeAt(h.f0 + d), timeAt(h.f1 + d))" in wt)
 check("a range can be typed: 20s-1m, 20-40s, 1 to 2m", "function readSpan(" in wt and r"\bto\b" in wt)
 check("a bare number before the dash takes the unit after it", "parts[0] + unit" in wt)
-check("its odds spread across the hill", "A range spreads its odds evenly across its span" in wt)
+check("a likelier wait's bar is stronger", "--s: {(w.share / most).toFixed(3)}" in wt and "calc(30% + 55% * var(--s))" in wt)
 check("the average counts a range as its middle", "((w.time + endOf(w)) / 2) * w.share" in wt)
 check("and it is said in words", "between ${say(w.time, \"s\")} and ${say(w.to, \"s\")}" in wt)
-check("the hint says how", "Pull its sides out for a range." in wt)
+check("the bar says how when pointed at, with no paragraph under it", 'title="Drag to move it. Drag an end for a range."' in wt
+      and "wt-hint" not in wt)
 
 print("\n== the typing keyboard ==")
 ts = (ROOT / "webui" / "src" / "lib" / "components" / "TypingSpeed.svelte").read_text(encoding="utf-8")

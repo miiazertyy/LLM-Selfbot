@@ -83,19 +83,47 @@ export function afterLanding(node: Element | null, fn: () => void): void {
   requestAnimationFrame(wait);
 }
 
+/** What is waiting to be seen, and who to tell when it is. */
+const watched = new Map<Element, ((seen: boolean) => void)[]>();
+let eyes: IntersectionObserver | null = null;
+let rounds = 0;
+
+function settle(el: Element, seen: boolean) {
+  const told = watched.get(el);
+  if (!told) return;
+  watched.delete(el);
+  eyes?.unobserve(el);
+  for (const tell of told) tell(seen);
+  if (!watched.size) {
+    clearInterval(rounds);
+    rounds = 0;
+  }
+}
+
 /**
- * Whether an element is on screen, asked once, after layout rather than by
- * measuring it there and then. A dial further down a tab than the window
- * reaches has nobody to sweep in for: it goes straight to its value.
+ * Waits for an element to be seen: true as soon as it is on screen (straight
+ * away if it is already), false if its tab goes first. A dial further down a
+ * tab, or scrolled past when the tab opened, makes its entrance when it is
+ * scrolled to, sound and all. This used to ask once, as the tab opened, and
+ * anything off screen then skipped its entrance for good: a tab opened part way
+ * down the page was silent all the way up it.
  */
 export function onScreen(node: Element | null): Promise<boolean> {
   return new Promise((resolve) => {
     if (!node) return resolve(false);
-    const io = new IntersectionObserver(([e]) => {
-      io.disconnect();
-      resolve(!!e?.isIntersecting);
-    });
-    io.observe(node);
+    // With the app's Animations off there is no entrance to wait for.
+    if (!get(motionEnabled)) return resolve(true);
+    // A little inside the window's edges: a sliver showing at the very edge has not been seen yet.
+    eyes ??= new IntersectionObserver((entries) => {
+      for (const e of entries) if (e.isIntersecting) settle(e.target, true);
+    }, { rootMargin: "-16px 0px -16px 0px" });
+    const told = watched.get(node);
+    if (told) return void told.push(resolve);
+    watched.set(node, [resolve]);
+    eyes.observe(node);
+    rounds ||= window.setInterval(() => {
+      for (const el of [...watched.keys()]) if (!el.isConnected) settle(el, false);
+    }, 2000);
   });
 }
 

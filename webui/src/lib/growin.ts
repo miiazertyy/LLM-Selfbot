@@ -7,8 +7,8 @@
  * (cascade.ts), the way everything inside a block does, and then for its place
  * in a second, smaller wave down the block, barely behind the first: a sheet of
  * widgets landing as one block used to set everything in it going in the same
- * instant. Not seen (below the window)
- * or with Animations off, the bars are simply there and nothing is heard.
+ * instant. Out of sight as the tab opens, they grow when the chart is scrolled
+ * to. With Animations off, the bars are simply there and nothing is heard.
  */
 import { get } from "svelte/store";
 import { motionEnabled } from "./stores";

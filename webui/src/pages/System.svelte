@@ -307,22 +307,20 @@
     }
     restarting = true;
     try {
-      await api.restartApp();
+      const r = await api.restartApp();
       toast("Restarting. This window will reconnect on its own.", "info");
-      // The server is on its way down, so keep retrying until the new one
-      // answers, then reload into it.
-      const until = Date.now() + 60000;
+      // The old server goes on answering while it stops the accounts, and reloading into it would leave this page on
+      // a server about to vanish: only an answer from a different run of the app is the new one.
+      const until = Date.now() + 120000;
       const tick = setInterval(async () => {
-        try {
-          await api.sysInfo();
+        const info = await api.sysInfo().catch(() => null);
+        if (info && info.boot !== r.boot) {
           clearInterval(tick);
           location.reload();
-        } catch {
-          if (Date.now() > until) {
-            clearInterval(tick);
-            restarting = false;
-            toast("It is taking a while. Open the app again by hand.", "err");
-          }
+        } else if (Date.now() > until) {
+          clearInterval(tick);
+          restarting = false;
+          toast("It is taking a while. Open the app again by hand.", "err");
         }
       }, 1500);
     } catch (e: any) {
@@ -454,7 +452,7 @@
         <div class="text-[15px] font-semibold text-ink">Scan with your phone's camera</div>
         <div class="mt-1 font-mono text-[13px] text-accent">{net.qr_target}</div>
         {#if net.bind === "127.0.0.1"}
-          <div class="mt-2 text-[12px] text-warn">Only this computer can open it until "On this network" is turned on below.</div>
+          <div class="mt-2 text-[12px] text-warn">Only works once "On this network" is on.</div>
         {/if}
       </div>
       <button class="qr-close" onclick={() => (qrOpen = false)} aria-label="Close"><Icon name="close" size={14} /></button>
@@ -576,7 +574,7 @@
           {/each}
         </div>
         <p class="pt-2 text-[11px] text-faint">
-          Checking what is installed. Finding Chrome starts node, which takes a few seconds.
+          Checking what's installed
         </p>
       {/if}
 
@@ -659,12 +657,12 @@
           </span>
           <span class="min-w-0 text-left">
             <span class="block text-[13px] font-semibold text-ink">Import a backup</span>
-            <span class="block text-[11.5px] text-faint">Replaces what is here with the zip's contents</span>
+            <span class="block text-[11.5px] text-faint">Replaces everything here</span>
           </span>
         </button>
       </div>
       <FootNote class="mt-3" icon="key" tone="warn">
-        A backup holds your tokens and keys, so keep it somewhere private.
+        It holds your tokens and keys. Keep it private.
       </FootNote>
       {#if lastExport}
         <p class="mt-2 break-all text-[11px] text-good">Saved to {lastExport}</p>
@@ -682,11 +680,11 @@
             {storageInfo.data_dir}
           </button>
           {#if storageInfo.portable}
-            <p class="mt-2 text-[11px] text-good">Portable install: everything lives beside the app.</p>
+            <p class="mt-2 text-[11px] text-good">Portable: everything is stored next to the app.</p>
           {:else if !device?.phone}
             <FootNote class="mt-2" icon="folder">
-              To keep everything beside the app instead, make a folder called
-              <code>portable</code> next to it and restart. Export first, then import once it restarts.
+              To make it portable, add a folder named
+              <code>portable</code> next to it and restart. Export first, then import after.
             </FootNote>
           {/if}
         </div>
@@ -757,7 +755,7 @@
           <div class="flex items-center gap-3">
             <span class="sys-action-icon is-good"><Icon name="check" size={16} /></span>
             <div>
-              <p class="text-[13px] font-medium text-ink">You are on the latest version</p>
+              <p class="text-[13px] font-medium text-ink">Up to date</p>
               <p class="text-[11.5px] text-faint">{update.current}{update.latest && update.latest !== "unknown" ? ` matches ${update.latest}` : ""}</p>
             </div>
           </div>
@@ -801,7 +799,7 @@
           <div class="min-w-0">
             <div class="text-[13px] text-ink">Let other devices on this network in</div>
             <p class="mt-0.5 text-[11px] leading-relaxed text-faint">
-              Needed to scan the code from your phone. Takes effect after a restart.
+              For the phone QR code. Needs a restart.
             </p>
           </div>
           <div class="shrink-0">
@@ -811,9 +809,7 @@
 
         {#if net.bind !== "127.0.0.1"}
           <p class="mt-2 rounded-lg border border-warn/30 bg-warn/[0.06] px-3 py-2 text-[11px] leading-relaxed text-warn">
-            Anyone who can reach this machine can open the panel, and the panel
-            holds your tokens and keys. Keep it to networks you trust, and never
-            forward the port from your router.
+            Anyone on the network can open the panel, tokens and keys included. Only use trusted networks, and never forward the port.
           </p>
         {/if}
 

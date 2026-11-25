@@ -114,11 +114,11 @@ export const MONOGRAM: Record<string, string> = {
 };
 
 export const JOB_NAMES: Record<Exclude<keyof Plan, "replies" | "chains">, { title: string; hint: string; needs: Job; icon: string }> = {
-  small: { title: "Background work", hint: "Remembering facts, spotting the language, summaries", needs: "chat", icon: "memory" },
-  vision: { title: "Reading pictures", hint: "Describes images and stickers people send", needs: "vision", icon: "pictures" },
-  stt: { title: "Hearing voice messages", hint: "Turns a voice note into text", needs: "stt", icon: "mic" },
-  tts: { title: "Speaking", hint: "Voice messages the bot sends back", needs: "tts", icon: "volume" },
-  web: { title: "Looking things up", hint: "Searching, reading pages, browsing", needs: "chat", icon: "globe" },
+  small: { title: "Background work", hint: "Memory, language, summaries", needs: "chat", icon: "memory" },
+  vision: { title: "Reading pictures", hint: "Images and stickers people send", needs: "vision", icon: "pictures" },
+  stt: { title: "Hearing voice messages", hint: "Voice notes to text", needs: "stt", icon: "mic" },
+  tts: { title: "Speaking", hint: "Voice messages it sends", needs: "tts", icon: "volume" },
+  web: { title: "Looking things up", hint: "Search and web pages", needs: "chat", icon: "globe" },
 };
 
 /** Model lists, per provider, fetched once and shared by every picker. */

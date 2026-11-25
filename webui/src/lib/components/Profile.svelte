@@ -73,7 +73,7 @@
      would otherwise stretch to the full width and read as slabs. -->
 <div class="space-y-5">
   <p class="text-[11px] leading-relaxed text-faint">
-    These change the real Discord profile of this account, which must be running.
+    Changes the real Discord profile. The account must be running.
   </p>
 
   <section>

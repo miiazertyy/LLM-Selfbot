@@ -106,8 +106,9 @@ check("and it never runs off the screen", 'style="max-height: {room}px"' in sel 
 check("the value still types itself in, with nothing left blinking",
       '<span class="sel-cursor"></span>' in sel and "@keyframes sel-blink" not in sel and "infinite" not in sel)
 check("the typing starts from the first letter drawn", "typing = null;          // done: the plain label, no cursor" in sel)
-check("each choice in Settings says what it is", '{ value: "short", label: "Short", hint: "One line, like a text"' in settings)
-check("languages with their flags", 'mark: "🇫🇷"' in settings)
+choices = (ROOT / "resources" / "setting_choices.json").read_text(encoding="utf-8")
+check("each choice in Settings says what it is", '{"value":"short","label":"Short","hint":"One line"' in choices)
+check("languages with their flags", '"mark":"🇫🇷"' in choices)
 check("voices by name, with whose voice it is", "voiceName(v)" in settings and '"Woman\'s voice"' in settings
       and "badge: true" in settings)
 check("context lengths with roughly how many words", "About ${(Math.round((c * 0.75) / 500) * 500).toLocaleString()} words"

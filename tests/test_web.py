@@ -424,8 +424,9 @@ check("each with a short label", all(f'"bot.web.{k}": "' in desc for k in web.DE
 smap = read("webui/src/lib/settingsmap.ts")
 check("a subtab of AI behaviour: The web", 'id: "web",\n        name: "The web",' in smap)
 sett = read("webui/src/pages/Settings.svelte")
-check("Search with, as plain choices", '"bot.web.search_with": [' in sett
-      and '{ value: "auto", label: "Automatic", hint: "Google, then DuckDuckGo. Free"' in sett)
+choices = read("resources/setting_choices.json")
+check("Search with, as plain choices", '"bot.web.search_with": [' in choices
+      and '{"value":"auto","label":"Automatic","hint":"Google, then DuckDuckGo. Free"' in choices)
 check("the counts on dials", '"bot.web.per_hour": { one: "lookup"' in sett and '"bot.web.sessions_per_day": { one: "visit"' in sett)
 check("on the Models page", 'web: { title: "Looking things up"' in read("webui/src/lib/providers.ts"))
 check("keys for Brave and Tavily in the template", "BRAVE_API_KEY=" in read("resources/example.env")

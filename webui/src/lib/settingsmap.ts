@@ -27,7 +27,7 @@ export type Sub = {
   panel?: "theme" | "typeface" | "interface" | "profiles" | "snapchat-setup" | "tiktok-setup"
     | "instagram-setup" | "x-setup" | "reddit-setup" | "whatsapp-setup" | "minecraft-setup"
     | "imessage-setup" | "discord-setup" | "telegram-setup" | "env" | "local"
-    | "models" | "providers" | "usage" | "telegram" | "pictures" | "calls";
+    | "models" | "providers" | "usage" | "telegram" | "pictures" | "calls" | "aiapps" | "mail";
   /** For panel "env": which .env sections and key families to show. */
   env?: { sections?: string[]; keyLists?: string[]; extras?: boolean };
   /** Collects whatever keys in `owns` no subtab claimed. */
@@ -62,7 +62,6 @@ const DEFINED: Tab[] = [
         // (services.X.enabled and X.enabled), which both had to be on.
         id: "services",
         name: "What runs",
-        blurb: "What starts with the app, and where the WebUI is served.",
         // In the order the tabs are in (ORDER, below), so the switch for a
         // platform is in the same place in this list as its tab is in the nav.
         keys: [
@@ -100,7 +99,7 @@ const DEFINED: Tab[] = [
         // alerts are here too, below the panel, since only it sends them.
         id: "telegram",
         name: "Telegram",
-        blurb: "An optional second way to drive the bot, from your phone.",
+        blurb: "Control the bot from Telegram.",
         panel: "telegram",
         keys: [
           "notifications.telegram_error_notifications",
@@ -111,7 +110,7 @@ const DEFINED: Tab[] = [
       {
         id: "alerts",
         name: "Error alerts",
-        blurb: "Being told when something breaks, on a Discord webhook.",
+        blurb: "Sent to a Discord webhook.",
         keys: [
           "notifications.error_webhook",
           "notifications.ratelimit_notifications",
@@ -120,15 +119,25 @@ const DEFINED: Tab[] = [
       {
         id: "profiles",
         name: "Stored profiles",
-        blurb: "Names, avatars and bios kept on this machine.",
         panel: "profiles",
         // Drawn by the panel; named here so it is not listed again elsewhere.
         keys: ["bot.profile_cache.enabled"],
       },
       {
+        id: "ai-apps",
+        name: "MCP",
+        panel: "aiapps",
+      },
+      {
+        id: "mail",
+        name: "Mailboxes",
+        blurb: "For sign-in codes sent by email.",
+        panel: "mail",
+      },
+      {
         id: "env",
         name: "All variables",
-        blurb: "Every value in config/.env, including the ones nothing else shows.",
+        blurb: "Everything in config/.env.",
         panel: "env",
         env: { extras: true },
       },
@@ -142,31 +151,28 @@ const DEFINED: Tab[] = [
     // by that name. It covers every provider now.
     name: "Models",
     icon: "sparkle",
-    blurb: "Which AI writes, sees, hears and speaks",
+    blurb: "Models and providers",
     subs: [
       {
         id: "models",
         name: "Models",
-        blurb: "Which model does each job, and what takes over when one is busy.",
         panel: "models",
       },
       {
         // "keys" as an id for the same reason: links to Groq's keys land here.
         id: "keys",
         name: "Providers",
-        blurb: "Connect the services the models come from.",
         panel: "providers",
       },
       {
         id: "local",
         name: "This computer",
-        blurb: "Run models on this machine. No rate limits, and nothing leaves it.",
+        blurb: "No rate limits, and nothing leaves this computer.",
         panel: "local",
       },
       {
         id: "usage",
         name: "Usage",
-        blurb: "How much each provider says is left, and what each model has done today.",
         panel: "usage",
       },
     ],
@@ -176,7 +182,7 @@ const DEFINED: Tab[] = [
     id: "ai",
     name: "AI behaviour",
     icon: "persona",
-    blurb: "How human it reads",
+    blurb: "Typing, timing, mood",
     owns: ["bot"],
     subs: [
       {
@@ -186,7 +192,6 @@ const DEFINED: Tab[] = [
         // laughs at something without a word is a trait, not a preference.
         id: "style",
         name: "How it talks",
-        blurb: "How long its replies are, the language it falls back to, typos, and not answering everything.",
         keys: [
           "bot.message_style.mode",
           "bot.message_style.max_chunk_chars",
@@ -201,7 +206,7 @@ const DEFINED: Tab[] = [
       {
         id: "sampling",
         name: "How it writes",
-        blurb: "The sampling settings sent with every reply, where the provider takes them.",
+        blurb: "Not every provider takes these.",
         keys: [
           "bot.sampling.temperature",
           "bot.sampling.top_p",
@@ -212,7 +217,6 @@ const DEFINED: Tab[] = [
       {
         id: "typing",
         name: "Typing",
-        blurb: "How long it reads and thinks before a reply, and how fast it types it.",
         keys: [
           "bot.realistic_typing",
           "bot.typing.wpm_min",
@@ -232,7 +236,6 @@ const DEFINED: Tab[] = [
       {
         id: "timing",
         name: "Timing",
-        blurb: "Waiting out a burst of messages, and pacing between replies.",
         keys: [
           "bot.batch_messages",
           "bot.batch_wait_times",
@@ -245,7 +248,7 @@ const DEFINED: Tab[] = [
       {
         id: "careful",
         name: "Careful mode",
-        blurb: "For a new or precious account: slower, quieter, and nothing public.",
+        blurb: "For new accounts. Slower, and nothing public.",
         keys: [
           "bot.conservative.enabled",
           "bot.conservative.until",
@@ -256,7 +259,6 @@ const DEFINED: Tab[] = [
       {
         id: "followups",
         name: "Follow-ups",
-        blurb: "Coming back to a conversation late, or first.",
         keys: [
           "bot.late_reply.enabled",
           "bot.late_reply.threshold",
@@ -275,7 +277,6 @@ const DEFINED: Tab[] = [
         // and what the AI may put on a picture as it sends it, on which accounts.
         id: "media",
         name: "Pictures and voice",
-        blurb: "Sending a selfie or a voice note, filters on pictures, and what the AI may add to one.",
         panel: "pictures",
         keys: [
           "bot.pictures.enabled",
@@ -296,7 +297,6 @@ const DEFINED: Tab[] = [
       {
         id: "videos",
         name: "Videos they send",
-        blurb: "Watching the videos people send, on every platform: clips, video snaps, Spotlights, TikToks.",
         keys: [
           "bot.videos.enabled",
           "bot.videos.listen",
@@ -307,7 +307,6 @@ const DEFINED: Tab[] = [
         // The web (app/utils/web): a look online when a message needs one, the links people send, and its free time.
         id: "web",
         name: "The web",
-        blurb: "Looking things up, the links people send, and browsing in its free time.",
         keys: [
           // What it may do, then how much of it, then the free-time browsing
           // with its own cap: the two caps used to sit either side of it.
@@ -323,7 +322,7 @@ const DEFINED: Tab[] = [
       {
         id: "summaries",
         name: "Memory summaries",
-        blurb: "The conversation summary shown when you open someone on the Memory page.",
+        blurb: "Shown on the Memory page.",
         keys: [
           "bot.memory_summary.enabled",
           "bot.memory_summary.messages",
@@ -336,7 +335,6 @@ const DEFINED: Tab[] = [
       {
         id: "refusal",
         name: "Refusals",
-        blurb: "Catching a reply that sounds like an assistant, and what to send instead.",
         keys: [
           "bot.refusal.enabled",
           "bot.refusal.fallbacks",
@@ -357,13 +355,12 @@ const DEFINED: Tab[] = [
     id: "calls",
     name: "Calls",
     icon: "phone",
-    blurb: "Which models talk, its voice, picking up",
+    blurb: "Voice and calls",
     owns: ["bot.calls"],
     subs: [
       {
         id: "voice",
         name: "How it sounds",
-        blurb: "What hears, thinks and speaks on a call, the voice it talks in, and trying one.",
         panel: "calls",
         keys: [
           "bot.calls.engine",
@@ -380,7 +377,6 @@ const DEFINED: Tab[] = [
       {
         id: "picking-up",
         name: "Picking up",
-        blurb: "Whose calls it takes, and for how long.",
         keys: [
           "bot.calls.enabled",
           "bot.calls.answer",
@@ -405,7 +401,7 @@ const DEFINED: Tab[] = [
     subs: [
       { id: "theme", name: "Theme", panel: "theme" },
       { id: "typeface", name: "Typeface", panel: "typeface" },
-      { id: "motion", name: "Interface", blurb: "Motion and decoration.", panel: "interface" },
+      { id: "motion", name: "Interface", panel: "interface" },
     ],
   },
 
@@ -413,7 +409,7 @@ const DEFINED: Tab[] = [
     id: "discord",
     name: "Discord",
     icon: "discord",
-    blurb: "Where it replies, triggers, presence",
+    blurb: "Replies, triggers, status",
     owns: ["discord"],
     // No Tokens subtab: accounts, their tokens and proxies are added, edited and
     // removed on the Accounts page, and this was the same list a second time.
@@ -422,13 +418,11 @@ const DEFINED: Tab[] = [
       {
         id: "setup",
         name: "Setup",
-        blurb: "What it needs, and how each account is doing.",
         panel: "discord-setup",
       },
       {
         id: "replies",
         name: "Where it replies",
-        blurb: "Which chats it answers in, and how.",
         keys: [
           "bot.allow_dm",
           "bot.allow_gc",
@@ -444,13 +438,12 @@ const DEFINED: Tab[] = [
         // The trigger words moved to the Persona page, as the names it answers to.
         id: "triggers",
         name: "Commands",
-        blurb: "Who may command it, and how.",
         keys: ["bot.owner_id", "bot.prefix", "bot.priority_prefix"],
       },
       {
         id: "friends",
         name: "Friend requests",
-        blurb: "Answered on a timer so it does not look automated.",
+        blurb: "Answered after a delay.",
         keys: [
           "bot.friend_requests.enabled",
           "bot.friend_requests.accept_delay_min",
@@ -460,13 +453,11 @@ const DEFINED: Tab[] = [
       {
         id: "gifts",
         name: "Nitro gifts",
-        blurb: "What happens when someone sends one in a DM.",
         keys: ["discord.gifts.mode", "discord.gifts.only_friends"],
       },
       {
         id: "presence",
         name: "Presence",
-        blurb: "Custom status, and going invisible at night.",
         keys: [
           "bot.status.enabled",
           "bot.status.statuses",
@@ -481,7 +472,7 @@ const DEFINED: Tab[] = [
       {
         id: "fingerprint",
         name: "Client",
-        blurb: "What the account looks like to Discord. Leave it alone unless you know why not.",
+        blurb: "Leave these alone unless you know why.",
         keys: [
           "bot.client_profile",
           "bot.timezone",
@@ -505,13 +496,12 @@ const DEFINED: Tab[] = [
       {
         id: "setup",
         name: "Install",
-        blurb: "Snapchat has no API, so it drives a real browser.",
+        blurb: "Runs in a real browser, since Snapchat has no API.",
         panel: "snapchat-setup",
       },
       {
         id: "browser",
         name: "Browser",
-        blurb: "The Chrome it drives: whether you see it, and how long it waits on it.",
         keys: [
           "snapchat.headless",
           "snapchat.response_timeout_ms",
@@ -523,7 +513,6 @@ const DEFINED: Tab[] = [
         // "pacing" as an id, so links made before the rename still land here.
         id: "pacing",
         name: "Behaviour",
-        blurb: "How often it looks, how fast it may send, and friend requests.",
         keys: [
           "snapchat.poll_interval_ms",
           "snapchat.max_recipients",
@@ -549,13 +538,12 @@ const DEFINED: Tab[] = [
       {
         id: "setup",
         name: "Install",
-        blurb: "TikTok has no API an account can use, so it drives a real browser, the same one as Snapchat.",
+        blurb: "Runs in a real browser, since TikTok has no API for accounts.",
         panel: "tiktok-setup",
       },
       {
         id: "browser",
         name: "Browser",
-        blurb: "Its Chrome window, and how long it waits.",
         keys: [
           "tiktok.headless",
           "tiktok.response_timeout_ms",
@@ -565,7 +553,6 @@ const DEFINED: Tab[] = [
       {
         id: "pacing",
         name: "Behaviour",
-        blurb: "How often it looks, how fast it may send, requests and followers.",
         keys: [
           "tiktok.poll_interval_ms",
           "tiktok.max_recipients",
@@ -581,7 +568,6 @@ const DEFINED: Tab[] = [
       {
         id: "watching",
         name: "Watching",
-        blurb: "Watching the TikToks people send, on every platform.",
         keys: [
           "tiktok.watch.enabled",
           "tiktok.watch.their_posts",
@@ -590,7 +576,6 @@ const DEFINED: Tab[] = [
       {
         id: "foryou",
         name: "For You",
-        blurb: "Scrolling For You now and then, and sharing what it saw.",
         keys: [
           "tiktok.foryou.enabled",
           "tiktok.foryou.sessions_per_day",
@@ -602,7 +587,7 @@ const DEFINED: Tab[] = [
       {
         id: "engage",
         name: "Likes and comments",
-        blurb: "Liking and commenting on other people's videos, in public.",
+        blurb: "These are public.",
         keys: [
           "tiktok.engage.like_sent",
           "tiktok.engage.like_theirs",
@@ -616,7 +601,7 @@ const DEFINED: Tab[] = [
       {
         id: "posting",
         name: "Posting",
-        blurb: "Posting the persona's videos, from the Pictures page.",
+        blurb: "Videos come from the Pictures page.",
         keys: [
           "tiktok.posting.enabled",
           "tiktok.posting.per_day",
@@ -626,7 +611,7 @@ const DEFINED: Tab[] = [
       {
         id: "comments",
         name: "Comments",
-        blurb: "Answering new comments under its own videos, in public.",
+        blurb: "These are public.",
         keys: [
           "tiktok.comments.enabled",
           "tiktok.comments.per_hour",
@@ -636,7 +621,6 @@ const DEFINED: Tab[] = [
       {
         id: "live",
         name: "LIVE",
-        blurb: "Co-hosting its LIVE: answers in the chat and out loud.",
         keys: [
           "tiktok.live.enabled",
           "tiktok.live.chat",
@@ -648,7 +632,6 @@ const DEFINED: Tab[] = [
       {
         id: "live-answers",
         name: "LIVE answers",
-        blurb: "What it answers on its LIVE, and what it lets go.",
         keys: [
           "tiktok.live.answer_comments",
           "tiktok.live.answer_mode",
@@ -668,7 +651,6 @@ const DEFINED: Tab[] = [
       {
         id: "live-style",
         name: "LIVE style",
-        blurb: "How it sounds on its LIVE.",
         keys: [
           "tiktok.live.tone",
           "tiktok.live.topic",
@@ -684,7 +666,7 @@ const DEFINED: Tab[] = [
       {
         id: "live-overlay",
         name: "OBS page",
-        blurb: "How its answers show on the OBS page, over the stream.",
+        blurb: "The overlay for OBS.",
         keys: [
           "tiktok.live.overlay_seconds",
           "tiktok.live.overlay_position",
@@ -696,7 +678,6 @@ const DEFINED: Tab[] = [
       {
         id: "visits",
         name: "Visiting LIVEs",
-        blurb: "Joining other people's LIVEs as a viewer.",
         keys: [
           "tiktok.visits.enabled",
           "tiktok.visits.chats",
@@ -722,13 +703,12 @@ const DEFINED: Tab[] = [
       {
         id: "setup",
         name: "Install",
-        blurb: "Instagram has no API an account can use, so it drives a real browser, the same one as Snapchat.",
+        blurb: "Runs in a real browser, since Instagram has no API for accounts.",
         panel: "instagram-setup",
       },
       {
         id: "browser",
         name: "Browser",
-        blurb: "Its Chrome window, and how long it waits.",
         keys: [
           "instagram.headless",
           "instagram.response_timeout_ms",
@@ -738,7 +718,6 @@ const DEFINED: Tab[] = [
       {
         id: "pace",
         name: "Behaviour",
-        blurb: "How often it looks, how fast it may send, requests and followers.",
         keys: [
           "instagram.poll_interval_ms",
           "instagram.max_recipients",
@@ -755,7 +734,6 @@ const DEFINED: Tab[] = [
       {
         id: "watching",
         name: "Watching",
-        blurb: "Watching the reels and posts people send, on every platform.",
         keys: [
           "instagram.watch.enabled",
           "instagram.watch.their_posts",
@@ -765,7 +743,6 @@ const DEFINED: Tab[] = [
       {
         id: "stories",
         name: "Stories",
-        blurb: "Watching their stories, answering some, and putting up its own.",
         keys: [
           "instagram.stories.watch",
           "instagram.stories.reply",
@@ -777,7 +754,6 @@ const DEFINED: Tab[] = [
       {
         id: "reels",
         name: "Reels",
-        blurb: "Scrolling Reels now and then, and sending one when asked.",
         keys: [
           "instagram.reels.enabled",
           "instagram.reels.sessions_per_day",
@@ -789,7 +765,7 @@ const DEFINED: Tab[] = [
       {
         id: "engage",
         name: "Likes and comments",
-        blurb: "Liking and commenting on other people's posts, in public.",
+        blurb: "These are public.",
         keys: [
           "instagram.engage.like_sent",
           "instagram.engage.like_theirs",
@@ -802,7 +778,7 @@ const DEFINED: Tab[] = [
       {
         id: "posting",
         name: "Posting",
-        blurb: "Posting the persona's pictures, from the Pictures page.",
+        blurb: "Pictures come from the Pictures page.",
         keys: [
           "instagram.posting.enabled",
           "instagram.posting.per_day",
@@ -811,7 +787,7 @@ const DEFINED: Tab[] = [
       {
         id: "comments",
         name: "Comments",
-        blurb: "Answering new comments under its own posts, in public.",
+        blurb: "These are public.",
         keys: [
           "instagram.comments.enabled",
           "instagram.comments.per_hour",
@@ -821,7 +797,7 @@ const DEFINED: Tab[] = [
       {
         id: "notes",
         name: "Notes",
-        blurb: "The little note above its name in everyone's inbox.",
+        blurb: "Shown above its name in inboxes.",
         keys: [
           "instagram.notes.enabled",
           "instagram.notes.every_hours",
@@ -841,13 +817,12 @@ const DEFINED: Tab[] = [
       {
         id: "setup",
         name: "Install",
-        blurb: "X has no API an account can use, so it drives a real browser, the same one as Snapchat.",
+        blurb: "Runs in a real browser, since X has no API for accounts.",
         panel: "x-setup",
       },
       {
         id: "browser",
         name: "Browser",
-        blurb: "Its Chrome window, and how long it waits.",
         keys: [
           "x.headless",
           "x.response_timeout_ms",
@@ -857,7 +832,6 @@ const DEFINED: Tab[] = [
       {
         id: "pace",
         name: "Behaviour",
-        blurb: "How often it looks, how fast it may send, and message requests.",
         keys: [
           "x.poll_interval_ms",
           "x.max_recipients",
@@ -871,7 +845,7 @@ const DEFINED: Tab[] = [
       {
         id: "mentions",
         name: "Replies",
-        blurb: "Answering the people who reply to it or @ it. Off until you switch it on: a public answer is public.",
+        blurb: "Off by default. Answers are public.",
         keys: [
           "x.mentions.enabled",
           "x.mentions.replies",
@@ -886,7 +860,6 @@ const DEFINED: Tab[] = [
       {
         id: "watch",
         name: "Watching",
-        blurb: "The posts people send it, and what the people it talks to are posting.",
         keys: [
           "x.watch.enabled",
           "x.watch.their_posts",
@@ -896,7 +869,6 @@ const DEFINED: Tab[] = [
       {
         id: "engage",
         name: "Likes and follows",
-        blurb: "What it does about other people's posts, and how much of it in a day.",
         keys: [
           "x.engage.like_sent",
           "x.engage.repost_sent",
@@ -912,7 +884,6 @@ const DEFINED: Tab[] = [
       {
         id: "posting",
         name: "Posting",
-        blurb: "Posts of its own, in its own voice.",
         keys: [
           "x.posting.enabled",
           "x.posting.from.saw_online",
@@ -939,13 +910,12 @@ const DEFINED: Tab[] = [
       {
         id: "setup",
         name: "Install",
-        blurb: "Reddit's API stopped taking new apps, so it drives a real browser, the same one as Snapchat.",
+        blurb: "Runs in a real browser, since Reddit's API is closed to new apps.",
         panel: "reddit-setup",
       },
       {
         id: "browser",
         name: "Browser",
-        blurb: "Its Chrome window, and how long it waits.",
         keys: [
           "reddit.headless",
           "reddit.response_timeout_ms",
@@ -955,7 +925,6 @@ const DEFINED: Tab[] = [
       {
         id: "pace",
         name: "Behaviour",
-        blurb: "How often it looks, how fast it may send, and chat invitations.",
         keys: [
           "reddit.poll_interval_ms",
           "reddit.max_recipients",
@@ -973,7 +942,6 @@ const DEFINED: Tab[] = [
       {
         id: "inbox",
         name: "Replies",
-        blurb: "Answering the replies under its own posts, and anyone who writes its u/ name.",
         keys: [
           "reddit.inbox.enabled",
           "reddit.inbox.replies",
@@ -987,7 +955,6 @@ const DEFINED: Tab[] = [
       {
         id: "watch",
         name: "Watching",
-        blurb: "The posts people send it, and what the people it talks to are posting.",
         keys: [
           "reddit.watch.enabled",
           "reddit.watch.their_posts",
@@ -998,7 +965,6 @@ const DEFINED: Tab[] = [
       {
         id: "engage",
         name: "Votes and follows",
-        blurb: "What it does about other people's posts, and how much of it in a day.",
         keys: [
           "reddit.engage.upvote_sent",
           "reddit.engage.upvote_theirs",
@@ -1014,7 +980,7 @@ const DEFINED: Tab[] = [
       {
         id: "comments",
         name: "Comments",
-        blurb: "Commenting where nobody asked it to. Off until you switch it on, and only in the subreddits you list.",
+        blurb: "Off by default, and only in the subreddits you list.",
         keys: [
           "reddit.comments.enabled",
           "reddit.comments.per_day",
@@ -1027,7 +993,6 @@ const DEFINED: Tab[] = [
       {
         id: "posting",
         name: "Posting",
-        blurb: "Posts of its own, in its own voice.",
         keys: [
           "reddit.posting.enabled",
           "reddit.posting.where",
@@ -1055,13 +1020,12 @@ const DEFINED: Tab[] = [
       {
         id: "setup",
         name: "Install",
-        blurb: "No browser at all: it speaks WhatsApp's own protocol, and a phone links it.",
+        blurb: "No browser. A phone links it.",
         panel: "whatsapp-setup",
       },
       {
         id: "messages",
         name: "Messages",
-        blurb: "What it answers, what it sends, and what it shows of itself while it does.",
         keys: [
           "whatsapp.burst_ms",
           "whatsapp.accept_unknown",
@@ -1075,7 +1039,6 @@ const DEFINED: Tab[] = [
       {
         id: "groups",
         name: "Groups",
-        blurb: "The groups it is in, and when it says anything in one.",
         keys: [
           "whatsapp.groups.enabled",
           "whatsapp.groups.only_when_named",
@@ -1086,7 +1049,6 @@ const DEFINED: Tab[] = [
       {
         id: "pace",
         name: "Pace",
-        blurb: "How fast it may answer. Texting is quicker than a social site's messages.",
         keys: [
           "whatsapp.min_send_gap_ms",
           "whatsapp.max_send_gap_ms",
@@ -1099,7 +1061,6 @@ const DEFINED: Tab[] = [
       {
         id: "watch",
         name: "Watching",
-        blurb: "The pictures and videos people send it.",
         keys: [
           "whatsapp.watch.enabled",
           "whatsapp.watch.their_status",
@@ -1108,7 +1069,6 @@ const DEFINED: Tab[] = [
       {
         id: "status",
         name: "Status",
-        blurb: "Watching the statuses of the people it talks to, and putting up its own.",
         keys: [
           "whatsapp.status.watch",
           "whatsapp.status.post",
@@ -1118,7 +1078,7 @@ const DEFINED: Tab[] = [
       {
         id: "calls",
         name: "Calls",
-        blurb: "It cannot take a call, so what it does about one instead.",
+        blurb: "It can't take calls. This is what it does instead.",
         keys: [
           "whatsapp.calls.decline",
           "whatsapp.calls.say_why",
@@ -1133,20 +1093,19 @@ const DEFINED: Tab[] = [
     id: "minecraft",
     name: "Minecraft",
     icon: "minecraft",
-    blurb: "Install, the world it joins, how it plays",
+    blurb: "Install, server, play",
     owns: ["minecraft"],
     subs: [
       {
         id: "setup",
         name: "Install",
-        blurb: "It plays through mindcraft-ce, which is installed here, on demand.",
         panel: "minecraft-setup",
       },
       {
         // The server and the sign-in are each account's own, on the Accounts page: two accounts, two servers.
         id: "world",
         name: "World",
-        blurb: "How it joins. Each account picks its own server on the Accounts page.",
+        blurb: "Each account's server is set on the Accounts page.",
         keys: [
           "minecraft.version",
           "minecraft.translate_versions",
@@ -1158,7 +1117,6 @@ const DEFINED: Tab[] = [
       {
         id: "servers",
         name: "Other servers",
-        blurb: "Going to play somewhere else when asked.",
         keys: [
           "minecraft.join_when_asked",
           "minecraft.never_join",
@@ -1167,8 +1125,9 @@ const DEFINED: Tab[] = [
       {
         id: "playing",
         name: "Playing",
-        blurb: "Who it talks with, and what it does by itself.",
         keys: [
+          "minecraft.play_goal",
+          "minecraft.answer_all_chat",
           "minecraft.only_chat_with",
           "minecraft.greet",
           "minecraft.remember_world",
@@ -1183,7 +1142,6 @@ const DEFINED: Tab[] = [
       {
         id: "thinking",
         name: "Thinking",
-        blurb: "How much it may ask of the model.",
         keys: [
           "minecraft.persona",
           "minecraft.max_brain_calls_per_hour",
@@ -1199,19 +1157,18 @@ const DEFINED: Tab[] = [
     id: "imessage",
     name: "iMessage",
     icon: "imessage",
-    blurb: "Texting through your iPhone, or a Mac",
+    blurb: "iPhone or Mac",
     owns: ["imessage"],
     subs: [
       {
         id: "setup",
         name: "Setup",
-        blurb: "Through your iPhone or iPad, or through a Mac.",
         panel: "imessage-setup",
       },
       {
         id: "texting",
         name: "Texting",
-        blurb: "What it does as it answers. The first three need BlueBubbles' Private API.",
+        blurb: "The first three need BlueBubbles' Private API.",
         keys: [
           "imessage.read_receipts",
           "imessage.typing_indicator",
@@ -1226,7 +1183,6 @@ const DEFINED: Tab[] = [
       {
         id: "who",
         name: "Who it answers",
-        blurb: "Group chats, and green bubble texts.",
         keys: [
           "imessage.groups",
           "imessage.answer_sms",
@@ -1235,7 +1191,6 @@ const DEFINED: Tab[] = [
       {
         id: "pace",
         name: "Pace",
-        blurb: "How fast it answers, and when it does not.",
         keys: [
           "imessage.burst_ms",
           "imessage.min_send_gap_ms",
@@ -1247,7 +1202,6 @@ const DEFINED: Tab[] = [
       {
         id: "mac",
         name: "The Mac",
-        blurb: "How it talks to BlueBubbles.",
         keys: [
           "imessage.send_method",
           "imessage.poll_interval_ms",
@@ -1263,19 +1217,17 @@ const DEFINED: Tab[] = [
     id: "telegram",
     name: "Telegram",
     icon: "telegram",
-    blurb: "Its own account: texting, groups, pace",
+    blurb: "Texting, groups, pace",
     owns: ["telegram"],
     subs: [
       {
         id: "setup",
         name: "Setup",
-        blurb: "What it needs, and how each account is doing.",
         panel: "telegram-setup",
       },
       {
         id: "texting",
         name: "Texting",
-        blurb: "What it does as it answers.",
         keys: [
           "telegram.read_receipts",
           "telegram.typing_indicator",
@@ -1288,7 +1240,6 @@ const DEFINED: Tab[] = [
       {
         id: "who",
         name: "Who it answers",
-        blurb: "Groups, channels, and whether it ever writes first.",
         keys: [
           "telegram.groups",
           "telegram.channels",
@@ -1299,7 +1250,7 @@ const DEFINED: Tab[] = [
       {
         id: "pace",
         name: "Pace",
-        blurb: "How fast it may send. A new account is limited quickly, so start low.",
+        blurb: "New accounts get limited fast. Start low.",
         keys: [
           "telegram.min_send_gap_ms",
           "telegram.max_send_gap_ms",
@@ -1311,7 +1262,6 @@ const DEFINED: Tab[] = [
       {
         id: "itself",
         name: "Itself",
-        blurb: "How it looks on Telegram, and what it does with gifts.",
         keys: [
           "telegram.night_offline",
           "telegram.stories",

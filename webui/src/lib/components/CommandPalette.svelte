@@ -64,17 +64,17 @@
     const snow = $snowEnabled;
     const smooth = $smoothScroll;
     return [
-      { title: motion ? "Turn animations off" : "Turn animations on", subtitle: "Springy motion throughout the app",
+      { title: motion ? "Turn animations off" : "Turn animations on",
         icon: "sparkle", words: "motion animation reduce", run: () => motionEnabled.set(!motion) },
-      { title: snow ? "Turn cursor snow off" : "Turn cursor snow on", subtitle: "Snow falls from your cursor",
+      { title: snow ? "Turn cursor snow off" : "Turn cursor snow on",
         icon: "sparkle", words: "snow decoration cursor", run: () => snowEnabled.set(!snow) },
-      { title: smooth ? "Turn smooth scrolling off" : "Turn smooth scrolling on", subtitle: "The mouse wheel glides instead of jumping",
+      { title: smooth ? "Turn smooth scrolling off" : "Turn smooth scrolling on",
         icon: "sparkle", words: "scroll scrolling smooth wheel glide", run: () => smoothScroll.set(!smooth) },
       ...THEMES.map((t) => ({
-        title: `Theme: ${t.name}`, subtitle: t.id === $themeId ? `${t.hint} (in use)` : t.hint,
+        title: `Theme: ${t.name}`, subtitle: t.id === $themeId ? "In use" : "",
         icon: "palette", words: "theme colours colors look appearance", run: () => sweepTo(t.id),
       })),
-      { title: "Reload the panel", subtitle: "Load the page again", icon: "refresh", words: "refresh reload",
+      { title: "Reload the panel", icon: "refresh", words: "refresh reload",
         run: () => location.reload() },
     ];
   }
@@ -291,7 +291,7 @@
                 Gathering everything…
               {:else if qd.trim()}
                 <b>Nothing matches “{qd}”</b>
-                <span>Every word has to match: try fewer.</span>
+
               {:else}
                 <b>Nothing here yet</b>
               {/if}

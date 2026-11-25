@@ -181,7 +181,7 @@
             {#if p.description}
               <div class="pv-text markdown"><span class="pv-mark"><Icon name="sparkle" size={12} /></span>{@html renderMarkdown(p.description)}</div>
             {:else}
-              <p class="pv-text is-none">No description, so the bot can never send this one.</p>
+              <p class="pv-text is-none">No description, so it's never sent.</p>
             {/if}
             <div class="pv-meta">
               <span class="pv-name">{p.name}</span>

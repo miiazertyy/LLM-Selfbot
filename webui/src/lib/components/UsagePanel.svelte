@@ -189,7 +189,7 @@
 {#if loading && !$usage.loaded}
   <div class="us-table" aria-hidden="true">{#each Array(3) as _}<div class="us-row is-wait"></div>{/each}</div>
 {:else if !models.length}
-  <p class="us-none">Nothing counted yet. Every answer a model gives from now on is counted here.</p>
+  <p class="us-none">Nothing counted yet.</p>
 {:else}
   <div class="us-table domino" use:domino={{ step: 32, sound: "wind", level: 0.45, once: true }} role="table" aria-label="What each model has done today">
     <div class="us-row is-names" role="row">
@@ -236,8 +236,7 @@
 {/if}
 
 <FootNote class="mt-5" icon="stats">
-  Asked of each provider as this page opens, at most every five minutes. Where one has no other way to say, that takes one
-  tiny request, which is not counted here.
+  Checked when this page opens, at most every 5 minutes. Some providers need a tiny request for it, not counted here.
 </FootNote>
 
 <style>

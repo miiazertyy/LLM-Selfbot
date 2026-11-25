@@ -21,6 +21,10 @@ from datetime import datetime
 
 DEFAULTS = {"enabled": False, "until": "", "reply_scale": 0.4, "wait_scale": 1.5}
 
+#: The blocks of a social's settings that make it do something in public by itself. System's "Public actions" row counts
+#: them, and the AI tools can only ever switch them off (app/utils/apptools.py).
+PUBLIC_PARTS = ("engage", "comments", "posting", "notes", "visits", "foryou", "mentions", "inbox", "live")
+
 #: The tail of a runner's env keys that carry a public action. In careful mode each is forced off.
 _QUIET_KEYS = (
     "ACCEPT_MESSAGE_REQUESTS", "ACCEPT_FOLLOW_REQUESTS", "ACCEPT_CHAT_INVITES", "AUTO_ADD_FRIENDS",
@@ -168,7 +172,7 @@ def report(cfg: dict = None) -> list:
     for section in browsers:
         block = cfg.get(section) or {}
         # Any engage/comment/posting/notes/visits block with its `enabled` or first action on.
-        for part in ("engage", "comments", "posting", "notes", "visits", "foryou", "mentions", "inbox", "live"):
+        for part in PUBLIC_PARTS:
             b = block.get(part) or {}
             if b.get("enabled") or any(v is True for k, v in b.items() if k in ("like_sent", "comment_sent",
                                        "like_theirs", "comment_theirs", "upvote_sent", "repost_sent", "follow_back")):

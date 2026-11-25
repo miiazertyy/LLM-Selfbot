@@ -1,5 +1,7 @@
 """Config.yaml field schema for the Settings UI. Fields marked requires_restart are read once at runner import; everything else applies on the next load_config() (mtime-cached) or via the config_update IPC."""
 
+from app.platforms.minecraft.playgoal import DEFAULT_PLAY_GOAL
+
 CONFIG_SCHEMA = [
     {"key": "bot.owner_id", "type": "int", "label": "Owner user ID",
      "section": "General", "requires_restart": True},
@@ -730,6 +732,10 @@ CONFIG_SCHEMA = [
      "requires_restart": True, "default": []},
     {"key": "minecraft.greet", "type": "bool", "label": "Say hello when it joins", "section": "Minecraft",
      "requires_restart": True, "default": True},
+    {"key": "minecraft.play_goal", "type": "str", "label": "What it does on its own", "section": "Minecraft",
+     "requires_restart": True, "default": DEFAULT_PLAY_GOAL},
+    {"key": "minecraft.answer_all_chat", "type": "bool", "label": "Answer every line of chat", "section": "Minecraft",
+     "requires_restart": True, "default": False},
     {"key": "minecraft.max_brain_calls_per_hour", "type": "int", "label": "Thoughts an hour, at most",
      "section": "Minecraft", "min": 10, "max": 2000, "requires_restart": True, "default": 120},
     {"key": "minecraft.brain_timeout_s", "type": "int", "label": "Thinks for, at most",

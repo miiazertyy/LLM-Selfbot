@@ -29,7 +29,7 @@ print("== on the Profiles page ==")
 check("yours or the community's, under the hero", "<CommunitySwitch {updates} />" in profiles
       and '{#if $profilesView === "community"}' in profiles
       and "<CommunityView personas={list} onshare={openShare} onupdate={openUpdate} />" in profiles)
-check("your own cards stay exactly as they were", "{#each cards as c (c.p.id)}" in profiles and 'class="pr-new"' in profiles
+check("your own cards stay exactly as they were", "{#each cards as c, i (c.p.id)}" in profiles and 'class="pr-new"' in profiles
       and "<b>New profile</b>" in profiles and "visiblePoll(() => {" in profiles)
 check("the accounts aren't asked about while the community is up",
       'return visiblePoll(() => {\n      if (get(profilesView) === "community") return;' in profiles)
@@ -71,18 +71,34 @@ check("a card plays its own sound when it opens", 'data-sound="self"' in card an
 check("Inspect arrives: rises, its face lands, its parts in turn", 'use:chime={{ sound: "rise", delay: 60 }}' in inspect
       and 'use:chime={{ sound: "land", delay: 160 }}' in inspect and 'sound: "wind"' in inspect)
 check("added: done, then a glint", 'play("done");\n      play("glint", { delay: 180, strong: true });' in inspect)
-check("what you'd keep is said before adding", "Only how it talks comes with it. Your accounts, models, keys and limits stay yours." in inspect)
+check("what you'd keep is said before adding", "Your accounts, models, keys and limits aren't touched." in inspect)
 check("the text shown as text, risky parts lit", "<RiskText segments={data.segments} />" in inspect
       and '<mark class="rt-mark is-{s.kind}"' in parts["RiskText.svelte"])
 check("the sign-in code typed in, a key a letter", 'play("key", { level: 0.35' in signin and "typeIn(st.user_code)" in signin)
 check("followed with visiblePoll, stopped when done or away", "visiblePoll(async () => {" in signin and "stopPoll?.();" in signin
       and "visiblePoll(async () => {" in share and "stopFollow?.();" in share and "visiblePoll(() => {" in mine)
-check("what goes public is shown, and must be checked when it names you", "This goes public. Everything you send is public on GitHub." in share
+check("what goes public is shown, and must be checked when it names you", "Everything you send is public on GitHub." in share
       and "I checked the highlighted parts" in share and "preview.needs_check && !checked" in share)
 check("never shared, said plainly", "Nor its memory, chats, accounts, keys, or the pictures you didn't pick." in share)
 check("live is a medal, refused an error", 'play("medal");' in share and 'play("err", { level: 0.6 });' in share)
 check("removing asks first, in the app's own way", "await ask(`Take ${slug} out of the community?`" in mine)
 check("the author is a name they pick, not their GitHub one", "Not your GitHub name." in share)
+check("in the page, not a window: no Modal, a card that grows out of what was pressed",
+      "Modal" not in share and '<section class="sh glass"' in share and "from?: DOMRect | null" in share
+      and "root?.animate([{ ...frame, opacity: 0.6 }, { clipPath: WHOLE" in share)
+check("  and goes back into it when put away", 'leaving.onfinish = () => (pid = "");' in share)
+check("  under the row of the profile shared, the card lit while it is open", 'style="order: {shareOrder}"' in profiles
+      and "order: {i * 2}" in profiles and "class:is-sharing={shareFor === p.id}" in profiles
+      and "Math.floor(i / cols) * cols + cols - 1" in profiles)
+check("  New profile stays last", ".pr-grid > :global(.np), .pr-grid > .pr-new { order: 100000; }" in profiles)
+check("what is missing is red, with a word under it", "class:is-bad={nameBad}" in share and "class:is-bad={authorBad}" in share
+      and "class:is-bad={slugBad}" in share and "Pick a name to show, 2 letters at least." in share and "Give it a name." in share)
+check("  pressed anyway: a no, a pulse, and the cursor into it", 'play("err", { level: 0.55 });' in share
+      and "first?.focus({ preventScroll: true });" in share and "@keyframes sh-nudge" in share)
+check("  the buttons are never dead: Next and Share it say what is missing",
+      "canNext ? go(1) : blocked()" in share and "sendBlock ? blocked() : send()" in share)
+check("  the last step too: the box to tick, the sign-in, the problems", "class:is-bad={!checked}" in share
+      and 'class:is-bad={sendBlock === "signin"}' in share and 'class="sh-problems is-bad"' in share)
 check("links go through the app's own builder", all("openGitHub(" in s for s in (inspect, share, mine))
       and "window.open(" not in "".join(parts.values()))
 

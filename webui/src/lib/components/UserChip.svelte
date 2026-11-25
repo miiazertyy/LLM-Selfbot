@@ -296,8 +296,7 @@
 
     {#if !person?.cached && !factList.length && !person?.messages}
       <p class="mt-4 text-[13px] text-faint">
-        Nothing stored about this person yet. Details appear once the bot has
-        spoken with them.
+        Nothing stored about them yet.
       </p>
     {/if}
   {/if}

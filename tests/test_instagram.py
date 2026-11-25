@@ -134,7 +134,8 @@ for k in ("instagram.enabled", "instagram.min_send_gap_ms", "instagram.max_sends
           "instagram.stories.watch", "instagram.stories.post", "instagram.reels.enabled",
           "instagram.comments.enabled", "instagram.notes.enabled", "instagram.share.enabled",
           "instagram.watch.enabled", "instagram.posting.enabled"):
-    check(f"{k} is a setting, described in one line", k in keys and 0 < len(desc.DESCRIPTIONS.get(k, "")) <= 120,
+    check(f"{k} is a setting, with at most one short line", k in keys and k in desc.DESCRIPTIONS
+          and len(desc.DESCRIPTIONS[k]) <= 120,
           desc.DESCRIPTIONS.get(k, "missing"))
 check("every description is one plain line", all("\n" not in desc.DESCRIPTIONS[k]
                                                  for k in desc.DESCRIPTIONS if k.startswith("instagram.")))

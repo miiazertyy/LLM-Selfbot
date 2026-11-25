@@ -97,13 +97,11 @@
   <div class="h-24 animate-pulse rounded-xl bg-white/[0.03]"></div>
 {:else}
   <p class="text-[11px] leading-relaxed text-faint">
-    A language with no list here still gets an opener: the model writes one in
-    that language, following the description below. So this is for pinning down
-    exact wording, not for covering every language.
+    A language with no list gets one written by the model, in the style below.
   </p>
 
   <label class="mt-3 block">
-    <span class="mb-1 block text-[11px] text-muted">How it should sound, when it writes its own</span>
+    <span class="mb-1 block text-[11px] text-muted">Style of the written ones</span>
     <input
       bind:value={style}
       placeholder="casual and offhand, never formal"
@@ -135,7 +133,7 @@
       </div>
     {:else}
       <p class="text-[12px] text-muted">
-        No written openers. Every language is being written by the model.
+        None listed. The model writes them all.
       </p>
     {/each}
   </div>

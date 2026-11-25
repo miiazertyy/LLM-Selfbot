@@ -10,7 +10,7 @@
   import { tick } from "svelte";
   import Icon from "../components/Icon.svelte";
   import PersonaOrb from "./PersonaOrb.svelte";
-  import { accountLabel, colorOf, type Persona } from "./logic";
+  import { accountLabel, type Persona } from "./logic";
   import { play } from "../uisound";
 
   let {
@@ -102,16 +102,16 @@
     <div class="pm-list">
       {#if everyone}
         <button type="button" role="option" class="pm-row" class:is-on={selected === ""} aria-selected={selected === ""}
-                style="--i: 0; --pc: var(--color-accent)" onclick={() => pick("")}>
+                style="--i: 0" onclick={() => pick("")}>
           <span class="pm-all"><Icon name="accounts" size={14} /></span>
-          <span class="pm-text"><b>Everyone</b><small>What every profile starts from</small></span>
+          <span class="pm-text"><b>Everyone</b></span>
           {#if selected === ""}<span class="pm-check"><Icon name="check" size={13} /></span>{/if}
         </button>
       {/if}
       {#each list as p, i (p.id)}
         {@const on = p.id === selected}
         <button type="button" role="option" class="pm-row" class:is-on={on} aria-selected={on}
-                style="--i: {i + (everyone ? 1 : 0)}; --pc: {colorOf(p)}" onclick={() => pick(p.id)}>
+                style="--i: {i + (everyone ? 1 : 0)}" onclick={() => pick(p.id)}>
           <PersonaOrb {p} size={28} ring={false} />
           <span class="pm-text">
             <b>{p.name}</b>
@@ -153,7 +153,10 @@
     text-transform: uppercase;
     color: var(--color-faint);
   }
-  .pm-list { display: flex; flex-direction: column; gap: 2px; overflow-y: auto; }
+  /* Never scrolled sideways: the rows' slide in overshoots by a pixel, which put a sideways scrollbar in for the
+     moment it lasted and dropped "Manage profiles" 9px, then back (2026-11-11). Reaching into the menu's padding,
+     the rows slide in from it without being cut. */
+  .pm-list { display: flex; flex-direction: column; gap: 2px; margin: 0 -6px; padding: 0 6px; overflow-x: hidden; overflow-y: auto; }
   .pm-row {
     display: flex;
     align-items: center;
@@ -167,11 +170,12 @@
   }
   @keyframes pm-row { from { opacity: 0; transform: translateX(-6px); } }
   .pm-row:hover { background: rgb(255 255 255 / 0.06); }
-  .pm-row.is-on { background: color-mix(in srgb, var(--pc) 14%, transparent); }
+  /* The one picked, in the theme like the rest of the app; each profile's own colour is in its face. */
+  .pm-row.is-on { background: color-mix(in srgb, var(--color-accent) 14%, transparent); }
   .pm-text { display: flex; min-width: 0; flex: 1; flex-direction: column; }
   .pm-text b { overflow: hidden; font-size: 13px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; color: var(--color-ink); }
   .pm-text small { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; color: var(--color-faint); }
-  .pm-check { display: grid; color: var(--pc); }
+  .pm-check { display: grid; color: var(--color-accent); }
   .pm-all {
     display: grid;
     width: 28px;

@@ -73,7 +73,7 @@
 <div class="ms">
   {#if !mine.signed_in}
     <div class="ms-signin">
-      <p>Sign in to share your profiles and follow what you sent.</p>
+      <p>Sign in to share profiles.</p>
       <SignInPanel onsignedin={() => communityMineRes.refresh({ force: true })} />
     </div>
   {/if}
@@ -104,7 +104,7 @@
       {/each}
     </div>
   {:else}
-    <p class="ms-none">Nothing shared yet. Share one of yours from its card's menu, or here.</p>
+    <p class="ms-none">Nothing shared yet.</p>
   {/if}
 
   {#if mine.requests.length}

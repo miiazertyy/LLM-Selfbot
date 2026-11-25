@@ -121,7 +121,7 @@
       </div>
       <label class="pt-trial">
         <Toggle size="sm" checked={trial} name="Try it first" onchange={(v: boolean) => (trial = v)} />
-        Try it first: fill it in on TikTok, then leave without posting
+        Try it first, without posting
       </label>
       <div class="pt-go">
         <Button kind="ghost" onclick={() => (open = false)}>Cancel</Button>

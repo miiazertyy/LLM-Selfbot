@@ -345,8 +345,9 @@ check("every setting has a home in it, so none fall into Everything else", not m
 settings = (SRC / "pages" / "Settings.svelte").read_text(encoding="utf-8")
 check("its two switches are one switch on screen", '"services.reddit.enabled": "reddit.enabled"' in settings)
 check("its install panel is the same for every profile", '"reddit-setup"' in settings)
+choices = (ROOT / "resources" / "setting_choices.json").read_text(encoding="utf-8")
 check("and where its posts go is a dropdown of plain words, not a string to type",
-      '"reddit.posting.where": [' in settings and '"Its own profile"' in settings)
+      '"reddit.posting.where": [' in choices and '"Its own profile"' in choices)
 cond = (SRC / "lib" / "accounts" / "condition.ts").read_text(encoding="utf-8")
 check("its card reads the runner's own state, as the browser platforms do",
       'slot.platform !== "discord" && slot.platform !== "snapchat" && rt?.web' in cond)
@@ -482,6 +483,38 @@ else:
                           capture_output=True, text=True, timeout=300, encoding="utf-8", errors="replace")
     print("\n".join("  " + line for line in proc.stdout.strip().splitlines()[-4:]))
     check("reddit_logic.mjs passes", proc.returncode == 0, (proc.stdout + proc.stderr)[-700:])
+
+print("\n== what the live account showed (2026-11-11) ==")
+# Its first day on a real account: "Reddit put up a check" every two minutes over Google's invisible reCAPTCHA badge,
+# and chat (at www.reddit.com/chat/, in shadow roots) never found.
+browser_js = read("app/platforms/snapchat/browser.js")
+bot_js = read("app/platforms/snapchat/redditbot.js")
+shown = browser_js.split("export async function checkShown(", 1)[1].split("\n}\n", 1)[0] if "export async function checkShown(" in browser_js else ""
+check("a check counts only when a person can see it: not the invisible kind, not hidden, not a sliver",
+      "[?&]size=invisible" in shown and 's.visibility === "hidden"' in shown and "r.width < 60 || r.height < 40" in shown)
+check("Reddit, X and Instagram all ask it that way", "return checkShown(page, SEL.captcha);" in bot_js
+      and "return checkShown(page, SEL.captcha);" in read("app/platforms/snapchat/xbot.js")
+      and "if (await checkShown(page, SEL.captcha)) return true;" in read("app/platforms/snapchat/instagrambot.js"))
+check("chat is at www.reddit.com/chat/ now", 'export const CHAT_HOME = "https://www.reddit.com/chat/";' in bot_js
+      and "if (CHAT_URL.test(url)) want.push(\"chatRoomList\");" in bot_js
+      and '"https://chat.reddit.com/"' not in read("app/platforms/snapchat/reddit_runner.js"))
+check("its real parts first: the list, a room, the timeline, a message, the box",
+      'chatRoomList: ["rs-rooms-nav",' in bot_js and 'chatRoom: ["rs-rooms-nav-room",' in bot_js
+      and 'chatTimeline: ["rs-timeline",' in bot_js and 'chatMessage: ["rs-timeline-event",' in bot_js
+      and "chatComposer: ['rs-message-composer div[contenteditable=\"true\"]'," in bot_js)
+check("read through the shadow roots it is built of", bot_js.count("const deepAll = (q) =>") == 2
+      and "for (const el of deepAll(s))" in bot_js and "(await page.$(`>>> ${q}`).catch(() => null))" in bot_js)
+check("and every runner's site watch looks into them too", "if (el.shadowRoot) roots.push(el.shadowRoot);"
+      in read("app/platforms/snapchat/sitewatch.js"))
+rr = read("app/platforms/snapchat/reddit_runner.js")
+ident = rr.split("async function recordIdentity()", 1)[1].split("\n}\n", 1)[0]
+check("its card has its picture: read off its own page, the one whose alt names it",
+      "profileAvatar: ['img[alt$=\"avatar\" i]'," in bot_js and "alt.includes(`u/${want}`)" in bot_js
+      and "avatar," in bot_js.split("export function profileInPage", 1)[1][:2600])
+check("  kept as identity_reddit_<n>, which is what the card is served", "out.picture = `identity_reddit_${ACCOUNT}.${ext}`;" in ident
+      and "bot.captureMedia(info.avatar)" in ident and "PICTURE_HOSTS.test(host)" in ident)
+check("  fetched with its cookies only when it is Reddit itself, as its image hosts refuse them",
+      'credentials: new URL(u, location.href).origin === location.origin ? "include" : "omit"' in bot_js)
 
 print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
 sys.exit(1 if FAIL else 0)

@@ -29,14 +29,17 @@
  */
 import fs from "fs";
 import path from "path";
-import { launchBrowser, delay, typeDelay, persona, showWindow, hideWindow } from "./browser.js";
+import { launchBrowser, delay, typeDelay, persona, showWindow, hideWindow, checkShown } from "./browser.js";
 // The six digits from a 2FA key are RFC 6238 and nobody's in particular; instagrambot.js already has them, and one
 // copy is better than two. Imported here rather than where it is used, so a missing file is a loud start, not a
 // quiet failure halfway through a sign-in.
 import { totp } from "./instagrambot.js";
 
 export const HOME = "https://www.reddit.com/";
-export const CHAT_HOME = "https://chat.reddit.com/";
+// Chat moved into the site itself: chat.reddit.com only sends you on to here.
+export const CHAT_HOME = "https://www.reddit.com/chat/";
+/** Whether an address is chat, at either of its homes. */
+export const CHAT_URL = /(?:chat\.reddit\.com|reddit\.com\/chat)/;
 
 /**
  * Everything looked for on the page. Each is a list: the hook first, then whatever else has stood in for it.
@@ -107,14 +110,18 @@ export const SEL = {
   // The older message pages, which some accounts still have.
   messageRow: ["div.message", "shreddit-message"],
 
-  // ── Chat, which is a different app on a different host ──
-  // ⚠ none of these has been seen; chat.reddit.com is its own Matrix client.
-  chatRoomList: ["rs-room-list", '[data-testid="room-list"]', "nav[aria-label*='hat']"],
-  chatRoom: ["rs-room-list-item", '[data-testid="room-list-item"]', 'a[href*="/room/"]'],
-  chatUnread: ["[data-unread]", '[data-testid="unread-badge"]', ".unread"],
-  chatTimeline: ["rs-timeline", '[data-testid="timeline"]', "ol[role='list']"],
-  chatMessage: ["rs-message", '[data-testid="message"]', "li[data-event-id]"],
-  chatComposer: ['div[contenteditable="true"][role="textbox"]', "rs-composer textarea", "textarea"],
+  // ── Chat, at www.reddit.com/chat/, a Matrix client made of web components in open shadow roots ──
+  // Seen 2026-11-11 (no chats on the account yet): rs-app > rs-rooms-nav (the list, its rows in an
+  // rs-virtual-scroll) > rs-rooms-nav-room; a room is rs-room / rs-direct-chat, its timeline rs-timeline of
+  // rs-timeline-event, written in rs-message-composer. A row's own insides are still unseen. Every lookup here goes
+  // through the shadow roots (deepAll in the page, ">>>" from Puppeteer).
+  chatRoomList: ["rs-rooms-nav", "rs-room-list", '[data-testid="room-list"]', "nav[aria-label*='hat']"],
+  chatRoom: ["rs-rooms-nav-room", "rs-room-list-item", '[data-testid="room-list-item"]'],
+  chatUnread: ["[data-unread]", "[unread]", '[data-testid="unread-badge"]', ".unread", "rs-notifications-badge"],
+  chatTimeline: ["rs-timeline", "rs-thread-timeline", '[data-testid="timeline"]', "ol[role='list']"],
+  chatMessage: ["rs-timeline-event", "rs-message", '[data-testid="message"]', "li[data-event-id]"],
+  chatComposer: ['rs-message-composer div[contenteditable="true"]', 'div[contenteditable="true"][role="textbox"]',
+                 "rs-message-composer textarea", "rs-composer textarea", "textarea"],
   chatSend: ['button[aria-label*="end"]', "rs-composer button[type='submit']"],
   chatFile: ['input[type="file"]'],
   chatInvites: ['a[href*="/invites"]', '[data-testid="invites"]'],
@@ -125,6 +132,8 @@ export const SEL = {
   profileKarma: ['[data-testid="karma"]', 'faceplate-number[number]', "#profile--id-card--highlight-cell--karma"],
   profileAge: ['[data-testid="cake-day"]', "#profile--id-card--highlight-cell--age"],
   profileBio: ['[data-testid="profile-description"]', 'div[slot="description"]'],
+  // Seen 2026-11-11: its own page draws it at 64px, its alt naming the account ("OkWorker806 u/OkWorker806 avatar").
+  profileAvatar: ['img[alt$="avatar" i]', 'img[alt*="avatar for user" i]'],
   followButton: ['button[aria-label*="ollow"]', 'faceplate-tracker[noun="follow"] button'],
   joinButton: ['button[aria-label*="oin"]', "shreddit-join-button button", "shreddit-join-button"],
 
@@ -452,27 +461,54 @@ export function readInboxInPage(sel) {
   return out;
 }
 
-/** The chat rooms down the side of chat.reddit.com, and which of them have something new. */
+/** The chat rooms down the side of Reddit's chat, and which of them have something new. */
 export function readRoomsInPage(sel) {
+  // Reddit's chat is web components in nested open shadow roots: looked for through all of them, the page first.
+  const deepAll = (q) => {
+    const out = [];
+    const roots = [document];
+    for (let i = 0; i < roots.length && roots.length < 3000; i++) {
+      try { out.push(...roots[i].querySelectorAll(q)); } catch { /* not a selector this page reads */ }
+      for (const el of roots[i].querySelectorAll("*")) if (el.shadowRoot) roots.push(el.shadowRoot);
+    }
+    return out;
+  };
+  const deepIn = (host, q) => {
+    const roots = [host];
+    if (host.shadowRoot) roots.push(host.shadowRoot);
+    for (let i = 0; i < roots.length && roots.length < 300; i++) {
+      let found = null;
+      try { found = roots[i].querySelector(q); } catch { found = null; }
+      if (found) return found;
+      for (const el of roots[i].querySelectorAll("*")) if (el.shadowRoot) roots.push(el.shadowRoot);
+    }
+    return null;
+  };
+  const textOf = (host) => ((host.innerText || "").trim() || (host.shadowRoot ? host.shadowRoot.textContent || "" : ""))
+    .replace(/[ \t]+/g, " ").trim();
   const out = [];
   const seen = new Set();
   for (const s of sel.chatRoom) {
-    for (const el of document.querySelectorAll(s)) {
-      const href = el.getAttribute("href") || (el.querySelector("a[href]") || {}).getAttribute?.("href") || "";
+    for (const el of deepAll(s)) {
+      const link = el.matches?.("a[href]") ? el : deepIn(el, 'a[href*="/room/"]') || deepIn(el, "a[href]");
+      const href = (link && link.getAttribute("href")) || "";
       const room = (String(href).match(/\/room\/([^/?#]+)/) || [])[1]
-        || el.getAttribute("room-id") || el.getAttribute("data-room-id") || "";
+        || el.getAttribute("room-id") || el.getAttribute("data-room-id") || el.getAttribute("room") || "";
       if (!room || seen.has(room)) continue;
       seen.add(room);
-      const words = (el.innerText || "").split("\n").map((w) => w.trim()).filter(Boolean);
+      const words = textOf(el).split("\n").map((w) => w.trim()).filter(Boolean);
       let unread = false;
-      for (const q of sel.chatUnread) if (el.querySelector(q)) unread = true;
-      if (el.hasAttribute("data-unread") || /\bunread\b/i.test(el.className || "")) unread = true;
+      for (const q of sel.chatUnread) if (deepIn(el, q)) unread = true;
+      if (el.hasAttribute("data-unread") || el.hasAttribute("unread") || /\bunread\b/i.test(el.className || "")) unread = true;
       const people = [];
-      for (const a of el.querySelectorAll('a[href*="/user/"], a[href*="/u/"]')) {
+      const named = [];
+      const roots = [el, ...(el.shadowRoot ? [el.shadowRoot] : [])];
+      for (const r of roots) named.push(...r.querySelectorAll('a[href*="/user/"], a[href*="/u/"]'));
+      for (const a of named) {
         const m = (a.getAttribute("href") || "").match(/\/u(?:ser)?\/([A-Za-z0-9_-]{3,20})/);
         if (m && !people.includes(m[1].toLowerCase())) people.push(m[1].toLowerCase());
       }
-      const img = el.querySelector("img[src]");
+      const img = deepIn(el, "img[src]");
       out.push({
         room,
         name: words[0] || room,
@@ -493,14 +529,37 @@ export function readRoomsInPage(sel) {
  * from which side of the pane it is drawn on where it does not, as X's are.
  */
 export function readChatInPage(sel, me) {
+  // Reddit's chat is web components in nested open shadow roots: looked for through all of them, the page first.
+  const deepAll = (q) => {
+    const out = [];
+    const roots = [document];
+    for (let i = 0; i < roots.length && roots.length < 3000; i++) {
+      try { out.push(...roots[i].querySelectorAll(q)); } catch { /* not a selector this page reads */ }
+      for (const el of roots[i].querySelectorAll("*")) if (el.shadowRoot) roots.push(el.shadowRoot);
+    }
+    return out;
+  };
+  const deepIn = (host, q) => {
+    const roots = [host];
+    if (host.shadowRoot) roots.push(host.shadowRoot);
+    for (let i = 0; i < roots.length && roots.length < 300; i++) {
+      let found = null;
+      try { found = roots[i].querySelector(q); } catch { found = null; }
+      if (found) return found;
+      for (const el of roots[i].querySelectorAll("*")) if (el.shadowRoot) roots.push(el.shadowRoot);
+    }
+    return null;
+  };
+  const textOf = (host) => ((host.innerText || "").trim() || (host.shadowRoot ? host.shadowRoot.textContent || "" : ""))
+    .replace(/[ \t]+/g, " ").trim();
   const rows = [];
   for (const s of sel.chatMessage) {
-    for (const el of document.querySelectorAll(s)) rows.push(el);
+    for (const el of deepAll(s)) rows.push(el);
     if (rows.length) break;
   }
   let pane = null;
   for (const s of sel.chatTimeline) {
-    pane = document.querySelector(s);
+    pane = deepAll(s)[0] || null;
     if (pane) break;
   }
   const box = pane ? pane.getBoundingClientRect() : { left: 0, width: window.innerWidth };
@@ -512,11 +571,11 @@ export function readChatInPage(sel, me) {
     const r = el.getBoundingClientRect();
     const mine = attrFrom && me ? attrFrom === String(me).toLowerCase()
       : r.left + r.width / 2 > mid;
-    const time = el.querySelector("time[datetime]");
-    const img = el.querySelector("img[src]:not([alt*='avatar'])");
-    const video = el.querySelector("video[src], video source[src]");
-    const link = el.querySelector("a[href^='http']");
-    let text = (el.innerText || "").replace(/\s+/g, " ").trim();
+    const time = deepIn(el, "time[datetime]");
+    const img = deepIn(el, "img[src]:not([alt*='avatar'])");
+    const video = deepIn(el, "video[src], video source[src]");
+    const link = deepIn(el, "a[href^='http']");
+    let text = textOf(el).replace(/\s+/g, " ").trim();
     // The time and the sender's name are drawn in the row, and a row can come back as one line rather than
     // three, so they are taken off the ends of the joined text rather than filtered out as lines.
     const clock = (time ? time.innerText || "" : "").replace(/\s+/g, " ").trim();
@@ -569,8 +628,18 @@ export function profileInPage(sel, name) {
     if (!when) return 0;
     return Math.max(0, Math.round((Date.now() - when) / (365.25 * 86400000)));
   })();
+  // Its picture as Reddit shows it on its page: its own, or one of Reddit's default snoos. The one whose alt names
+  // this account, drawn at a size (the 32px ones are in the header and the comments).
+  const want = String(name || "").toLowerCase();
+  let avatar = "";
+  for (const img of document.querySelectorAll(sel.profileAvatar.join(","))) {
+    const alt = (img.getAttribute("alt") || "").toLowerCase();
+    if (want && !alt.includes(`u/${want}`) && !alt.includes(` ${want}`)) continue;
+    if (img.getBoundingClientRect().width >= 40) { avatar = img.currentSrc || img.src || ""; break; }
+  }
   return {
     name: String(name || "").toLowerCase(),
+    avatar,
     karma: number(pick(sel.profileKarma)),
     years,
     bio: bio ? bio.innerText.trim().slice(0, 400) : "",
@@ -687,9 +756,9 @@ export default class RedditBot {
       .catch(() => false);
   }
 
+  /** A check on the screen now: not Reddit's invisible reCAPTCHA, which is on almost every page (browser.js). */
   async captchaShown(page = this.page) {
-    return await page.evaluate((list) => list.some((q) => !!document.querySelector(q)), SEL.captcha)
-      .catch(() => false);
+    return checkShown(page, SEL.captcha);
   }
 
   /** The account this window is actually signed in as, which is not always the one that was asked for. */
@@ -716,16 +785,22 @@ export default class RedditBot {
   async selectorHealth(page = this.page) {
     const url = page.url();
     const want = ["appShell", "loggedIn"];
-    if (/chat\.reddit\.com/.test(url)) want.push("chatRoomList", "chatRoom");
+    // Chat is at www.reddit.com/chat/ now: on its old test the chat page was checked for feed posts and "post, feed
+    // found nothing" was said every time. A chat with no rooms yet has no rows, so only the list is wanted there.
+    if (CHAT_URL.test(url)) want.push("chatRoomList");
     else if (/\/comments\//.test(url)) want.push("post", "comment", "composer");
     else if (/\/notifications/.test(url)) want.push("notification");
     else want.push("post", "feed");
     const found = await page.evaluate((pairs) => {
       const out = {};
+      const roots = [document];
+      for (let i = 0; i < roots.length && roots.length < 3000; i++) {
+        for (const el of roots[i].querySelectorAll("*")) if (el.shadowRoot) roots.push(el.shadowRoot);
+      }
       for (const [name, list] of pairs) {
-        out[name] = list.some((q) => {
-          try { return !!document.querySelector(q); } catch { return false; }
-        });
+        out[name] = list.some((q) => roots.some((r) => {
+          try { return !!r.querySelector(q); } catch { return false; }
+        }));
       }
       return out;
     }, want.map((k) => [k, SEL[k]])).catch(() => ({}));
@@ -765,12 +840,15 @@ export default class RedditBot {
 
   /** The first of a list of selectors that is actually on the page. */
   async first(page, list, timeout = 0) {
-    if (timeout) await page.waitForSelector(list.join(","), { timeout }).catch(() => {});
-    for (const q of list) {
-      const el = await page.$(q).catch(() => null);
-      if (el) return el;
+    const until = Date.now() + timeout;
+    for (;;) {
+      for (const q of list) {
+        const el = (await page.$(q).catch(() => null)) || (await page.$(`>>> ${q}`).catch(() => null));
+        if (el) return el;
+      }
+      if (Date.now() >= until) return null;
+      await delay(250);
     }
-    return null;
   }
 
   /** The same, but reaching into shadow roots, which is where Reddit keeps its buttons. */
@@ -808,7 +886,7 @@ export default class RedditBot {
 
   // ── Chat ──────────────────────────────────────────────────────────────────
   async openChatHome() {
-    if (!/chat\.reddit\.com/.test(this.page.url() || "")) await this.goto(CHAT_HOME, this.page);
+    if (!CHAT_URL.test(this.page.url() || "")) await this.goto(CHAT_HOME, this.page);
     return !!(await this.first(this.page, SEL.chatRoomList, 8000));
   }
 
@@ -844,20 +922,12 @@ export default class RedditBot {
     const open = await this.openChat(chatId);
     if (!open.ok) return open;
     for (let i = 0; i < scrollUps; i++) {
-      await this.page.evaluate((list) => {
-        for (const q of list) {
-          const el = document.querySelector(q);
-          if (el) { el.scrollBy(0, -el.clientHeight * 0.8); return; }
-        }
-      }, SEL.chatTimeline).catch(() => {});
+      const pane = await this.first(this.page, SEL.chatTimeline);
+      await pane?.evaluate((el) => el.scrollBy(0, -el.clientHeight * 0.8)).catch(() => {});
       await delay(600 + Math.random() * 500);
     }
-    await this.page.evaluate((list) => {
-      for (const q of list) {
-        const el = document.querySelector(q);
-        if (el) { el.scrollTop = el.scrollHeight; return; }
-      }
-    }, SEL.chatTimeline).catch(() => {});
+    const pane = await this.first(this.page, SEL.chatTimeline);
+    await pane?.evaluate((el) => { el.scrollTop = el.scrollHeight; }).catch(() => {});
     await delay(400);
     const messages = await this.page.evaluate(readChatInPage, SEL, this.username).catch(() => []);
     return { ok: true, messages: messages || [] };
@@ -873,13 +943,7 @@ export default class RedditBot {
     // Enter sends a chat message; the button is the fallback where it does not.
     await this.page.keyboard.press("Enter").catch(() => {});
     await delay(700);
-    const still = await this.page.evaluate((list) => {
-      for (const q of list) {
-        const el = document.querySelector(q);
-        if (el) return (el.innerText || el.value || "").trim().length;
-      }
-      return 0;
-    }, SEL.chatComposer).catch(() => 0);
+    const still = await box.evaluate((el) => (el.innerText || el.value || "").trim().length).catch(() => 0);
     if (still) {
       const send = await this.firstDeep(this.page, SEL.chatSend);
       if (send) await send.click().catch(() => {});
@@ -1276,7 +1340,9 @@ export default class RedditBot {
     const page = await this.outPage();
     const data = await page.evaluate(async (u) => {
       try {
-        const r = await fetch(u, { credentials: "include" });
+        // Its cookies only to Reddit itself: its image hosts answer any site with "*", which a browser refuses for
+        // a request carrying them (2026-11-11).
+        const r = await fetch(u, { credentials: new URL(u, location.href).origin === location.origin ? "include" : "omit" });
         if (!r.ok) return null;
         const buf = new Uint8Array(await r.arrayBuffer());
         let s = "";

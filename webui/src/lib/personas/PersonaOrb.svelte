@@ -1,8 +1,12 @@
 <script lang="ts">
   /**
-   * A persona's face: its avatar, or its initials on a glow of its colour, in
-   * a ring of that colour. The ring turns only on the one picked, so a row of
-   * them is calm and the chosen one is alive.
+   * A persona's face: its avatar, or its initial on the app theme's colours, in a ring of the persona's own colour.
+   * The ring turns only on the one picked, so a row of them is calm and the chosen one is alive.
+   *
+   * Without a picture the face was a disc of the persona's colour, which matched no theme (Nora's slate in a purple
+   * one, 2026-11-11), so the disc is the theme's now, deeper at the top than the foot, its initial pale. The persona's
+   * colour stays in the ring, shown on the large faces only (Profiles, New profile, Persona), where picking a colour
+   * has to show; the small ones (sidebar, lists, chips) are the theme's alone.
    */
   import { colorOf, monogram, type Persona } from "./logic";
 
@@ -14,9 +18,8 @@
   }: { p?: Pick<Persona, "name" | "color" | "color2" | "avatar"> | null; size?: number; spin?: boolean; ring?: boolean } = $props();
 
   const color = $derived(colorOf(p));
-  /** With a theme of two colours, the ring runs into the second and it glows from the far side. */
+  /** With a theme of two colours, the ring runs into the second. */
   const rim = $derived(p?.color2 || `color-mix(in srgb, ${color} 30%, transparent)`);
-  const far = $derived(p?.color2 || "transparent");
   let broken = $state(false);
   $effect(() => {
     void p?.avatar;
@@ -24,7 +27,7 @@
   });
 </script>
 
-<span class="po" class:is-spin={spin} style="--po-size: {size}px; --po-c: {color}; --po-rim: {rim}; --po-c2: {far}" aria-hidden="true">
+<span class="po" class:is-spin={spin} style="--po-size: {size}px; --po-c: {color}; --po-rim: {rim}" aria-hidden="true">
   {#if ring}<span class="po-ring"></span>{/if}
   <span class="po-face">
     {#if p?.avatar && !broken}
@@ -65,18 +68,14 @@
     overflow: hidden;
     place-items: center;
     border-radius: 999px;
-    background:
-      radial-gradient(circle at 32% 28%, color-mix(in srgb, var(--po-c) 55%, transparent), transparent 70%),
-      radial-gradient(circle at 74% 80%, color-mix(in srgb, var(--po-c2) 52%, transparent), transparent 66%),
-      color-mix(in srgb, var(--po-c) 16%, var(--color-card));
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--po-c) 30%, transparent);
+    background: linear-gradient(160deg, color-mix(in srgb, var(--color-accent) 46%, var(--color-card)),
+                                color-mix(in srgb, var(--color-accent-2, var(--color-accent)) 20%, var(--color-card)));
   }
   .po-face img { width: 100%; height: 100%; object-fit: cover; }
   .po-mono {
-    font-weight: 750;
+    font-weight: 650;
     letter-spacing: -0.02em;
-    color: color-mix(in srgb, var(--po-c) 30%, white);
-    text-shadow: 0 1px 8px color-mix(in srgb, var(--po-c) 60%, transparent);
+    color: color-mix(in srgb, var(--color-accent) 25%, white);
   }
   :global(:root[data-motion="off"]) .po.is-spin .po-ring { animation: none; }
 </style>

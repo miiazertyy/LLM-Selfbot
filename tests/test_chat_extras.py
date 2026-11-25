@@ -43,7 +43,8 @@ check("the type says what one looks like", "reactions?:" in read("lib/chats.ts")
 
 print("\n== a picture pasted into the composer ==")
 check("Ctrl+V with a picture stages it", "function onComposerPaste" in chats and "clipboardData" in chats)
-check("plain text still pastes as text", 'i.kind === "file"' in chats and "if (!files.length) return;" in chats)
+check("plain text still pastes as text", 'i.kind === "file"' in chats and "if (files.length) {" in chats
+      and '!types.some((t) => t.startsWith("text/"))' in chats)
 check("there is a button for it too", "cd-attach" in chats and "filePick?.click()" in chats)
 check("staged pictures are shown before they go", "cd-staged" in chats and "f.preview" in chats)
 check("and can be taken off again", "function unstage" in chats and "revokeObjectURL" in chats)

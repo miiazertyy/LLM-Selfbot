@@ -306,7 +306,7 @@
       <div class="min-w-0 flex-1">
         <h3 class="text-[14.5px] font-semibold text-ink">Replies</h3>
         <p class="text-[12px] text-muted">
-          Tried top to bottom. When one is rate limited, down or out of credit, the next one writes the reply.
+          Tried top to bottom. If one fails, the next one answers.
         </p>
       </div>
       <Button size="sm" kind="ghost" onclick={(e) => openChooser("add", e)}><Icon name="plus" size={12} />Add a model</Button>
@@ -369,7 +369,7 @@
       <!-- The last one taken off: said what happens then, rather than refused. -->
       <p class="mp-none">
         <Icon name="info" size={13} />
-        <span>None picked. Groq's models write replies until you add one.</span>
+        <span>None picked, so Groq's models answer.</span>
       </p>
     {/if}
 
@@ -377,7 +377,7 @@
       <span class="min-w-0 flex-1">
         <span class="block text-[12.5px] text-ink">Longest reply</span>
         <span class="block text-[11.5px] text-faint">
-          In tokens, about ¾ of a word each. Replies are cut to a few hundred characters anyway; this stops a thinking model spending its allowance on thinking.
+          In tokens. Stops a thinking model from spending it all on thinking.
         </span>
       </span>
       <label class="num-field">
@@ -395,7 +395,7 @@
       <div class="min-w-0 flex-1">
         <h3 class="text-[14.5px] font-semibold text-ink">Everything else</h3>
         <p class="text-[12px] text-muted">
-          A model for each job, with fallbacks tried in order when it fails. Groq's default is always the last resort.
+          Groq's default is always the last fallback.
         </p>
       </div>
     </header>

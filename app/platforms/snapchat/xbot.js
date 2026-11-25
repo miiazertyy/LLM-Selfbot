@@ -22,7 +22,7 @@
  */
 import fs from "fs";
 import path from "path";
-import { launchBrowser, delay, typeDelay, persona, showWindow, hideWindow } from "./browser.js";
+import { launchBrowser, delay, typeDelay, persona, showWindow, hideWindow, checkShown } from "./browser.js";
 // The six digits from a 2FA key are RFC 6238 and nobody's in particular; instagrambot.js already has them, and one
 // copy is better than two. Imported here rather than where it is used, so a missing file is a loud start, not a
 // quiet failure halfway through a sign-in.
@@ -665,12 +665,9 @@ export default class XBot {
     }
   }
 
+  /** A check on the screen now, not one loaded out of sight (browser.js checkShown). */
   async captchaShown(page = this.page) {
-    try {
-      return await page.evaluate((sel) => sel.captcha.some((s) => document.querySelector(s)), SEL);
-    } catch {
-      return false;
-    }
+    return checkShown(page, SEL.captcha);
   }
 
   /** X has suspended the account: its own word for it is on the page, not in a hook. */

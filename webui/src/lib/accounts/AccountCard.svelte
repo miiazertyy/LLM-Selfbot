@@ -606,7 +606,7 @@
                        onkeydown={(e) => { if (e.key === "Enter") { e.preventDefault(); sendGoal(); } }} />
                 <Button size="sm" loading={goalBusy} disabled={!goalText.trim()} onclick={sendGoal}>Go</Button>
               </div>
-              <p class="mt-2 px-1 text-[10.5px] leading-snug text-faint">It works at it by itself until it is done.</p>
+
             </div>
           {/if}
         </div>
@@ -722,7 +722,7 @@
               <Button size="sm" loading={serverBusy} disabled={!serverText.trim()} onclick={() => goServer()}>Go</Button>
             </div>
             <p class="mt-2 px-1 text-[10.5px] leading-snug text-faint">
-              {onServer ? `Now on ${onServer}.` : ""} It signs itself in where the server asks in the chat.
+              {onServer ? `Now on ${onServer}.` : ""} Signs in by itself if the server asks.
             </p>
           </div>
         {/if}

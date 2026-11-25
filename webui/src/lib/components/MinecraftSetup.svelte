@@ -70,7 +70,7 @@
       { name: "Node.js", what: "Runs mindcraft. Version 22 or newer.", done: s.node_ok, working: false,
         shows: s.node_ok ? s.node_version : s.node ? `${s.node_version || "Unknown"}, too old` : "Not found" },
       { name: "npm", what: "Installs its packages.", done: !!s.npm, working: false, shows: s.npm ? "Found" : "Not found" },
-      { name: "mindcraft-ce", what: "The bot that plays: walking, mining, building.", done: s.installed,
+      { name: "mindcraft-ce", what: "The bot that plays.", done: s.installed,
         working: s.installing && !s.installed, shows: s.installed ? "Installed" : s.installing ? "Installing" : "Missing" },
       { name: "This version", what: "The one this app was built and tested with.", done: s.up_to_date,
         working: s.installing && s.installed && !s.up_to_date,
@@ -194,7 +194,8 @@
     if (!el || !list || landed) return;
     whenShown(el).then(() => {
       afterLanding(el, () => afterLanding(list, async () => {
-        heard = await onScreen(el);
+        // Whichever comes into view first: the checks should not sit unlit while the steps are on screen.
+        heard = await Promise.race([onScreen(el), onScreen(list)]);
         landed = true;
         light();
       }));
@@ -314,10 +315,10 @@
           <div class="mc-via-name">Servers of any version <span class="mc-faint">ViaProxy</span></div>
           <p class="mc-via-what">
             {via.installed
-              ? `Installed, ${via.version}. A server not on 1.21 is joined through it, when it signs in without Microsoft.`
+              ? `Installed, ${via.version}. Used for servers not on 1.21, with offline accounts.`
               : !via.java_ok
-                ? "It runs on Java, which this computer does not have. Install Java 21 from adoptium.net."
-                : "Lets it join a server of any version, older or newer. About 50 MB."}
+                ? "Needs Java 21, from adoptium.net."
+                : "About 50 MB."}
           </p>
         </div>
         {#if via.installing}
@@ -331,7 +332,7 @@
     {/if}
 
     <FootNote icon="folder">
-      Installs into <code>{status.dir}</code>, outside the app, so it survives updates. {status.free_gb} GB free.
+      Installs into <code>{status.dir}</code>. {status.free_gb} GB free.
       {#if status.installed && !status.installing}
         <button type="button" class="mc-remove" onclick={uninstall}>Remove it</button>
       {/if}
@@ -351,12 +352,12 @@
     <div class="mc-tips">
       <a class="mc-tip" href="#/accounts">
         <Icon name="accounts" size={15} />
-        <span><b>Add it on the Accounts page.</b> A name, and the world it joins.</span>
+        <span><b>Add it on the Accounts page.</b></span>
         <Icon name="chevron" size={12} class="mc-tip-go" />
       </a>
       <div class="mc-tip">
         <Icon name="minecraft" size={15} />
-        <span><b>Start on a world of your own.</b> Open one to LAN, or run a server with online mode off. No account needed for either.</span>
+        <span><b>Start on your own world.</b> Open one to LAN, or a server with online mode off. No account needed.</span>
       </div>
     </div>
   </div>

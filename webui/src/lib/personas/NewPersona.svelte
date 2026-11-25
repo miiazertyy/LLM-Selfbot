@@ -75,8 +75,7 @@
   const preview = $derived({ name: name.trim() || "?", color, color2: second,
                              avatar: faceUrl || (start === "copy" ? sourceP?.avatar ?? "" : "") });
   const ready = $derived(name.trim().length > 0 && !busy);
-  const line = $derived(start === "copy" ? `A copy of ${sourceName}`
-    : start === "chats" ? "Made from your own messages" : "A fresh start");
+  const line = $derived(start === "copy" ? `A copy of ${sourceName}` : start === "chats" ? "From your own messages" : "");
 
   // ── Growing out of the tile, and going back into it ──────────────────────
   const EASE = "cubic-bezier(0.22, 1, 0.36, 1)";
@@ -177,7 +176,7 @@
        ondragenter={held} ondragover={held} ondragleave={() => (over = false)} ondrop={dropped}>
     <span class="np-orb"><PersonaOrb p={preview} size={104} spin /></span>
     <b class="np-show-name" class:is-empty={!name.trim()}>{name.trim() || "New profile"}</b>
-    <small class="np-show-line">{line}</small>
+    {#if line}<small class="np-show-line">{line}</small>{/if}
     <span class="np-face-tools">
       <input bind:this={picker} type="file" accept="image/*" hidden
              onchange={(e) => { takeFace(e.currentTarget.files?.[0]); e.currentTarget.value = ""; }} />
@@ -239,16 +238,13 @@
               </button>
             {/each}
           </div>
-          <p class="np-note">Its text, settings and pictures come with it.</p>
           <div class="np-row">
-            <span>Copy its memory too<small>What {sourceName} knows about people</small></span>
+            <span>Copy its memory too</span>
             <Toggle checked={withMemory} onchange={(v: boolean) => (withMemory = v)} name="Copy its memory" />
           </div>
         </div>
       {:else if start === "chats"}
         <div class="np-chats"><FromExports bind:name {color} color2={second} oncancel={shut} oncreated={(p: any) => oncreated?.(p, face)} /></div>
-      {:else}
-        <p class="np-note">Starts from the template with its name in. No pictures or memory yet.</p>
       {/if}
     </div>
 
@@ -389,9 +385,7 @@
   .np-source:hover { color: var(--color-ink); }
   .np-source.is-on { color: var(--color-ink); background: color-mix(in srgb, var(--pc) 16%, transparent); box-shadow: inset 0 0 0 1px var(--pc); }
   .np-chats { animation: np-in 0.3s var(--jelly); }
-  .np-note { font-size: 12px; line-height: 1.5; color: var(--color-muted); }
   .np-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 13px; color: var(--color-ink); }
-  .np-row small { display: block; font-size: 11px; color: var(--color-faint); }
   .np-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: auto; padding-top: 2px; }
 
   @media (max-width: 860px) {

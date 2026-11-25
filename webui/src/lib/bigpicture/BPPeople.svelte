@@ -206,7 +206,6 @@
   {:else}
     <div class="bp-empty">
       <b>Nobody yet</b>
-      <p>Whoever it talks to shows up here.</p>
     </div>
   {/if}
 </div>

@@ -153,10 +153,10 @@
       timer = window.setTimeout(step, wait);
     };
     const el = root;
-    whenShown(el).then(() => {
+    whenShown(el).then(() => onScreen(el)).then((seen) => {
+      heard = seen;
       // A beat before the first letter, as a hand finds the keys.
       if (alive) timer = window.setTimeout(step, 90);
-      onScreen(el).then((seen) => (heard = seen));
     });
     return () => {
       alive = false;

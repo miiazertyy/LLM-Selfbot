@@ -17,7 +17,6 @@ import json
 import os
 import re
 import shutil
-import ssl
 import subprocess
 import sys
 import tarfile
@@ -159,14 +158,9 @@ def _get(key: str) -> None:
 
 
 def _context():
-    """The system's certificates and certifi's together: a source run's Python can lack the ones GitHub needs."""
-    ctx = ssl.create_default_context()
-    try:
-        import certifi
-        ctx.load_verify_locations(certifi.where())
-    except Exception:
-        pass
-    return ctx
+    """The system's certificates and certifi's together (app/utils/tls.py): Windows' alone can lack GitHub's."""
+    from app.utils import tls
+    return tls.context()
 
 
 def _download(url: str, dest: Path, what: str, sha256: str = "") -> None:

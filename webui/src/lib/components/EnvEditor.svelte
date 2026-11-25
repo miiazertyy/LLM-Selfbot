@@ -267,7 +267,6 @@
   {/if}
 
   <FootNote class="mt-4" icon="key">
-    Stored in <code>config/.env</code> on this computer. Most values are read when an account
-    starts, so restart the affected account after changing one.
+    Stored in <code>config/.env</code> on this computer. Restart an account for a change to reach it.
   </FootNote>
 {/if}

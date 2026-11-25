@@ -21,6 +21,7 @@
   import Button from "../lib/components/Button.svelte";
   import Icon from "../lib/components/Icon.svelte";
   import Modal from "../lib/components/Modal.svelte";
+  import PageSheet from "../lib/components/PageSheet.svelte";
   import ErrorNote from "../lib/components/ErrorNote.svelte";
   import Profile from "../lib/components/Profile.svelte";
   import Avatar from "../lib/components/Avatar.svelte";
@@ -289,6 +290,13 @@
 
   // ── Add / edit ────────────────────────────────────────────────────────────
   let editOpen = $state(false);
+  /** Where what opened the form is (a platform's tile, Add account, an account's card), for its card to grow out of
+   *  and go back into (PageSheet). Kept from the first press while it stays open. */
+  let editFrom = $state<DOMRect | null>(null);
+  function pressedRect(): DOMRect | null {
+    const el = document.activeElement;
+    return el instanceof HTMLElement && el !== document.body ? el.getBoundingClientRect() : null;
+  }
   let editPlatform = $state("discord");
   let editIndex = $state(0);            // 0 = adding a new one
   let fToken = $state("");
@@ -497,6 +505,7 @@
     stopLoginPoll();
     if (mcSigning) void cancelMinecraft();
     mcSign = { ...MC_IDLE };
+    if (!editOpen) editFrom = pressedRect();
     editOpen = true;
   }
 
@@ -535,6 +544,7 @@
     stopLoginPoll();
     if (mcSigning) void cancelMinecraft();
     mcSign = { ...MC_IDLE };
+    if (!editOpen) editFrom = pressedRect();
     editOpen = true;
   }
 
@@ -1034,8 +1044,23 @@
 
   /** The TikTok account whose LIVE is open. */
   let liveFor = $state<Slot | null>(null);
+  /** Where the button that opened a view is, for its card to grow out of (PageSheet). */
+  let viewFrom = $state<DOMRect | null>(null);
   // A Minecraft account whose live view is open.
   let watchFor = $state<Slot | null>(null);
+  /** Where a view goes among the cards: after the row of the card it was opened from, the width of the grid, as
+   *  Profiles' Share does. Cards take the even places (order: i*2), so this is the odd one after that row's last. */
+  let viewOrder = $state(-1);
+  function placeView(id: string) {
+    const grid = document.querySelector<HTMLElement>(".acct-grid");
+    const i = rows.findIndex((r) => r.slot.id === id);
+    if (!grid || i < 0) {
+      viewOrder = -1;
+      return;
+    }
+    const cols = getComputedStyle(grid).gridTemplateColumns.split(" ").filter(Boolean).length || 1;
+    viewOrder = Math.min(rows.length - 1, Math.floor(i / cols) * cols + cols - 1) * 2 + 1;
+  }
 
   const dur = $derived($motionEnabled ? 1 : 0);
 </script>
@@ -1061,10 +1086,7 @@
           <Icon name="accounts" size={26} />
         </div>
         <h2 class="text-[22px] font-semibold tracking-tight text-ink">Connect your first account</h2>
-        <p class="mx-auto mt-2 max-w-md text-[13px] leading-relaxed text-muted">
-          The bot talks as you, from an account you already have. Pick where it
-          should live. You can add more later and run them side by side.
-        </p>
+
         {#if !anyOn}
           <div class="mt-6 flex flex-col items-center gap-3">
             <p class="text-[12.5px] text-faint">Every social is switched off.</p>
@@ -1079,8 +1101,7 @@
               <span class="platform-icon"><Icon name="discord" size={24} /></span>
               <span class="flex items-center gap-2 text-[15px] font-semibold text-ink">Discord<NotHere feature="discord" variant="chip" /></span>
               <span class="mt-1 block text-[12px] leading-snug text-muted">
-                Signs in with the account's token. Replies in DMs, and in the groups
-                and servers you allow.
+                Uses the account's token.
               </span>
               <span class="platform-go">Add a Discord account <Icon name="chevron" size={12} /></span>
             </button>
@@ -1090,8 +1111,7 @@
               <span class="platform-icon"><Icon name="snapchat" size={24} /></span>
               <span class="flex items-center gap-2 text-[15px] font-semibold text-ink">Snapchat<NotHere feature="snapchat" variant="chip" /></span>
               <span class="mt-1 block text-[12px] leading-snug text-muted">
-                Signs in with a username and password, in a browser that runs out
-                of sight. Needs the Snapchat install from Settings.
+                Needs the Snapchat install.
               </span>
               <span class="platform-go">Add a Snapchat account <Icon name="chevron" size={12} /></span>
             </button>
@@ -1100,7 +1120,8 @@
             <button class="platform-card" onclick={() => openAdd("instagram")}>
               <span class="platform-icon"><Icon name="instagram" size={24} /></span>
               <span class="flex items-center gap-2 text-[15px] font-semibold text-ink">Instagram<NotHere feature="instagram" variant="chip" /></span>
-              <span class="text-[12px] text-faint">DMs, stories and reels</span>
+              <span class="mt-1 block text-[12px] leading-snug text-muted">You sign in in a window.</span>
+              <span class="platform-go">Add an Instagram account <Icon name="chevron" size={12} /></span>
             </button>
           {/if}
           {#if on("tiktok")}
@@ -1108,7 +1129,7 @@
               <span class="platform-icon"><Icon name="tiktok" size={24} /></span>
               <span class="flex items-center gap-2 text-[15px] font-semibold text-ink">TikTok<NotHere feature="tiktok" variant="chip" /></span>
               <span class="mt-1 block text-[12px] leading-snug text-muted">
-                Sign in once in a window of its own. Answers DMs, and can answer comments and co-host your LIVE.
+                You sign in in a window.
               </span>
               <span class="platform-go">Add a TikTok account <Icon name="chevron" size={12} /></span>
             </button>
@@ -1117,14 +1138,15 @@
             <button class="platform-card" onclick={() => openAdd("x")}>
               <span class="platform-icon"><Icon name="x" size={24} /></span>
               <span class="flex items-center gap-2 text-[15px] font-semibold text-ink">X (Twitter)<NotHere feature="x" variant="chip" /></span>
-              <span class="text-[12px] text-faint">Messages, replies and posts</span>
+              <span class="mt-1 block text-[12px] leading-snug text-muted">You sign in in a window.</span>
+              <span class="platform-go">Add an X account <Icon name="chevron" size={12} /></span>
             </button>
           {/if}
           {#if on("reddit")}
             <button class="platform-card" onclick={() => openAdd("reddit")}>
               <span class="platform-icon"><Icon name="reddit" size={24} /></span>
               <span class="flex items-center gap-2 text-[15px] font-semibold text-ink">Reddit<NotHere feature="reddit" variant="chip" /></span>
-              <span class="text-[12px] text-faint">Chats, replies and comments</span>
+              <span class="mt-1 block text-[12px] leading-snug text-muted">You sign in in a window.</span>
               <span class="platform-go">Add a Reddit account <Icon name="chevron" size={12} /></span>
             </button>
           {/if}
@@ -1132,7 +1154,7 @@
             <button class="platform-card" onclick={() => openAdd("whatsapp")}>
               <span class="platform-icon"><Icon name="whatsapp" size={24} /></span>
               <span class="flex items-center gap-2 text-[15px] font-semibold text-ink">WhatsApp<NotHere feature="whatsapp" variant="chip" /></span>
-              <span class="text-[12px] text-faint">Messages, groups and status</span>
+              <span class="mt-1 block text-[12px] leading-snug text-muted">Linked from your phone.</span>
               <span class="platform-go">Add a WhatsApp account <Icon name="chevron" size={12} /></span>
             </button>
           {/if}
@@ -1141,8 +1163,7 @@
               <span class="platform-icon"><Icon name="minecraft" size={24} /></span>
               <span class="flex items-center gap-2 text-[15px] font-semibold text-ink">Minecraft<NotHere feature="minecraft" variant="chip" /></span>
               <span class="mt-1 block text-[12px] leading-snug text-muted">
-                Joins a world as a player of its own, plays, and talks with the people there. Needs the Minecraft
-                install from Settings.
+                Needs the Minecraft install.
               </span>
               <span class="platform-go">Add a Minecraft account <Icon name="chevron" size={12} /></span>
             </button>
@@ -1152,7 +1173,7 @@
               <span class="platform-icon"><Icon name="telegram" size={24} /></span>
               <span class="flex items-center gap-2 text-[15px] font-semibold text-ink">Telegram</span>
               <span class="mt-1 block text-[12px] leading-snug text-muted">
-                Chats on a Telegram account of its own: groups, photos, voice messages and reactions.
+                Needs its own phone number.
               </span>
               <span class="platform-go">Add a Telegram account <Icon name="chevron" size={12} /></span>
             </button>
@@ -1162,7 +1183,7 @@
               <span class="platform-icon"><Icon name="imessage" size={24} /></span>
               <span class="flex items-center gap-2 text-[15px] font-semibold text-ink">iMessage<NotHere feature="imessage" variant="chip" /></span>
               <span class="mt-1 block text-[12px] leading-snug text-muted">
-                Texts as you, groups included, through BlueBubbles on a Mac signed in to iMessage.
+                Needs a Mac with BlueBubbles.
               </span>
               <span class="platform-go">Add an iMessage account <Icon name="chevron" size={12} /></span>
             </button>
@@ -1170,6 +1191,7 @@
         </div>
       </div>
     </section>
+    {@render accountSheet()}
   {:else}
     <!-- What a phone asks of you: keep the app open, and one Discord account at a time. -->
     <NotHere feature="background" />
@@ -1294,14 +1316,15 @@
         </div>
       </div>
     </section>
+    {@render accountSheet()}
 
     <!-- ── One card each, and a way to add the next ───────────────────────── -->
     <div class="acct-grid">
-      {#each rows as r (r.slot.id)}
+      {#each rows as r, i (r.slot.id)}
         <!-- No animate:flip: cards do not move, and flip measured every card
              on every five-second refresh, forcing a layout each time. -->
         <div in:scale={{ start: 0.96, duration: 260 * dur }}
-             out:scale={{ start: 0.96, duration: 180 * dur }} class="flex">
+             out:scale={{ start: 0.96, duration: 180 * dur }} class="flex" style="order: {i * 2}">
           <div class="flex w-full flex-col [&>article]:flex-1">
             <AccountCard
               slot={r.slot}
@@ -1320,8 +1343,8 @@
               onprofile={r.rt && r.slot.platform === "discord" ? () => (profileFor = r.rt ?? null) : undefined}
               onmood={(m) => setMood(r.slot, m)}
               onchats={() => openChats(r.slot)}
-              onlive={r.slot.platform === "tiktok" ? () => (liveFor = r.slot) : undefined}
-              onwatch={r.slot.platform === "minecraft" ? () => (watchFor = r.slot) : undefined}
+              onlive={r.slot.platform === "tiktok" ? () => { viewFrom = pressedRect(); placeView(r.slot.id); liveFor = r.slot; } : undefined}
+              onwatch={r.slot.platform === "minecraft" ? () => { viewFrom = pressedRect(); placeView(r.slot.id); watchFor = r.slot; } : undefined}
               onlogs={() => openLogs(r.slot)}
               onsettings={openSettings}
             />
@@ -1329,12 +1352,13 @@
         </div>
       {/each}
 
+      <!-- A view, under the row of the card it was opened from (placeView). -->
+      <div class="acct-view" style="order: {viewOrder}">{@render viewSheets()}</div>
+
       <div class="add-tile" class:hidden={!anyOn}>
         <div class="add-orb"><Icon name="plus" size={22} /></div>
         <div class="text-[15px] font-semibold text-ink">Add {slots.length ? "another" : "an"} account</div>
-        <p class="max-w-[19rem] text-[12px] leading-relaxed text-muted">
-          Each one runs on its own, with its own login, mood and profile.
-        </p>
+
         <div class="add-platforms mt-1 w-full max-w-[22rem]">
           {#if on("discord")}
             <button class="add-platform" onclick={() => openAdd("discord")}>
@@ -1392,10 +1416,14 @@
   {/if}
 </div>
 
-<!-- ── Add / edit ─────────────────────────────────────────────────────────── -->
-<Modal
+<!-- ── Add / edit ───────────────────────────────────────────────────────────
+     A card in the page, grown out of what was pressed, not a window over a dimmed page ("make this not look like a
+     whole obstructing window", 2026-11-11). Shown under the first-run hero, or under the header above the cards. -->
+{#snippet accountSheet()}
+<PageSheet
   open={editOpen}
   title={adding ? "Add an account" : `Edit ${editing ? nameOf(editing) : `${platformName(editPlatform)} #${editIndex}`}`}
+  from={editFrom}
   onclose={() => (editOpen = false)}
 >
   <div class="aa" data-platform={editPlatform}>
@@ -1531,7 +1559,7 @@
             <input id="wa-num" type="text" inputmode="tel" bind:value={fUser} onkeydown={enter} spellcheck="false"
                    autocomplete="off" placeholder="447700900123" class="field w-full pl-6" />
           </div>
-          <p class="mt-1 text-[11px] text-faint">Linking it again replaces the keys this number already has here.</p>
+          <p class="mt-1 text-[11px] text-faint">Linking again replaces this number's keys here.</p>
         </div>
       {/if}
 
@@ -1554,7 +1582,7 @@
                    class="field w-full pl-6" />
           </div>
           <p class="mt-1 text-[11px] text-faint">
-            With its country code and no symbols. WhatsApp gives a code for this number alone.
+            Country code first, digits only.
           </p>
         </div>
       {/if}
@@ -1582,8 +1610,7 @@
             <span class="mc-code" aria-label="The code">{waLink.code}</span>
             <p class="aa-status">
               <span class="aa-spin" aria-hidden="true"></span>
-              On the phone: WhatsApp, Linked devices, Link with phone number. Type that in and it is added here
-              by itself.
+              On the phone: WhatsApp › Linked devices › Link with phone number, then type this code.
             </p>
           </div>
         {:else if waLink.state === "qr" && waLink.qr_svg}
@@ -1592,7 +1619,7 @@
             <div class="wa-qr" role="img" aria-label="The code to scan">{@html waLink.qr_svg}</div>
             <p class="aa-status">
               <span class="aa-spin" aria-hidden="true"></span>
-              On the phone: WhatsApp, Linked devices, Link a device. Point it at this.
+              On the phone: WhatsApp › Linked devices › Link a device, then scan this.
             </p>
           </div>
         {:else if waLink.state === "asking"}
@@ -1600,7 +1627,7 @@
         {:else}
           <p class="aa-fine">
             <Icon name="eyeOff" size={12} />
-            Nothing opens on this computer. The phone does the linking, and keeps the account.
+            
           </p>
         {/if}
       </div>
@@ -1623,7 +1650,7 @@
             <input id="rd-usr" type="text" bind:value={fUser} onkeydown={enter} spellcheck="false" autocomplete="off"
                    placeholder="username" class="field w-full pl-8" />
           </div>
-          <p class="mt-1 text-[11px] text-faint">Changing it here takes its signed-in browser profile with it.</p>
+          <p class="mt-1 text-[11px] text-faint">Its browser profile moves with it.</p>
         </div>
       {/if}
       <div class="aa-panel">
@@ -1650,7 +1677,7 @@
         {:else}
           <p class="aa-fine">
             <Icon name="eyeOff" size={12} />
-            Sign in any way Reddit offers. Your password never reaches the app.
+            Sign in however you like. The app never sees your password.
           </p>
         {/if}
       </div>
@@ -1659,7 +1686,7 @@
              later with nobody here. Reddit sessions last, so most accounts never need either. -->
         <div class="aa-field">
           <label for="rd-pwd" class="mb-1 block text-xs font-medium text-muted">
-            Password <span class="text-faint">optional, to sign itself back in</span>
+            Password <span class="text-faint">optional, for signing back in</span>
           </label>
           <div class="relative">
             <span class="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-faint">
@@ -1673,7 +1700,7 @@
               <Icon name={reveal ? "eyeOff" : "eye"} size={14} />
             </button>
           </div>
-          <p class="mt-1 text-[11px] text-faint">Kept in config/.env on this machine and never sent back to the page.</p>
+          <p class="mt-1 text-[11px] text-faint">Stored in config/.env, never shown again.</p>
         </div>
         <div class="aa-field">
           <label for="rd-totp" class="mb-1 block text-xs font-medium text-muted">
@@ -1693,9 +1720,9 @@
               <span class="ig-code-what">Check this against your authenticator app.</span>
             </p>
           {:else if fTotp.trim()}
-            <p class="mt-1 text-[11px] text-warn">That is not a 2FA key. It is the letters beside the QR code.</p>
+            <p class="mt-1 text-[11px] text-warn">Not a 2FA key. Use the letters next to the QR code.</p>
           {:else}
-            <p class="mt-1 text-[11px] text-faint">Only needed if 2FA is on and you want it to sign itself back in.</p>
+            <p class="mt-1 text-[11px] text-faint">Only if 2FA is on.</p>
           {/if}
         </div>
       {/if}
@@ -1784,8 +1811,7 @@
           </button>
         </div>
         <p class="mt-1 text-[11px] text-faint">
-          Kept in config/.env on this machine and never sent back to the page,
-          so it can be replaced but not read.
+          Stored in config/.env. It can be replaced, not read.
         </p>
       </div>
       {/if}
@@ -1829,7 +1855,7 @@
         {:else}
           <p class="aa-fine">
             <Icon name="eyeOff" size={12} />
-            Sign in any way Instagram offers. Your password never reaches the app.
+            Sign in however you like. The app never sees your password.
           </p>
         {/if}
         {#if igStep === "needs-code"}
@@ -1837,7 +1863,7 @@
                own runner can ask for long after this window has gone. -->
           <div class="ig-code-ask">
             <label for="ig-code" class="text-[11.5px] font-semibold text-ink">Instagram sent a code</label>
-            <p class="text-[11px] text-muted">Check the account's email or phone, and type it here.</p>
+            <p class="text-[11px] text-muted">Check the account's email or phone.</p>
             <input id="ig-code" type="text" inputmode="numeric" bind:value={igCode} spellcheck="false"
                    autocomplete="one-time-code" maxlength="8" placeholder="123456"
                    class="field mt-1.5 w-28 text-center font-mono tracking-[0.2em]"
@@ -1850,7 +1876,7 @@
              months later, with nobody here. -->
         <div class="aa-field">
           <label for="ig-pwd" class="mb-1 block text-xs font-medium text-muted">
-            Password <span class="text-faint">optional, to sign itself back in</span>
+            Password <span class="text-faint">optional, for signing back in</span>
           </label>
           <div class="relative">
             <span class="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-faint">
@@ -1865,7 +1891,7 @@
             </button>
           </div>
           <p class="mt-1 text-[11px] text-faint">
-            Kept in config/.env on this machine and never sent back to the page.
+            Stored in config/.env, never shown again.
           </p>
         </div>
         <div class="aa-field">
@@ -1887,10 +1913,10 @@
               <span class="text-faint">should match your authenticator app</span>
             </p>
           {:else if fTotp.trim()}
-            <p class="mt-1 text-[11px] text-bad">That is not a 2FA key. It is the letters beside the QR code.</p>
+            <p class="mt-1 text-[11px] text-bad">Not a 2FA key. Use the letters next to the QR code.</p>
           {:else}
             <p class="mt-1 text-[11px] text-faint">
-              Only needed if 2FA is on and you want it to sign itself back in without you.
+              Only if 2FA is on.
             </p>
           {/if}
         </div>
@@ -1941,7 +1967,7 @@
         {:else}
           <p class="aa-fine">
             <Icon name="eyeOff" size={12} />
-            Sign in any way X offers. Your password never reaches the app.
+            Sign in however you like. The app never sees your password.
           </p>
         {/if}
         {#if igStep === "needs-code"}
@@ -1949,7 +1975,7 @@
                own runner can ask for long after this window has gone. -->
           <div class="ig-code-ask">
             <label for="x-code" class="text-[11.5px] font-semibold text-ink">X sent a code</label>
-            <p class="text-[11px] text-muted">Check the account's email or phone, and type it here.</p>
+            <p class="text-[11px] text-muted">Check the account's email or phone.</p>
             <input id="x-code" type="text" inputmode="numeric" bind:value={igCode} spellcheck="false"
                    autocomplete="one-time-code" maxlength="8" placeholder="123456"
                    class="field mt-1.5 w-28 text-center font-mono tracking-[0.2em]"
@@ -1972,12 +1998,12 @@
                    autocomplete="off" placeholder="name@example.com" class="field w-full pl-8" />
           </div>
           <p class="mt-1 text-[11px] text-faint">
-            X asks for this when it does not like the look of a login it was not expecting.
+            X asks for this on unusual logins.
           </p>
         </div>
         <div class="aa-field">
           <label for="x-pwd" class="mb-1 block text-xs font-medium text-muted">
-            Password <span class="text-faint">optional, to sign itself back in</span>
+            Password <span class="text-faint">optional, for signing back in</span>
           </label>
           <div class="relative">
             <span class="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-faint">
@@ -1992,7 +2018,7 @@
             </button>
           </div>
           <p class="mt-1 text-[11px] text-faint">
-            Kept in config/.env on this machine and never sent back to the page.
+            Stored in config/.env, never shown again.
           </p>
         </div>
         <div class="aa-field">
@@ -2014,10 +2040,10 @@
               <span class="text-faint">should match your authenticator app</span>
             </p>
           {:else if fTotp.trim()}
-            <p class="mt-1 text-[11px] text-bad">That is not a 2FA key. It is the letters beside the QR code.</p>
+            <p class="mt-1 text-[11px] text-bad">Not a 2FA key. Use the letters next to the QR code.</p>
           {:else}
             <p class="mt-1 text-[11px] text-faint">
-              Only needed if 2FA is on and you want it to sign itself back in without you.
+              Only if 2FA is on.
             </p>
           {/if}
         </div>
@@ -2056,7 +2082,7 @@
           {#if fUser.trim() && !mcNameOk}
             <p class="mt-1 text-[11px] text-bad">3 to 16 letters, digits or underscores. No spaces.</p>
           {:else}
-            <p class="mt-1 text-[11px] text-faint">Any name. Nobody owns it on an offline server.</p>
+            <p class="mt-1 text-[11px] text-faint">Any name works on an offline server.</p>
           {/if}
         </div>
       {/if}
@@ -2070,7 +2096,7 @@
           <input id="mc-host" type="text" bind:value={fHost} onkeydown={enter} spellcheck="false" autocomplete="off"
                  placeholder="play.example.net" class="field w-full pl-8 font-mono" disabled={mcSigning} />
         </div>
-        <p class="mt-1 text-[11px] text-faint">This account's own. A LAN world shows its port when opened.</p>
+        <p class="mt-1 text-[11px] text-faint">A LAN world shows its port when opened.</p>
       </div>
       <!-- A premium account's own skin, which Minecraft keeps: the same on every server. -->
       {#if !adding && fAuth === "microsoft"
@@ -2103,7 +2129,7 @@
               </Button>
               <p class="aa-status">
                 <span class="aa-spin" aria-hidden="true"></span>
-                The code is already filled in there. Sign in, and it is added here by itself.
+                The code is filled in. Sign in there.
               </p>
             </div>
           {:else if mcSign.state === "asking"}
@@ -2111,7 +2137,7 @@
           {:else}
             <p class="aa-fine">
               <Icon name="eyeOff" size={12} />
-              You sign in on Microsoft's own page. Your password never reaches the app.
+              You sign in on Microsoft's page. The app never sees your password.
             </p>
           {/if}
         </div>
@@ -2128,8 +2154,7 @@
                  autocomplete="off" placeholder="+33 6 12 34 56 78" class="field w-full pl-8 font-mono"
                  disabled={!!tgStep} />
         </div>
-        <p class="mt-1 text-[11px] text-faint">The account's own number, with its country code. A second number,
-          not the one you use yourself.</p>
+        <p class="mt-1 text-[11px] text-faint">A second number, not your own. Country code first.</p>
       </div>
       <div class="aa-field">
         <span class="mb-1 block text-xs font-medium text-muted">
@@ -2145,10 +2170,10 @@
         </div>
         <p class="mt-1 text-[11px] text-faint">
           {#if tgPairKnown}
-            Already stored. Leave them as they are unless you made a new pair.
+            Already stored.
           {:else}
             Sign in at <button type="button" class="aa-link" onclick={() => openUrl("https://my.telegram.org")}>my.telegram.org</button>,
-            then API development tools. The same pair works for every Telegram account here.
+            then API development tools. One pair works for every Telegram account.
           {/if}
         </p>
       </div>
@@ -2186,7 +2211,7 @@
             <input id="tg-pw" type="password" bind:value={tgPassword} autocomplete="off"
                    class="field mt-1.5 w-full" placeholder="password"
                    onkeydown={(e) => { if (e.key === "Enter") sendTelegramPassword(); }} />
-            <p class="mt-1 text-[11px] text-faint">It is not kept: it is only used to finish signing in.</p>
+            <p class="mt-1 text-[11px] text-faint">Only used to sign in, not stored.</p>
           </div>
         {:else if tgBusy}
           <p class="aa-status">
@@ -2196,7 +2221,7 @@
         {:else}
           <p class="aa-fine">
             <Icon name="eyeOff" size={12} />
-            The login is kept in config/.env on this computer. Nothing is stored until Telegram lets it in.
+            Stored in config/.env once Telegram lets it in.
           </p>
         {/if}
       </div>
@@ -2214,13 +2239,13 @@
         <div class="aa-panel im-phone">
           <p class="im-phone-lead">
             <Icon name="phone" size={14} />
-            <span>A Shortcuts automation on your iPhone passes each message here and sends back the reply.</span>
+            <span>A Shortcuts automation on your iPhone sends each message here and the reply back.</span>
           </p>
           <p class="aa-fine">
             <Icon name="info" size={12} />
             {adding ? "Once added, Settings, iMessage, Setup shows the four steps on the phone."
                     : "Its steps are in Settings, iMessage, Setup."}
-            It answers; sending first, typing dots and tapbacks need a Mac.
+            Replies only. Messaging first, typing dots and tapbacks need a Mac.
           </p>
           {#if !adding}
             <label class="im-renew">
@@ -2241,7 +2266,7 @@
                  autocomplete="off" placeholder="https://xyz.trycloudflare.com" class="field w-full pl-8 font-mono"
                  oninput={() => (imTest = null)} />
         </div>
-        <p class="mt-1 text-[11px] text-faint">Shown in BlueBubbles Server on the Mac. Its own address works on your network.</p>
+        <p class="mt-1 text-[11px] text-faint">Shown in BlueBubbles Server on the Mac.</p>
       </div>
       <div class="aa-field">
         <label for="im-pwd" class="mb-1 block text-xs font-medium text-muted">
@@ -2282,7 +2307,7 @@
         {:else}
           <p class="aa-fine">
             <Icon name="info" size={12} />
-            Needs a Mac signed in to iMessage, running BlueBubbles Server (free, bluebubbles.app).
+            Needs a Mac signed in to iMessage running BlueBubbles Server (free, bluebubbles.app).
           </p>
         {/if}
       </div>
@@ -2315,8 +2340,7 @@
           </button>
         </div>
         <p class="mt-1 text-[11px] text-faint">
-          If Snapchat asks to confirm it is you, it waits for you to approve the
-          login rather than giving up.
+          If Snapchat asks to confirm the login, it waits for you.
         </p>
       </div>
     {/if}
@@ -2334,8 +2358,7 @@
             <input id="prx" type="text" bind:value={fProxy} onkeydown={enter} spellcheck="false" aria-label="Proxy"
                    placeholder="http://user:pass@host:port" class="field font-mono" />
             <p class="mt-1 text-[11px] text-faint">
-              Left empty, it connects from this computer's own address. With several
-              accounts, one proxy each keeps them from sharing it.
+              Empty uses this computer's address. With several accounts, give each its own proxy.
             </p>
           </div>
         {/if}
@@ -2372,7 +2395,8 @@
       </Button>
     </div>
   </div>
-</Modal>
+</PageSheet>
+{/snippet}
 
 <!-- ── Remove ─────────────────────────────────────────────────────────────── -->
 <Modal open={!!confirmDelete} title="Remove this account?" onclose={() => (confirmDelete = null)}>
@@ -2386,15 +2410,15 @@
       </div>
     </div>
     <ul class="mt-4 space-y-1.5 text-[12.5px] text-muted">
-      <li>Its saved login is deleted from this computer.</li>
-      {#if rt && rt.state !== "stopped"}<li>It is running, and will be stopped first.</li>{/if}
+      <li>Its saved login is deleted.</li>
+      {#if rt && rt.state !== "stopped"}<li>It's running, so it's stopped first.</li>{/if}
       {#if later.length}
         <li>
           {later.map((s) => `${platformName(s.platform)} #${s.index}`).join(", ")}
           move{later.length === 1 ? "s" : ""} up a number to close the gap.
         </li>
       {/if}
-      <li>Its reply history and what the bot remembers about people are kept.</li>
+      <li>Its history and memory stay.</li>
     </ul>
     <div class="mt-6 flex justify-end gap-2">
       <Button kind="ghost" onclick={() => (confirmDelete = null)}>Keep it</Button>
@@ -2403,19 +2427,24 @@
   {/if}
 </Modal>
 
-<!-- ── A TikTok account's LIVE ────────────────────────────────────────────── -->
-<Modal open={!!watchFor} wide title={watchFor ? `What ${nameOf(watchFor)} sees` : ""} onclose={() => (watchFor = null)}>
-  {#if watchFor}
-    <WatchView account={watchFor.id} name={nameOf(watchFor)} />
-  {/if}
-</Modal>
-
-<Modal open={!!liveFor} title={liveFor ? `LIVE, ${nameOf(liveFor)}` : ""} onclose={() => (liveFor = null)}>
-  {#if liveFor}
-    <LiveView account={liveFor.id} name={nameOf(liveFor)}
-              onsettings={() => { liveFor = null; openSettings("tiktok/live"); }} />
-  {/if}
-</Modal>
+<!-- ── What a Minecraft account sees, and a TikTok account's LIVE ───────────────
+     Cards in the page, under the row of the account they were opened from and the width of the grid, grown out of
+     the button pressed: not windows over a dimmed page ("not a whole window thing", 2026-11-11). -->
+{#snippet viewSheets()}
+  <PageSheet open={!!watchFor} wide from={viewFrom} title={watchFor ? `What ${nameOf(watchFor)} sees` : ""}
+             onclose={() => (watchFor = null)}>
+    {#if watchFor}
+      <WatchView account={watchFor.id} name={nameOf(watchFor)} />
+    {/if}
+  </PageSheet>
+  <PageSheet open={!!liveFor} from={viewFrom} title={liveFor ? `LIVE, ${nameOf(liveFor)}` : ""}
+             onclose={() => (liveFor = null)}>
+    {#if liveFor}
+      <LiveView account={liveFor.id} name={nameOf(liveFor)}
+                onsettings={() => { liveFor = null; openSettings("tiktok/live"); }} />
+    {/if}
+  </PageSheet>
+{/snippet}
 
 <!-- ── Discord profile ────────────────────────────────────────────────────── -->
 <Modal
@@ -2438,6 +2467,11 @@
     grid-template-columns: repeat(auto-fill, minmax(min(100%, 380px), 1fr));
     align-items: stretch;
   }
+  /* Cards take the even places (order: i*2) and a view the odd one after its card's row; the add tile stays last. */
+  .acct-grid > .add-tile { order: 100000; }
+  .acct-view { grid-column: 1 / -1; }
+  /* No row of its own, nor its gap, while no view is open; kept while one shrinks back (its .psheet is still there). */
+  .acct-view:not(:has(:global(.psheet))) { display: none; }
 
   /* With the glass look every card is its own layer, so the Add account menu
      could not rise above the card after it: it opened underneath the first

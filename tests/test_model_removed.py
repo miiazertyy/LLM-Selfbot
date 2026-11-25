@@ -140,7 +140,7 @@ mr = src("app/web/routes/models_routes.py")
 check("the server takes none at all as none picked", "if replies and not chain:" in mr and 'models.pop("replies", None)' in mr)
 mp = src("webui/src/lib/components/ModelsPanel.svelte")
 check("its x is never greyed out", "disabled={chain.length <= 1}" not in mp and "if (chain.length <= 1) return;" not in mp)
-check("and the panel says what happens with none", "None picked. Groq's models write replies until you add one." in mp)
+check("and the panel says what happens with none", "None picked, so Groq's models answer." in mp)
 
 print("\n== a model removed some other way: the warning says where, and stops it being used ==")
 hr = src("app/web/routes/health_routes.py")

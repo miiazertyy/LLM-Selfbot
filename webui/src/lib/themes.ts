@@ -13,15 +13,13 @@
 export type Theme = {
   id: string;
   name: string;
-  hint: string;
   vars: Record<string, string>;
 };
 
 export const THEMES: Theme[] = [
   {
     id: "midnight",
-    name: "Midnight",
-    hint: "The original deep indigo",
+    name: "Midnight",
     vars: {
       "--color-bg": "#0a0a11",
       "--color-surface": "#101019",
@@ -40,8 +38,7 @@ export const THEMES: Theme[] = [
   },
   {
     id: "pastel",
-    name: "Dark pastel",
-    hint: "Soft muted colour on charcoal",
+    name: "Dark pastel",
     vars: {
       "--color-bg": "#16141c",
       "--color-surface": "#1e1b26",
@@ -60,8 +57,7 @@ export const THEMES: Theme[] = [
   },
   {
     id: "moss",
-    name: "Moss",
-    hint: "Muted green, easy on the eyes",
+    name: "Moss",
     vars: {
       "--color-bg": "#0f1412",
       "--color-surface": "#151d19",
@@ -80,8 +76,7 @@ export const THEMES: Theme[] = [
   },
   {
     id: "ember",
-    name: "Ember",
-    hint: "Warm charcoal and amber",
+    name: "Ember",
     vars: {
       "--color-bg": "#141010",
       "--color-surface": "#1c1615",
@@ -100,8 +95,7 @@ export const THEMES: Theme[] = [
   },
   {
     id: "sakura",
-    name: "Sakura",
-    hint: "Dusky plum with warm blossom pink",
+    name: "Sakura",
     vars: {
       "--color-bg": "#141018",
       "--color-surface": "#1c1622",
@@ -120,8 +114,7 @@ export const THEMES: Theme[] = [
   },
   {
     id: "slate",
-    name: "Slate",
-    hint: "Neutral grey, minimal colour",
+    name: "Slate",
     vars: {
       "--color-bg": "#111214",
       "--color-surface": "#191b1e",

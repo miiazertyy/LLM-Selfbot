@@ -225,7 +225,8 @@
     whenShown(el).then(() => {
       // Both blocks down (the steps are a block of their own, lower on the page), then it begins.
       afterLanding(el, () => afterLanding(list, async () => {
-        heard = await onScreen(el);
+        // Whichever comes into view first: the checks should not sit unlit while the steps are on screen.
+        heard = await Promise.race([onScreen(el), onScreen(list)]);
         landed = true;
         light();
       }));
@@ -361,7 +362,7 @@
     </ol>
 
     <FootNote icon="folder">
-      Installs into <code>{status.dir}</code>, outside the app, so it survives updates.
+      Installs into <code>{status.dir}</code>.
     </FootNote>
 
     {#if logs.length}
@@ -379,74 +380,67 @@
       {#if ig}
         <a class="sn-tip" href="#/accounts">
           <Icon name="accounts" size={15} />
-          <span><b>Add it on the Accounts page.</b> Instagram keeps its login here and signs itself back in.</span>
+          <span><b>Add it on the Accounts page.</b></span>
           <Icon name="chevron" size={12} class="sn-tip-go" />
         </a>
         <button type="button" class="sn-tip" onclick={() => settingsSection.set("instagram/pace")}>
           <Icon name="clock" size={15} />
-          <span><b>Start slow.</b> Instagram is the strictest of the four about automation.</span>
+          <span><b>Start slow.</b> Instagram is the strictest.</span>
           <Icon name="chevron" size={12} class="sn-tip-go" />
         </button>
       {:else if tt}
         <a class="sn-tip" href="#/accounts">
           <Icon name="accounts" size={15} />
-          <span><b>Sign in on the Accounts page.</b> Each TikTok account signs in once, in a window of its own.</span>
+          <span><b>Sign in on the Accounts page.</b></span>
           <Icon name="chevron" size={12} class="sn-tip-go" />
         </a>
         <button type="button" class="sn-tip" onclick={() => settingsSection.set("tiktok/live")}>
           <Icon name="speaker" size={15} />
-          <span><b>Co-host your LIVE.</b> It can answer viewers in the chat and out loud.</span>
+          <span><b>Co-host your LIVE.</b></span>
           <Icon name="chevron" size={12} class="sn-tip-go" />
         </button>
       {:else if wa}
         <a class="sn-tip" href="#/accounts">
           <Icon name="accounts" size={15} />
-          <span><b>A number is linked on the Accounts page.</b> WhatsApp gives a code you type into the phone, or
-            a QR code you scan with it. Nothing opens on this computer.</span>
+          <span><b>Link a number on the Accounts page.</b></span>
           <Icon name="chevron" size={12} class="sn-tip-go" />
         </a>
         <button type="button" class="sn-tip" onclick={() => settingsSection.set("whatsapp/groups")}>
           <Icon name="chats" size={15} />
-          <span><b>In groups it waits to be named.</b> It answers its own messages out of the box; in a group it
-            says nothing until somebody uses its name.</span>
+          <span><b>In groups it waits to be named.</b></span>
           <Icon name="chevron" size={12} class="sn-tip-go" />
         </button>
       {:else if rd}
         <a class="sn-tip" href="#/accounts">
           <Icon name="accounts" size={15} />
-          <span><b>Sign in on the Accounts page.</b> A window opens and you sign in there, the way TikTok's does.
-            The app never sees a password.</span>
+          <span><b>Sign in on the Accounts page.</b></span>
           <Icon name="chevron" size={12} class="sn-tip-go" />
         </a>
         <button type="button" class="sn-tip" onclick={() => settingsSection.set("reddit/comments")}>
           <Icon name="chats" size={15} />
-          <span><b>It only takes part where you say.</b> It answers its own inbox out of the box; commenting and
-            posting wait for a list of subreddits and a switch.</span>
+          <span><b>Comments and posts are off.</b> They need a list of subreddits.</span>
           <Icon name="chevron" size={12} class="sn-tip-go" />
         </button>
       {:else if xx}
         <a class="sn-tip" href="#/accounts">
           <Icon name="accounts" size={15} />
-          <span><b>Logins are on the Accounts page.</b> X asks for the email on the account when it does not like
-            the look of a login, so there is a place for that too.</span>
+          <span><b>Logins are on the Accounts page.</b></span>
           <Icon name="chevron" size={12} class="sn-tip-go" />
         </a>
         <button type="button" class="sn-tip" onclick={() => settingsSection.set("x/mentions")}>
           <Icon name="chats" size={15} />
-          <span><b>Answering in public is off.</b> It replies to messages out of the box; the @s under its posts
-            wait until you switch them on.</span>
+          <span><b>Public replies are off.</b></span>
           <Icon name="chevron" size={12} class="sn-tip-go" />
         </button>
       {:else}
       <button type="button" class="sn-tip" onclick={() => settingsSection.set("snapchat/browser")}>
         <Icon name="monitor" size={15} />
-        <span><b>The first login needs the browser window.</b> Keep "Hide the browser window" off for it; once
-          the cookies are saved, later runs can hide it.</span>
+        <span><b>Keep the browser visible for the first login.</b></span>
         <Icon name="chevron" size={12} class="sn-tip-go" />
       </button>
       <a class="sn-tip" href="#/accounts">
         <Icon name="accounts" size={15} />
-        <span><b>Logins are on the Accounts page.</b> Each Snapchat account has its own username and password there.</span>
+        <span><b>Logins are on the Accounts page.</b></span>
         <Icon name="chevron" size={12} class="sn-tip-go" />
       </a>
       {/if}

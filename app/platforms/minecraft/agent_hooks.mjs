@@ -108,16 +108,66 @@ export function speaker(bot, username, message, line = "") {
 // The whole line, which mineflayer passes its "chat" and "whisper" listeners after the parts (translate, message).
 const lineOf = (more) => (more[1] && typeof more[1] === "object" ? String(more[1]) : "");
 
+// ── Who it answers ────────────────────────────────────────────────────────────
+// A busy server's chat is a line a second of people talking to each other, and every one was handed to mindcraft to
+// answer: the model's turns, and the hour's budget, went on chatter, and it hardly played ("make sure the ai thinks
+// more about playing than talking but still talks sometimes", 2026-11-11). Now it answers a whisper, its own name
+// (in the game, and its persona's: LSB_CALLED), and whoever it is already talking with; the rest of the chat it
+// joins now and then, as a player half-reading chat does. LSB_ANSWER_ALL hands it every line, as before.
+const CALLED = String(process.env.LSB_CALLED || "").split(",").map((s) => s.trim().toLowerCase()).filter((s) => s.length >= 3);
+export const TALKING_MS = 90_000;    // a conversation goes on this long after its last line
+export const CHIME_MS = 150_000;     // and it joins in uninvited no more often than this
+export const CHIME_ODDS = 0.08;
+const talking = new Map();           // player -> when a line of theirs was last handed to it
+let chimedAt = 0;
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+// The players Settings has it talk with only (mindcraft's only_chat_with): it answers nobody else, and all of theirs.
+const ONLY_WITH = (() => {
+  try {
+    const only = JSON.parse(process.env.SETTINGS_JSON || "{}").only_chat_with;
+    return Array.isArray(only) ? only.map((n) => String(n).toLowerCase()) : [];
+  } catch {
+    return [];
+  }
+})();
+
+/** Whether a player's line is one for it to answer. Pure but for its memory of who it is talking with, and when it
+ *  last joined in: `now` and `roll` are given in a test. */
+export function worthAnswering(bot, name, words, whisper = false, { now = Date.now(), roll = Math.random(),
+                                                                   all = process.env.LSB_ANSWER_ALL === "1",
+                                                                   called = CALLED, only = ONLY_WITH } = {}) {
+  if (whisper || all || only.includes(String(name || "").toLowerCase())) return true;
+  const said = String(words || "").toLowerCase();
+  for (const n of [String(bot.username || "").toLowerCase(), ...called]) {
+    if (n && new RegExp(`(^|[^a-z0-9_])${escapeRe(n)}`).test(said)) return true;
+  }
+  if (now - (talking.get(name) || 0) < TALKING_MS) return true;
+  if (now - chimedAt >= CHIME_MS && roll < CHIME_ODDS) {
+    chimedAt = now;
+    return true;
+  }
+  return false;
+}
+
+/** Forget who it was talking with (a test, or a new world). */
+export function forgetTalk() {
+  talking.clear();
+  chimedAt = 0;
+}
+
 /** mindcraft's listeners for players talking ("chat", "whisper", all added after this) get players' lines only,
- *  under their own names: the server's never reach it, to be answered out loud or kept in its memory. */
+ *  under their own names: the server's never reach it, to be answered out loud or kept in its memory. And of the
+ *  players' lines, the ones worth answering (worthAnswering): the rest it lets go by, and plays on. */
 export function playersOnly(bot) {
   const on = bot.on;
   const add = function (event, listener, ...rest) {
     if ((event === "chat" || event === "whisper") && typeof listener === "function" && !listener.__lsb) {
       const heard = function (username, message, ...more) {
         const who = speaker(bot, username, message, lineOf(more));
-        if (who && who[0] !== bot.username) return listener.call(this, who[0], who[1], ...more);
-        return undefined;
+        if (!who || who[0] === bot.username) return undefined;
+        if (!worthAnswering(bot, who[0], who[1], event === "whisper")) return undefined;
+        talking.set(who[0], Date.now());
+        return listener.call(this, who[0], who[1], ...more);
       };
       heard.listener = listener;   // so removeListener(event, listener) still finds it
       return on.call(this, event, heard, ...rest);
@@ -1479,7 +1529,14 @@ export const SELF_AS_PATCHED =
 
 /** Every change made to the viewer's page, by what it is for. Each is applied on its own: one that no longer fits
  *  leaves only its own part as it was. */
+// The view drawn at one pixel per pixel of the page, not at the screen's density: at 1.25x or 2x that was half again
+// to four times the pixels a frame, on the integrated graphics this runs on, and the view crawled ("everything
+// faster in the viewer", 2026-11-11). Minecraft's blocks are pixel art: nothing is lost that the eye misses.
+export const PIXELS_AS_SHIPPED = "l.setPixelRatio(window.devicePixelRatio||1)";
+export const PIXELS_AS_PATCHED = "l.setPixelRatio(Math.min(window.devicePixelRatio||1,1))";
+
 export const PAGE_PATCHES = [
+  { name: "one pixel a pixel", shipped: PIXELS_AS_SHIPPED, patched: PIXELS_AS_PATCHED },
   { name: "the names over players' heads", shipped: NAMETAG_AS_SHIPPED, patched: NAMETAG_AS_DRAWN },
   { name: "the list of entities", shipped: ENTITIES_AS_SHIPPED, patched: ENTITIES_AS_PATCHED },
   { name: "how others move", shipped: ENTITY_MOVE_AS_SHIPPED, patched: ENTITY_MOVE_AS_PATCHED },
@@ -2062,6 +2119,78 @@ function startView(bot) {
   });
 }
 
+// ── Playing when nobody asks it anything ──────────────────────────────────────
+// mindcraft plays only toward a goal (!goal, which the panel and Telegram give it), and nothing ever gave it one:
+// in a busy lobby it stood there and talked. It has a standing one now (LSB_PLAY_GOAL, Settings' "What it does on its
+// own"), started whenever it has none. Given up on (no move in three turns), it is back soon; ended any other way (a
+// player asked it to stop, a goal its owner gave is done), only after a while, so a goal stopped on purpose is not
+// taken straight over. "" turns it off.
+export const PLAY_GOAL = String(process.env.LSB_PLAY_GOAL || "").trim();
+export const RESUME_MS = 45_000;           // its own goal back after this long with none
+export const AFTER_ENDED_MS = 180_000;     // and after a goal was ended on purpose, this long
+// mindcraft's line when a goal is given up (self_prompter.js), said in the game's chat: a robot talking.
+const GAVE_UP_RE = /^Agent did not use command in the last \d+ auto-prompts/;
+
+/** One look: starts the standing goal when it has none, has had none for long enough, and nobody is driving.
+ *  `state` carries what the last look saw; `now` is given in a test. True when it started the goal. */
+export async function playOn(agent, state, { goal = PLAY_GOAL, now = Date.now() } = {}) {
+  const sp = agent && agent.self_prompter;
+  if (!goal || !sp || typeof sp.isActive !== "function" || typeof sp.start !== "function" || driving.on) {
+    state.quietSince = 0;
+    return false;
+  }
+  const has = sp.isActive() || (typeof sp.isPaused === "function" && sp.isPaused());
+  if (has || (agent.actions && agent.actions.executing)) {
+    if (has) {
+      state.lastGoal = String(sp.prompt || "");
+      state.gaveUp = false;
+    }
+    state.quietSince = 0;
+    return false;
+  }
+  if (!state.quietSince) {
+    state.quietSince = now;
+    return false;
+  }
+  const soon = !state.lastGoal || (state.lastGoal === goal && state.gaveUp);
+  if (now - state.quietSince < (soon ? RESUME_MS : AFTER_ENDED_MS)) return false;
+  state.quietSince = 0;
+  state.lastGoal = goal;
+  state.gaveUp = false;
+  try {
+    await sp.start(goal);
+  } catch {
+    return false;
+  }
+  tell("playing", { goal: goal.slice(0, 120) });
+  return true;
+}
+
+/** Its standing goal kept going, looked at every half minute; and mindcraft's line when it gives a goal up kept out
+ *  of the game's chat, and remembered, so its own goal comes back soon after (playOn). */
+export function keepPlaying(bot, agent) {
+  if (!agent) return;
+  const state = agent.__lsbPlay || (agent.__lsbPlay = { quietSince: 0, lastGoal: "", gaveUp: false });
+  if (typeof agent.openChat === "function" && !agent.openChat.__lsb) {
+    const open = agent.openChat;
+    const quietened = function (message, ...rest) {
+      if (GAVE_UP_RE.test(String(message || ""))) {
+        state.gaveUp = true;
+        return Promise.resolve();
+      }
+      return open.call(this, message, ...rest);
+    };
+    quietened.__lsb = true;
+    agent.openChat = quietened;
+  }
+  if (!PLAY_GOAL || state.timer) return;
+  state.timer = setInterval(() => { playOn(agent, state).catch(() => {}); }, 30_000);
+  bot.once("end", () => {
+    clearInterval(state.timer);
+    state.timer = null;
+  });
+}
+
 // ── Every bot mindcraft makes ─────────────────────────────────────────────────
 function attach(bot) {
   bot.on("resourcePack", () => {
@@ -2089,8 +2218,11 @@ function attach(bot) {
     let tries = 0;
     const teach = async () => {
       const agent = await agentOf(bot);
-      if (agent) await teachMenus(bot, agent);
-      else if (++tries < 5) setTimeout(teach, 3000);
+      if (agent) {
+        await teachMenus(bot, agent);
+        // And it plays by itself, between conversations and around its owner's goals (keepPlaying).
+        keepPlaying(bot, agent);
+      } else if (++tries < 5) setTimeout(teach, 3000);
     };
     teach().catch(() => {});
   });
