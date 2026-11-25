@@ -26,16 +26,28 @@ def check(name, cond, extra=""):
 from app.utils import tls  # noqa: E402
 
 print("== one context, both sets of roots ==")
+plain = ssl.create_default_context()      # before ours: a root Windows adds in between then lands only in ours
 ctx = tls.context()
-plain = ssl.create_default_context()
 try:
     import certifi
     have_certifi = True
 except Exception:
     have_certifi = False
 check("certifi is there to add (it ships in the exe: packaging/specparts.py)", have_certifi)
-ours, system = ctx.cert_store_stats()["x509_ca"], plain.cert_store_stats()["x509_ca"]
-check("more roots than the system's alone", ours > system, f"{ours} vs {system}")
+
+
+def roots(context):
+    return set(context.get_ca_certs(binary_form=True))
+
+
+# Sets, not counts: the stores on Linux and macOS already hold every certifi root, so there adding them adds none
+# (the CI failed on "120 vs 120", 2026-11-25). Both sets being in is what the updater needs.
+ours = roots(ctx)
+check("every root the system has", roots(plain) <= ours, f"{len(roots(plain) - ours)} missing")
+if have_certifi:
+    shipped = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    shipped.load_verify_locations(certifi.where())
+    check("and every root certifi has", roots(shipped) <= ours, f"{len(roots(shipped) - ours)} missing")
 check("made once and shared", tls.context() is ctx)
 check("still checks names and certificates", ctx.check_hostname and ctx.verify_mode == ssl.CERT_REQUIRED)
 
